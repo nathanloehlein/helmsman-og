@@ -52,6 +52,7 @@ export function prToShipped(pr: GithubPr): ShippedPr {
     ticketId: parseTicketId(pr) ?? '—',
     status: mapPrStatus(pr),
     openedAt: pr.createdAt,
+    repo: pr.repo,
   };
 }
 

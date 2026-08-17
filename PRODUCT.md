@@ -24,7 +24,7 @@ The engineer/operator watching the agent. The dashboard is **glanceable**: it an
 | --- | --- | --- |
 | Backlog queue | What's next, in priority order | Jira JQL |
 | Working on | The current ticket + its step log | Jira In-Progress issue + changelog |
-| Recently shipped | What the agent opened for review | GitHub PRs by the agent author |
+| Recently shipped | What the agent opened for review | The author's recent PRs across all repos (GitHub issue-search by author; each card shows its own repo) |
 | Activity feed | What just happened, newest first | Jira changelog transitions + GitHub PR events |
 | Today / throughput | Completed today, awaiting review, avg cycle, 7-day throughput | Jira counts + changelog deltas |
 
@@ -33,11 +33,11 @@ The engineer/operator watching the agent. The dashboard is **glanceable**: it an
 - Browser polls `GET /api/dashboard` every 30s (Vite dev-server plugin holds credentials server-side; nothing secret reaches the bundle).
 - The endpoint composes config → fetch (Jira + GitHub REST) → assemble → `DashboardSnapshot`.
 - **Degrades, never blanks.** Missing credentials or a failed source falls back to the mock payload for that slice, behind a "showing sample data" banner. A transient poll failure keeps the last-good render.
-- Config is environment-driven (`.env`): `JIRA_BASE_URL/EMAIL/API_TOKEN/PROJECT/ASSIGNEE`, optional `JIRA_JQL`, `GITHUB_TOKEN/REPO/PR_AUTHOR`.
+- Config is environment-driven (`.env`): `JIRA_BASE_URL/EMAIL/API_TOKEN/PROJECT/ASSIGNEE`, optional `JIRA_JQL`, `GITHUB_TOKEN/PR_AUTHOR`, and optional `GITHUB_REPO`. Shipped PRs come from author-scoped GitHub search (repo-agnostic), because repo-scoped search is SSO-gated on some private orgs and returns 422. `GITHUB_REPO` is now only the topbar label; when unset the label falls back to `@<author>`.
 
 ## Product truth to preserve
 
 - Read-only. The dashboard observes; it never writes to Jira or GitHub.
-- The `repo` shown is the **codebase the agent works**, sourced from `GITHUB_REPO`. Keep it aligned with the Jira project the queue reads from, or the Working-on card will label tickets with a repo they don't belong to.
+- The topbar/Working-on `repo` label comes from `GITHUB_REPO`, or `@<author>` when unset. Because shipped PRs are now sourced by author across repos, this label is a scope hint (whose activity), not a guarantee that a given ticket lives in that repo.
 - The permission note ("read/write scoped to this branch; merge requires human approval") is a load-bearing statement of the agent's contract, not decoration.
 - Unsourceable metrics are omitted rather than faked (token/cost accounting lives in neither Jira nor GitHub, so it isn't shown).

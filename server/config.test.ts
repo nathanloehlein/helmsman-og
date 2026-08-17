@@ -25,13 +25,22 @@ describe('loadConfig', () => {
     expect(loadConfig(rest).jira).toBeNull();
   });
 
-  it('nulls github when a required github var is missing', () => {
-    const { GITHUB_TOKEN, ...rest } = FULL;
-    expect(loadConfig(rest).github).toBeNull();
+  it('nulls github when token or author is missing', () => {
+    const { GITHUB_TOKEN, ...noToken } = FULL;
+    expect(loadConfig(noToken).github).toBeNull();
+    const { GITHUB_PR_AUTHOR, ...noAuthor } = FULL;
+    expect(loadConfig(noAuthor).github).toBeNull();
   });
 
-  it('defaults repoLabel when github repo absent', () => {
+  it('keeps github without a repo and labels it by author', () => {
     const { GITHUB_REPO, ...rest } = FULL;
+    const cfg = loadConfig(rest);
+    expect(cfg.github?.author).toBe('bot');
+    expect(cfg.repoLabel).toBe('@bot');
+  });
+
+  it('falls back to backlog-runner label when github is absent entirely', () => {
+    const { GITHUB_TOKEN, GITHUB_REPO, GITHUB_PR_AUTHOR, ...rest } = FULL;
     expect(loadConfig(rest).repoLabel).toBe('backlog-runner');
   });
 

@@ -111,12 +111,18 @@ export function renderDashboard(
   const shippedCards = data.shipped
     .map((pr) => {
       const status = PR_STATUS[pr.status];
+      const repoShort: string = pr.repo ? (pr.repo.split('/').pop() ?? pr.repo) : '';
+      const subParts: string[] = [
+        pr.ticketId !== '—' ? esc(pr.ticketId) : '',
+        repoShort ? esc(repoShort) : '',
+        `opened ${formatRelativeTime(pr.openedAt, now)}`,
+      ].filter((part) => part !== '');
       return `
       <div class="pr-card">
         <span class="pr-num mono">#${pr.number}</span>
         <div class="pr-title-line">
           <span class="pr-title">${esc(pr.title)}</span>
-          <span class="pr-sub">${esc(pr.ticketId)} &middot; opened ${formatRelativeTime(pr.openedAt, now)}</span>
+          <span class="pr-sub">${subParts.join(' &middot; ')}</span>
         </div>
         <span class="chip ${status.chipClass}">${status.label}</span>
       </div>`;

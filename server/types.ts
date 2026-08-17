@@ -30,4 +30,5 @@ export interface GithubPr {
   mergedAt: string | null;
   createdAt: string;
   reviewDecision: PrReviewDecision;
+  repo?: string;
 }

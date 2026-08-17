@@ -46,9 +46,9 @@ export function loadConfig(env: Env): AppConfig {
   const repo: string | null = req(env, 'GITHUB_REPO');
   const author: string | null = req(env, 'GITHUB_PR_AUTHOR');
   const github: GithubConfig | null =
-    token && repo && author ? { token, repo, author } : null;
+    token && author ? { token, repo: repo ?? '', author } : null;
 
-  const repoLabel: string = repo ?? 'backlog-runner';
+  const repoLabel: string = repo ?? (github ? `@${github.author}` : 'backlog-runner');
   return { jira, github, repoLabel };
 }
 

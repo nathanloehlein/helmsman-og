@@ -26,6 +26,7 @@ export interface ShippedPr {
   ticketId: string;
   status: PrStatus;
   openedAt: string;
+  repo?: string;
 }
 
 export interface ActivityEvent {
