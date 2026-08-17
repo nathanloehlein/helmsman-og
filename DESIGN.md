@@ -55,6 +55,10 @@ Authored inline SVGs at one consistent stroke — check (done step), filled dot 
 - Grid `300px · 1fr · 260px` → single column at `≤980px`.
 - Topbar wraps at `≤600px`; the mini-stats reflow to a full-width row under a hairline so nothing clips. Body padding tightens to 16px.
 
+## Full-viewport layout (≥981px)
+
+The dashboard fills the whole window — width (no max-width cap; body padding is the gutter) and height (no page scroll). `body`/`#app`/`.wrap` chain to `100vh`; the grid takes the remaining height (`flex: 1; min-height: 0; align-items: stretch`) and long lists scroll inside their panels (backlog queue, working-on body, activity feed). Recently Shipped is a bottom band capped at `34vh` with its own internal scroll. Below 981px this all reverts to natural document flow so mobile scrolls normally.
+
 ## Intentional deviation
 
 The faint two-axis **grid background** (`body::before`) is flagged `advisory` by the Impeccable detector as a generated-UI signature. It is kept deliberately: the committed Tactical HUD brief pins a grid/scanline field, and a pinned world overrides the detector. It is held at very low alpha (`--grid rgba(120,165,185,.045)`) so it never reduces text contrast — it reads as an ambient HUD field, not a decorative texture. Revisit if the world is ever re-briefed away from HUD.

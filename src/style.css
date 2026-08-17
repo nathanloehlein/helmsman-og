@@ -729,3 +729,66 @@ body::after {
     text-align: left;
   }
 }
+
+/* Full-viewport dashboard: no page scroll, panels fill the height and their
+   lists scroll internally. Only on wide screens; mobile keeps natural flow. */
+@media (min-width: 981px) {
+  body {
+    height: 100vh;
+    overflow: hidden;
+  }
+  #app {
+    height: 100%;
+  }
+  .wrap {
+    height: 100%;
+  }
+  .grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .grid > .panel,
+  .grid > .rail {
+    height: 100%;
+    min-height: 0;
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-head {
+    flex: none;
+  }
+  .queue-list,
+  .working-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  .rail {
+    min-height: 0;
+  }
+  .rail .panel:last-child {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .feed {
+    flex: 1 1 auto;
+    max-height: none;
+    min-height: 0;
+  }
+  .wrap > .panel:last-of-type {
+    flex: none;
+    max-height: 34vh;
+  }
+  .shipped-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
