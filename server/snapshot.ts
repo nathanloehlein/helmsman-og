@@ -1,5 +1,6 @@
-import type { GithubPr, JiraIssue } from './types';
-import type { ActivityEvent, Priority, PrStatus, ShippedPr, Ticket, TicketStatus, WorkStep } from '../src/types';
+import type { GithubPr, JiraHistory, JiraIssue } from './types';
+import type { ActivityEvent, DailyStats, Priority, PrStatus, ShippedPr, Ticket, TicketStatus, WorkStep } from '../src/types';
+import type { DashboardSnapshot } from '../src/data/mock';
 
 const TICKET_ID_RE: RegExp = /[A-Z][A-Z0-9]+-\d+/;
 
@@ -117,4 +118,77 @@ export function buildSteps(current: JiraIssue, prs: GithubPr[]): WorkStep[] {
   }
 
   return steps;
+}
+
+const DAY_MS: number = 24 * 60 * 60 * 1000;
+
+function dayKey(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+function isDone(issue: JiraIssue): boolean {
+  return mapStatus(issue.fields.status.name, issue.fields.status.statusCategory.key) === 'done';
+}
+
+function cycleMinutes(issue: JiraIssue): number | null {
+  const histories: JiraHistory[] = issue.changelog?.histories ?? [];
+  const start: JiraHistory | undefined = histories.find((h) =>
+    h.items.some((it) => it.field === 'status' && (it.toString ?? '').toLowerCase().includes('progress')),
+  );
+  if (!start || !issue.fields.resolutiondate) return null;
+  const ms: number = new Date(issue.fields.resolutiondate).getTime() - new Date(start.created).getTime();
+  return ms > 0 ? Math.round(ms / 60000) : null;
+}
+
+export function computeStats(activeIssues: JiraIssue[], now: Date): DailyStats {
+  const today: string = now.toISOString().slice(0, 10);
+  const done: JiraIssue[] = activeIssues.filter(isDone);
+  const completedToday: number = done.filter((i) => i.fields.resolutiondate && dayKey(i.fields.resolutiondate) === today).length;
+  const awaitingReview: number = activeIssues.filter(
+    (i) => mapStatus(i.fields.status.name, i.fields.status.statusCategory.key) === 'in-review',
+  ).length;
+  const cycles: number[] = done.map(cycleMinutes).filter((n): n is number => n !== null);
+  const avgCycleMinutes: number = cycles.length ? Math.round(cycles.reduce((a, b) => a + b, 0) / cycles.length) : 0;
+  return { completedToday, awaitingReview, avgCycleMinutes };
+}
+
+export function buildThroughput7d(activeIssues: JiraIssue[], now: Date): number[] {
+  const buckets: number[] = [0, 0, 0, 0, 0, 0, 0];
+  const end: number = now.getTime();
+  for (const issue of activeIssues) {
+    if (!isDone(issue) || !issue.fields.resolutiondate) continue;
+    const age: number = end - new Date(issue.fields.resolutiondate).getTime();
+    const dayIndex: number = 6 - Math.floor(age / DAY_MS);
+    if (dayIndex >= 0 && dayIndex <= 6) buckets[dayIndex]++;
+  }
+  return buckets;
+}
+
+export interface SnapshotInput {
+  queueIssues: JiraIssue[];
+  activeIssues: JiraIssue[];
+  prs: GithubPr[];
+  repo: string;
+  now: Date;
+}
+
+function idleTicket(repo: string): Ticket {
+  return { id: '—', title: 'Idle — no ticket in progress', priority: 'P3', status: 'in-progress', repo };
+}
+
+export function assembleSnapshot(input: SnapshotInput): DashboardSnapshot {
+  const { queueIssues, activeIssues, prs, repo, now } = input;
+  const current: JiraIssue | undefined = activeIssues.find(
+    (i) => mapStatus(i.fields.status.name, i.fields.status.statusCategory.key) === 'in-progress',
+  );
+  return {
+    repo,
+    queue: queueIssues.map((i) => issueToTicket(i, repo)),
+    currentTicket: current ? issueToTicket(current, repo) : idleTicket(repo),
+    steps: current ? buildSteps(current, prs) : [],
+    shipped: prs.map(prToShipped),
+    activity: buildActivity(activeIssues, prs),
+    stats: computeStats(activeIssues, now),
+    throughput7d: buildThroughput7d(activeIssues, now),
+  };
 }

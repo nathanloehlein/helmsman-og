@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assembleSnapshot,
   buildActivity,
   buildSteps,
+  buildThroughput7d,
+  computeStats,
   issueToTicket,
   mapPriority,
   mapPrStatus,
@@ -10,6 +13,7 @@ import {
   prToShipped,
 } from './snapshot';
 import type { GithubPr, JiraIssue } from './types';
+import type { DashboardSnapshot } from '../src/data/mock';
 
 function pr(over: Partial<GithubPr> = {}): GithubPr {
   return {
@@ -158,5 +162,57 @@ describe('buildSteps', () => {
     ];
     const steps = buildSteps(CURRENT, prs);
     expect(steps.some((s) => s.text.includes('#9'))).toBe(true);
+  });
+});
+
+function doneIssue(key: string, resolved: string): JiraIssue {
+  return {
+    key,
+    fields: { summary: key, status: { name: 'Done', statusCategory: { key: 'done' } }, priority: null, resolutiondate: resolved },
+    changelog: { histories: [
+      { created: '2026-08-17T09:00:00.000Z', items: [{ field: 'status', fromString: 'Backlog', toString: 'In Progress' }] },
+      { created: resolved, items: [{ field: 'status', fromString: 'In Progress', toString: 'Done' }] },
+    ] },
+  };
+}
+
+describe('computeStats', () => {
+  it('counts done-today, awaiting-review, and average cycle minutes', () => {
+    const now = new Date('2026-08-17T12:00:00.000Z');
+    const active: JiraIssue[] = [
+      doneIssue('D-1', '2026-08-17T10:00:00.000Z'),
+      { key: 'R-1', fields: { summary: 'r', status: { name: 'In Review', statusCategory: { key: 'indeterminate' } }, priority: null, resolutiondate: null } },
+    ];
+    const stats = computeStats(active, now);
+    expect(stats.completedToday).toBe(1);
+    expect(stats.awaitingReview).toBe(1);
+    expect(stats.avgCycleMinutes).toBe(60);
+  });
+});
+
+describe('buildThroughput7d', () => {
+  it('returns 7 daily counts oldest to newest', () => {
+    const now = new Date('2026-08-17T12:00:00.000Z');
+    const active: JiraIssue[] = [doneIssue('D-1', '2026-08-17T10:00:00.000Z'), doneIssue('D-2', '2026-08-17T11:00:00.000Z')];
+    const t = buildThroughput7d(active, now);
+    expect(t.length).toBe(7);
+    expect(t[6]).toBe(2);
+  });
+});
+
+describe('assembleSnapshot', () => {
+  it('produces a full snapshot and a synthetic idle ticket when none in progress', () => {
+    const now = new Date('2026-08-17T12:00:00.000Z');
+    const snap: DashboardSnapshot = assembleSnapshot({
+      queueIssues: [{ key: 'Q-1', fields: { summary: 'queued', status: { name: 'Backlog', statusCategory: { key: 'new' } }, priority: { name: 'P1' }, resolutiondate: null } }],
+      activeIssues: [],
+      prs: [],
+      repo: 'o/r',
+      now,
+    });
+    expect(snap.queue.length).toBe(1);
+    expect(snap.repo).toBe('o/r');
+    expect(snap.currentTicket.status).toBe('in-progress');
+    expect(snap.steps).toEqual([]);
   });
 });
