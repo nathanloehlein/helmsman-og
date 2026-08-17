@@ -54,7 +54,12 @@ function buildSparkline(values: number[]): string {
     </svg>`;
 }
 
-export function renderDashboard(root: HTMLElement, data: DashboardSnapshot, now: Date): void {
+export function renderDashboard(
+  root: HTMLElement,
+  data: DashboardSnapshot,
+  now: Date,
+  degraded: string[] = [],
+): void {
   const queue = sortByPriority(data.queue);
 
   const queueItems = queue
@@ -106,8 +111,14 @@ export function renderDashboard(root: HTMLElement, data: DashboardSnapshot, now:
     )
     .join('');
 
+  const banner: string =
+    degraded.length > 0
+      ? `<div class="degraded-banner">Showing sample data for: ${degraded.join(', ')} — check server credentials.</div>`
+      : '';
+
   root.innerHTML = `
     <div class="wrap">
+      ${banner}
       <div class="topbar">
         <span class="pulse-dot" aria-hidden="true"></span>
         <div class="status-text"><strong>Working</strong> &middot; claimed ${formatRelativeTime(data.steps[0]!.time, now)}</div>
