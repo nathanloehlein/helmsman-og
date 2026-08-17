@@ -17,6 +17,25 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'in-review': { label: 'In review', chipClass: 'chip-review' },
   merged: { label: 'Merged', chipClass: 'chip-done' },
   'changes-requested': { label: 'Changes requested', chipClass: 'chip-blocked' },
+}
+
+const ICON_CHECK: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>'
+
+const ICON_ACTIVE: string =
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="8" r="3.4"/></svg>'
+
+const ICON_LOCK: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.5 7V5.1a2.5 2.5 0 0 1 5 0V7"/></svg>'
+
+function formatCycle(minutes: number): string {
+  if (minutes <= 0) return '—'
+  if (minutes < 60) return `${minutes}m`
+  if (minutes < 1440) {
+    const hours: number = minutes / 60
+    return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`
+  }
+  return `${(minutes / 1440).toFixed(1)}d`
 };
 
 function buildSparkline(values: number[]): string {
@@ -63,9 +82,10 @@ export function renderDashboard(
 ): void {
   const queue = sortByPriority(data.queue);
 
-  const queueItems = queue
-    .map(
-      (ticket) => `
+  const queueItems = queue.length
+    ? queue
+        .map(
+          (ticket) => `
       <li class="queue-item">
         <div class="queue-row1">
           <span class="ticket-id">${esc(ticket.id)}</span>
@@ -73,15 +93,16 @@ export function renderDashboard(
         </div>
         <span class="queue-title">${esc(ticket.title)}</span>
       </li>`,
-    )
-    .join('');
+        )
+        .join('')
+    : '<li class="empty-note">No backlog tickets assigned.</li>';
 
   const stepRows = data.steps
     .map(
       (step) => `
       <div class="step step-${step.state}">
         <span class="step-time mono">${formatRelativeTime(step.time, now)}</span>
-        <span class="step-icon">${step.state === 'done' ? '&#10003;' : '&#8226;'}</span>
+        <span class="step-icon">${step.state === 'done' ? ICON_CHECK : ICON_ACTIVE}</span>
         <span class="step-text">${step.text}</span>
       </div>`,
     )
@@ -100,17 +121,19 @@ export function renderDashboard(
         <span class="chip ${status.chipClass}">${status.label}</span>
       </div>`;
     })
-    .join('');
+    .join('') || '<div class="empty-note">No recent pull requests.</div>';
 
-  const activityLines = data.activity
-    .map(
-      (event) => `
+  const activityLines = data.activity.length
+    ? data.activity
+        .map(
+          (event) => `
       <div class="feed-line">
         <span class="feed-time mono">${formatRelativeTime(event.time, now)}</span>
         <span class="feed-text${event.accent ? ' tag-accent' : ''}">${event.text}</span>
       </div>`,
-    )
-    .join('');
+        )
+        .join('')
+    : '<div class="empty-note">No recent activity.</div>';
 
   const banner: string =
     degraded.length > 0
@@ -134,7 +157,7 @@ export function renderDashboard(
         <div class="topbar-stats">
           <div class="mini-stat"><span class="num mono">${data.stats.completedToday}</span><span class="lbl">Shipped today</span></div>
           <div class="mini-stat"><span class="num mono">${data.stats.awaitingReview}</span><span class="lbl">Awaiting review</span></div>
-          <div class="mini-stat"><span class="num mono">${data.stats.avgCycleMinutes}m</span><span class="lbl">Avg cycle</span></div>
+          <div class="mini-stat"><span class="num mono">${formatCycle(data.stats.avgCycleMinutes)}</span><span class="lbl">Avg cycle</span></div>
         </div>
       </div>
 
@@ -164,7 +187,7 @@ export function renderDashboard(
             </div>
             <div class="step-list">${stepRows}</div>
             <div class="perm-note">
-              <span>&#128274;</span>
+              ${ICON_LOCK}
               <span>Read/write scoped to this branch only. Merge requires human approval &mdash; agent never merges to main.</span>
             </div>
           </div>
@@ -177,7 +200,7 @@ export function renderDashboard(
             </div>
             <div class="stat-row"><span class="stat-label">Tickets completed</span><span class="stat-value">${data.stats.completedToday}</span></div>
             <div class="stat-row"><span class="stat-label">PRs awaiting review</span><span class="stat-value">${data.stats.awaitingReview}</span></div>
-            <div class="stat-row"><span class="stat-label">Avg cycle time</span><span class="stat-value">${data.stats.avgCycleMinutes}m</span></div>
+            <div class="stat-row"><span class="stat-label">Avg cycle time</span><span class="stat-value">${formatCycle(data.stats.avgCycleMinutes)}</span></div>
             <div class="spark-wrap">
               <div class="spark-label">Throughput, last 7 days</div>
               ${buildSparkline(data.throughput7d)}
