@@ -1,6 +1,7 @@
 import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
+import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority, TicketStatus } from './types';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
@@ -67,10 +68,10 @@ export function renderDashboard(
       (ticket) => `
       <li class="queue-item">
         <div class="queue-row1">
-          <span class="ticket-id">${ticket.id}</span>
+          <span class="ticket-id">${esc(ticket.id)}</span>
           <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
         </div>
-        <span class="queue-title">${ticket.title}</span>
+        <span class="queue-title">${esc(ticket.title)}</span>
       </li>`,
     )
     .join('');
@@ -93,8 +94,8 @@ export function renderDashboard(
       <div class="pr-card">
         <span class="pr-num mono">#${pr.number}</span>
         <div class="pr-title-line">
-          <span class="pr-title">${pr.title}</span>
-          <span class="pr-sub">${pr.ticketId} &middot; opened ${formatRelativeTime(pr.openedAt, now)}</span>
+          <span class="pr-title">${esc(pr.title)}</span>
+          <span class="pr-sub">${esc(pr.ticketId)} &middot; opened ${formatRelativeTime(pr.openedAt, now)}</span>
         </div>
         <span class="chip ${status.chipClass}">${status.label}</span>
       </div>`;
@@ -116,14 +117,18 @@ export function renderDashboard(
       ? `<div class="degraded-banner">Showing sample data for: ${degraded.join(', ')} — check server credentials.</div>`
       : '';
 
+  const claimed: string = data.steps[0]
+    ? ` &middot; claimed ${formatRelativeTime(data.steps[0].time, now)}`
+    : '';
+
   root.innerHTML = `
     <div class="wrap">
       ${banner}
       <div class="topbar">
         <span class="pulse-dot" aria-hidden="true"></span>
-        <div class="status-text"><strong>Working</strong> &middot; claimed ${formatRelativeTime(data.steps[0]!.time, now)}</div>
+        <div class="status-text"><strong>Working</strong>${claimed}</div>
         <div class="topbar-sep"></div>
-        <span class="repo-tag">${data.repo}</span>
+        <span class="repo-tag">${esc(data.repo)}</span>
         <div class="topbar-sep"></div>
         <span class="brand">BACKLOG RUNNER</span>
         <div class="topbar-stats">
@@ -150,10 +155,10 @@ export function renderDashboard(
           <div class="working-body">
             <div class="ticket-head">
               <div>
-                <span class="ticket-id">${data.currentTicket.id}</span>
-                <h2 class="ticket-headline">${data.currentTicket.title}</h2>
+                <span class="ticket-id">${esc(data.currentTicket.id)}</span>
+                <h2 class="ticket-headline">${esc(data.currentTicket.title)}</h2>
                 <div class="ticket-meta">
-                  <span class="repo-tag mono">${data.currentTicket.repo}</span>
+                  <span class="repo-tag mono">${esc(data.currentTicket.repo)}</span>
                 </div>
               </div>
             </div>

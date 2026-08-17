@@ -1,6 +1,7 @@
 import type { GithubPr, JiraHistory, JiraIssue } from './types';
 import type { ActivityEvent, DailyStats, Priority, PrStatus, ShippedPr, Ticket, TicketStatus, WorkStep } from '../src/types';
 import type { DashboardSnapshot } from '../src/data/mock';
+import { escapeHtml } from '../src/logic/html';
 
 const TICKET_ID_RE: RegExp = /[A-Z][A-Z0-9]+-\d+/;
 
@@ -72,7 +73,7 @@ export function buildActivity(activeIssues: JiraIssue[], prs: GithubPr[]): Activ
   const jiraEvents: ActivityEvent[] = activeIssues.flatMap((issue) =>
     statusTransitions(issue).map((t) => ({
       time: t.time,
-      text: `<b>${issue.key}</b> &rarr; ${t.to}`,
+      text: `<b>${escapeHtml(issue.key)}</b> &rarr; ${escapeHtml(t.to)}`,
       accent: true,
     })),
   );
@@ -80,10 +81,10 @@ export function buildActivity(activeIssues: JiraIssue[], prs: GithubPr[]): Activ
   const prEvents: ActivityEvent[] = prs.flatMap((pr) => {
     const id: string = parseTicketId(pr) ?? `PR #${pr.number}`;
     const events: ActivityEvent[] = [
-      { time: pr.createdAt, text: `opened PR #${pr.number} (${id})`, accent: false },
+      { time: pr.createdAt, text: `opened PR #${pr.number} (${escapeHtml(id)})`, accent: false },
     ];
     if (pr.mergedAt) {
-      events.push({ time: pr.mergedAt, text: `<b>${id}</b> PR #${pr.number} merged`, accent: true });
+      events.push({ time: pr.mergedAt, text: `<b>${escapeHtml(id)}</b> PR #${pr.number} merged`, accent: true });
     }
     if (pr.reviewDecision === 'CHANGES_REQUESTED') {
       events.push({ time: pr.createdAt, text: `PR #${pr.number} changes requested`, accent: false });
@@ -92,7 +93,7 @@ export function buildActivity(activeIssues: JiraIssue[], prs: GithubPr[]): Activ
   });
 
   return [...jiraEvents, ...prEvents]
-    .sort((a, b) => b.time.localeCompare(a.time))
+    .sort((a, b) => Date.parse(b.time) - Date.parse(a.time))
     .slice(0, ACTIVITY_CAP);
 }
 
@@ -101,7 +102,7 @@ export function buildSteps(current: JiraIssue, prs: GithubPr[]): WorkStep[] {
   const allTransitionSteps: WorkStep[] = transitions.map((t) => ({
     time: t.time,
     state: 'done' as const,
-    text: `Transitioned to <b>${t.to}</b>`,
+    text: `Transitioned to <b>${escapeHtml(t.to)}</b>`,
   }));
 
   const linked: GithubPr | undefined = prs.find((pr) => parseTicketId(pr) === current.key);
@@ -122,8 +123,12 @@ export function buildSteps(current: JiraIssue, prs: GithubPr[]): WorkStep[] {
 
 const DAY_MS: number = 24 * 60 * 60 * 1000;
 
-function dayKey(iso: string): string {
-  return iso.slice(0, 10);
+function utcDayKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function utcMidnight(date: Date): number {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
 function isDone(issue: JiraIssue): boolean {
@@ -141,9 +146,11 @@ function cycleMinutes(issue: JiraIssue): number | null {
 }
 
 export function computeStats(activeIssues: JiraIssue[], now: Date): DailyStats {
-  const today: string = now.toISOString().slice(0, 10);
+  const today: string = utcDayKey(now);
   const done: JiraIssue[] = activeIssues.filter(isDone);
-  const completedToday: number = done.filter((i) => i.fields.resolutiondate && dayKey(i.fields.resolutiondate) === today).length;
+  const completedToday: number = done.filter(
+    (i) => i.fields.resolutiondate !== null && utcDayKey(new Date(i.fields.resolutiondate)) === today,
+  ).length;
   const awaitingReview: number = activeIssues.filter(
     (i) => mapStatus(i.fields.status.name, i.fields.status.statusCategory.key) === 'in-review',
   ).length;
@@ -154,13 +161,13 @@ export function computeStats(activeIssues: JiraIssue[], now: Date): DailyStats {
 
 export function buildThroughput7d(activeIssues: JiraIssue[], now: Date): number[] {
   const buckets: number[] = [0, 0, 0, 0, 0, 0, 0];
-  const end: number = now.getTime();
-  for (const issue of activeIssues) {
-    if (!isDone(issue) || !issue.fields.resolutiondate) continue;
-    const age: number = end - new Date(issue.fields.resolutiondate).getTime();
-    const dayIndex: number = 6 - Math.floor(age / DAY_MS);
+  const endDay: number = utcMidnight(now);
+  activeIssues.forEach((issue: JiraIssue): void => {
+    if (!isDone(issue) || !issue.fields.resolutiondate) return;
+    const resolvedDay: number = utcMidnight(new Date(issue.fields.resolutiondate));
+    const dayIndex: number = 6 - Math.round((endDay - resolvedDay) / DAY_MS);
     if (dayIndex >= 0 && dayIndex <= 6) buckets[dayIndex]++;
-  }
+  });
   return buckets;
 }
 

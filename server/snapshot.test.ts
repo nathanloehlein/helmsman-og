@@ -139,6 +139,20 @@ describe('buildActivity', () => {
     expect(times).toEqual([...times].sort().reverse());
   });
 
+  it('escapes untrusted status names and issue keys in event text', () => {
+    const malicious: JiraIssue = {
+      key: '<img src=x onerror=alert(1)>',
+      fields: { summary: 's', status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } }, priority: null, resolutiondate: null },
+      changelog: { histories: [{ created: '2026-08-17T00:00:00.000Z', items: [{ field: 'status', fromString: null, toString: '<b>evil</b>' }] }] },
+    };
+    const feed = buildActivity([malicious], []);
+    const text = feed[0].text;
+    expect(text).not.toContain('<img src=x');
+    expect(text).not.toContain('<b>evil</b>');
+    expect(text).toContain('&lt;img');
+    expect(text).toContain('&lt;b&gt;evil');
+  });
+
   it('caps at 12 events', () => {
     const many: JiraIssue[] = Array.from({ length: 20 }, (_, i) => ({
       key: `K-${i}`,

@@ -12,9 +12,11 @@ unit-tested with Vitest; `src/render.ts` is the only thing that touches the DOM.
 
 ## Data
 
-`src/data/mock.ts` is the seam. It returns a `DashboardSnapshot` from static mock
-data today — swap its implementation for real calls against the Jira and GitHub
-REST APIs and the rest of the app is unchanged.
+Live data flows through `GET /api/dashboard` (served by the Vite dev-server plugin),
+which fetches from Jira and GitHub in `server/` and assembles a `DashboardSnapshot`.
+`src/data/mock.ts` is the server-side fallback payload: a static `DashboardSnapshot`
+the endpoint substitutes per-source when a live source can't be reached. See
+[Wiring this dashboard to the real thing](#wiring-this-dashboard-to-the-real-thing).
 
 ## Commands
 

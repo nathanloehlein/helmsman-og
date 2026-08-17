@@ -6,10 +6,9 @@ const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) throw new Error('missing #app root element');
 
 async function tick(target: HTMLDivElement): Promise<void> {
-  try {
-    const { snapshot, degraded }: DashboardResponse = await loadDashboard();
-    renderDashboard(target, snapshot, new Date(), degraded);
-  } catch {}
+  const response: DashboardResponse | null = await loadDashboard().catch(() => null);
+  if (!response) return;
+  renderDashboard(target, response.snapshot, new Date(), response.degraded);
 }
 
 void tick(root);
