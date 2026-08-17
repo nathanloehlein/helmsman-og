@@ -13,10 +13,13 @@ export interface GithubConfig {
   author: string;
 }
 
+export type RepoProjectMap = Record<string, string>;
+
 export interface AppConfig {
   jira: JiraConfig | null;
   github: GithubConfig | null;
   repoLabel: string;
+  repoProjectMap: RepoProjectMap;
 }
 
 type Env = Record<string, string | undefined>;
@@ -24,6 +27,18 @@ type Env = Record<string, string | undefined>;
 function req(env: Env, key: string): string | null {
   const value: string | undefined = env[key];
   return value && value.trim() !== '' ? value : null;
+}
+
+function parseRepoProjectMap(raw: string | null): RepoProjectMap {
+  const map: RepoProjectMap = {};
+  if (!raw) return map;
+  for (const pair of raw.split(',')) {
+    const parts: string[] = pair.split('=').map((part) => part.trim());
+    const repo: string | undefined = parts[0];
+    const project: string | undefined = parts[1];
+    if (repo && project) map[repo] = project;
+  }
+  return map;
 }
 
 export function loadConfig(env: Env): AppConfig {
@@ -49,7 +64,8 @@ export function loadConfig(env: Env): AppConfig {
     token && author ? { token, repo: repo ?? '', author } : null;
 
   const repoLabel: string = repo ?? (github ? `@${github.author}` : 'backlog-runner');
-  return { jira, github, repoLabel };
+  const repoProjectMap: RepoProjectMap = parseRepoProjectMap(req(env, 'REPO_PROJECT_MAP'));
+  return { jira, github, repoLabel, repoProjectMap };
 }
 
 function formatAssignee(assignee: string): string {

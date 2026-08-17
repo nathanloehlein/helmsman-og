@@ -7,6 +7,7 @@ class DashboardView {
   private readonly root: HTMLElement;
   private snapshot: DashboardSnapshot | null = null;
   private degraded: string[] = [];
+  private repos: string[] = [];
   private selectedRepo: string | null = null;
 
   constructor(root: HTMLElement) {
@@ -14,23 +15,25 @@ class DashboardView {
   }
 
   async refresh(): Promise<void> {
-    const response: DashboardResponse | null = await loadDashboard().catch(() => null);
+    const response: DashboardResponse | null = await loadDashboard(this.selectedRepo).catch(() => null);
     if (response) {
       this.snapshot = response.snapshot;
       this.degraded = response.degraded;
+      this.repos = response.repos;
+      this.selectedRepo = response.selectedRepo;
     }
     this.paint();
   }
 
   private paint(): void {
     if (!this.snapshot) return;
-    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.selectedRepo);
+    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo);
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
     if (select) {
       select.addEventListener('change', () => {
         this.selectedRepo = select.value || null;
-        this.paint();
+        void this.refresh();
       });
     }
   }

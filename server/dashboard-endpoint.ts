@@ -10,6 +10,8 @@ import { loadDashboard } from '../src/data/mock';
 export interface DashboardResponse {
   snapshot: DashboardSnapshot;
   degraded: string[];
+  repos: string[];
+  selectedRepo: string | null;
 }
 
 export interface Deps {
@@ -30,6 +32,7 @@ export async function buildDashboardResponse(
   env: Record<string, string | undefined>,
   now: Date,
   deps: Deps = DEFAULT_DEPS,
+  selectedRepo: string | null = null,
 ): Promise<DashboardResponse> {
   const config: AppConfig = loadConfig(env);
   const degraded: string[] = [];
@@ -39,10 +42,16 @@ export async function buildDashboardResponse(
   let prs: GithubPr[] = [];
 
   if (config.jira) {
+    const mappedProject: string | undefined = selectedRepo
+      ? config.repoProjectMap[selectedRepo]
+      : undefined;
+    const jira: JiraConfig = mappedProject
+      ? { ...config.jira, project: mappedProject }
+      : config.jira;
     try {
       [queueIssues, activeIssues] = await Promise.all([
-        deps.fetchQueueIssues(config.jira),
-        deps.fetchActiveIssues(config.jira),
+        deps.fetchQueueIssues(jira),
+        deps.fetchActiveIssues(jira),
       ]);
     } catch {
       degraded.push('jira');
@@ -64,11 +73,24 @@ export async function buildDashboardResponse(
   const jiraDegraded: boolean = degraded.includes('jira');
   const githubDegraded: boolean = degraded.includes('github');
 
+  const repos: string[] = Array.from(
+    new Set([
+      ...Object.keys(config.repoProjectMap),
+      ...prs.map((pr) => pr.repo).filter((r): r is string => !!r),
+    ]),
+  ).sort();
+  const scopedPrs: GithubPr[] = selectedRepo
+    ? prs.filter((pr) => pr.repo === selectedRepo)
+    : prs;
+  const repoLabel: string = selectedRepo
+    ? (selectedRepo.split('/').pop() ?? selectedRepo)
+    : config.repoLabel;
+
   const snapshot: DashboardSnapshot = assembleSnapshot({
     queueIssues,
     activeIssues,
-    prs,
-    repo: config.repoLabel,
+    prs: scopedPrs,
+    repo: repoLabel,
     now,
   });
 
@@ -89,5 +111,5 @@ export async function buildDashboardResponse(
     }
   }
 
-  return { snapshot, degraded };
+  return { snapshot, degraded, repos, selectedRepo };
 }

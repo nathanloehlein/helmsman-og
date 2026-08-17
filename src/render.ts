@@ -83,25 +83,16 @@ export function renderDashboard(
   data: DashboardSnapshot,
   now: Date,
   degraded: string[] = [],
-  filterRepo: string | null = null,
+  repos: string[] = [],
+  selectedRepo: string | null = null,
 ): void {
   const queue = sortByPriority(data.queue);
 
-  const shippedRepos: string[] = Array.from(
-    new Set(data.shipped.map((pr) => pr.repo).filter((r): r is string => !!r)),
-  ).sort();
-  const activeRepo: string | null =
-    filterRepo && shippedRepos.includes(filterRepo) ? filterRepo : null;
-  const visibleShipped = activeRepo
-    ? data.shipped.filter((pr) => pr.repo === activeRepo)
-    : data.shipped;
-  const displayRepo: string = activeRepo ? shortRepo(activeRepo) : data.repo;
-
   const repoOptions: string = ['<option value="">All repos</option>']
     .concat(
-      shippedRepos.map(
+      repos.map(
         (repo) =>
-          `<option value="${esc(repo)}"${repo === activeRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
+          `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
       ),
     )
     .join('');
@@ -132,7 +123,7 @@ export function renderDashboard(
     )
     .join('');
 
-  const shippedCards = visibleShipped
+  const shippedCards = data.shipped
     .map((pr) => {
       const status = PR_STATUS[pr.status];
       const repoShort: string = pr.repo ? shortRepo(pr.repo) : '';
@@ -181,7 +172,7 @@ export function renderDashboard(
         <span class="pulse-dot" aria-hidden="true"></span>
         <div class="status-text"><strong>Working</strong>${claimed}</div>
         <div class="topbar-sep"></div>
-        <span class="repo-tag">${esc(displayRepo)}</span>
+        <span class="repo-tag">${esc(data.repo)}</span>
         <div class="topbar-sep"></div>
         <span class="brand">BACKLOG RUNNER</span>
         <div class="topbar-stats">
@@ -248,8 +239,8 @@ export function renderDashboard(
         <div class="panel-head">
           <span class="panel-title">Recently shipped</span>
           <div class="panel-head-controls">
-            <select class="repo-select" aria-label="Filter by repository">${repoOptions}</select>
-            <span class="panel-count mono">${visibleShipped.length}</span>
+            <select class="repo-select" aria-label="Scope dashboard by repository">${repoOptions}</select>
+            <span class="panel-count mono">${data.shipped.length}</span>
           </div>
         </div>
         <div class="shipped-grid">${shippedCards}</div>

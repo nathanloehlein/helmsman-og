@@ -43,4 +43,46 @@ describe('buildDashboardResponse', () => {
     expect(r.degraded).toContain('github');
     expect(r.snapshot.queue.length).toBeGreaterThan(0);
   });
+
+  it('re-scopes Jira to the mapped project and filters shipped to the selected repo', async () => {
+    const prA = { number: 1, title: 'a', headRef: '', authorLogin: 'bot', mergedAt: null, createdAt: NOW.toISOString(), reviewDecision: null, repo: 'o/a' };
+    const prB = { ...prA, number: 2, repo: 'o/b' };
+    let seenProject = '';
+    const r = await buildDashboardResponse(
+      { ...FULL_ENV, REPO_PROJECT_MAP: 'o/a=PROJA,o/b=PROJB' },
+      NOW,
+      {
+        ...OK_DEPS,
+        fetchQueueIssues: async (jira: { project: string }) => {
+          seenProject = jira.project;
+          return [];
+        },
+        fetchActiveIssues: async () => [],
+        fetchAuthoredPrs: async () => [prA, prB],
+      },
+      'o/a',
+    );
+    expect(seenProject).toBe('PROJA');
+    expect(r.snapshot.shipped.map((p) => p.number)).toEqual([1]);
+    expect(r.repos).toEqual(['o/a', 'o/b']);
+    expect(r.selectedRepo).toBe('o/a');
+  });
+
+  it('uses the default Jira project and all repos when no repo is selected', async () => {
+    let seenProject = '';
+    const r = await buildDashboardResponse(
+      { ...FULL_ENV, REPO_PROJECT_MAP: 'o/a=PROJA' },
+      NOW,
+      {
+        ...OK_DEPS,
+        fetchQueueIssues: async (jira: { project: string }) => {
+          seenProject = jira.project;
+          return [];
+        },
+      },
+    );
+    expect(seenProject).toBe('AIROBUILD');
+    expect(r.selectedRepo).toBeNull();
+    expect(r.repos).toEqual(['o/a']);
+  });
 });

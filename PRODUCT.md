@@ -33,7 +33,8 @@ The engineer/operator watching the agent. The dashboard is **glanceable**: it an
 - Browser polls `GET /api/dashboard` every 30s (Vite dev-server plugin holds credentials server-side; nothing secret reaches the bundle).
 - The endpoint composes config → fetch (Jira + GitHub REST) → assemble → `DashboardSnapshot`.
 - **Degrades, never blanks.** Missing credentials or a failed source falls back to the mock payload for that slice, behind a "showing sample data" banner. A transient poll failure keeps the last-good render.
-- Config is environment-driven (`.env`): `JIRA_BASE_URL/EMAIL/API_TOKEN/PROJECT/ASSIGNEE`, optional `JIRA_JQL`, `GITHUB_TOKEN/PR_AUTHOR`, and optional `GITHUB_REPO`. Shipped PRs come from author-scoped GitHub search (repo-agnostic), because repo-scoped search is SSO-gated on some private orgs and returns 422. `GITHUB_REPO` is now only the topbar label; when unset the label falls back to `@<author>`.
+- Config is environment-driven (`.env`): `JIRA_BASE_URL/EMAIL/API_TOKEN/PROJECT/ASSIGNEE`, optional `JIRA_JQL`, `GITHUB_TOKEN/PR_AUTHOR`, optional `GITHUB_REPO`, and `REPO_PROJECT_MAP`. Shipped PRs come from author-scoped GitHub search (repo-agnostic), because repo-scoped search is SSO-gated on some private orgs and returns 422. `GITHUB_REPO` is only the default topbar label; when unset the label falls back to `@<author>`.
+- **Repo selector re-scopes the whole dashboard.** `REPO_PROJECT_MAP` is a comma-separated `repo=JIRA_PROJECT` map (e.g. `gdcorp-enm/conversations-web=LEKA,gdcorp-partners/airo-app-builder=AIROBUILD`). The dashboard is Jira-project-scoped, not GitHub-repo-scoped, so this map is the bridge: selecting a repo re-fetches `/api/dashboard?repo=…`, filters GitHub to that repo and re-queries Jira with the mapped project. Unmapped repos still filter GitHub but leave Jira on the default project.
 
 ## Product truth to preserve
 

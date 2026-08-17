@@ -44,6 +44,15 @@ describe('loadConfig', () => {
     expect(loadConfig(rest).repoLabel).toBe('backlog-runner');
   });
 
+  it('parses REPO_PROJECT_MAP into a repo→project record (trimming spaces)', () => {
+    const cfg = loadConfig({ ...FULL, REPO_PROJECT_MAP: 'o/a=PROJA, o/b = PROJB' });
+    expect(cfg.repoProjectMap).toEqual({ 'o/a': 'PROJA', 'o/b': 'PROJB' });
+  });
+
+  it('defaults repoProjectMap to an empty object', () => {
+    expect(loadConfig(FULL).repoProjectMap).toEqual({});
+  });
+
   it('builds default queue JQL from project + assignee', () => {
     const cfg = loadConfig(FULL);
     expect(buildQueueJql(cfg.jira!)).toBe(
