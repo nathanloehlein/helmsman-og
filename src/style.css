@@ -731,8 +731,10 @@ body::after {
 }
 
 /* Full-viewport dashboard: no page scroll, panels fill the height and their
-   lists scroll internally. Only on wide screens; mobile keeps natural flow. */
-@media (min-width: 981px) {
+   lists scroll internally. Only when the window is both wide and tall enough
+   to hold the layout; otherwise (narrow or short) it reverts to natural
+   document flow and the page scrolls, so nothing is ever clipped. */
+@media (min-width: 981px) and (min-height: 760px) {
   body {
     height: 100vh;
     overflow: hidden;
@@ -770,6 +772,9 @@ body::after {
   }
   .rail {
     min-height: 0;
+  }
+  .stat-block {
+    flex: none;
   }
   .rail .panel:last-child {
     flex: 1 1 auto;
