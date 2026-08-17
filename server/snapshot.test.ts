@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildActivity,
+  buildSteps,
   issueToTicket,
   mapPriority,
   mapPrStatus,
@@ -103,9 +105,6 @@ describe('prToShipped', () => {
     expect(prToShipped(pr({ title: 'fix', headRef: 'main' })).ticketId).toBe('—');
   });
 });
-
-import { buildActivity, buildSteps } from './snapshot';
-import type { ActivityEvent, WorkStep } from '../src/types';
 
 const CURRENT: JiraIssue = {
   key: 'AIROBUILD-482',
