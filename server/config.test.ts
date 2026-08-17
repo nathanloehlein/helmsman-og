@@ -53,4 +53,14 @@ describe('loadConfig', () => {
       'project = "AIROBUILD" AND assignee = "me" AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC',
     );
   });
+
+  it('leaves a currentUser() function assignee unquoted in both JQLs', () => {
+    const cfg = loadConfig({ ...FULL, JIRA_ASSIGNEE: 'currentUser()' });
+    expect(buildQueueJql(cfg.jira!)).toBe(
+      'project = "AIROBUILD" AND assignee = currentUser() AND status = Backlog ORDER BY priority',
+    );
+    expect(buildActiveJql(cfg.jira!)).toBe(
+      'project = "AIROBUILD" AND assignee = currentUser() AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC',
+    );
+  });
 });

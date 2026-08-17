@@ -52,11 +52,15 @@ export function loadConfig(env: Env): AppConfig {
   return { jira, github, repoLabel };
 }
 
+function formatAssignee(assignee: string): string {
+  return /\(\s*\)$/.test(assignee) ? assignee : `"${assignee}"`;
+}
+
 export function buildQueueJql(jira: JiraConfig): string {
   if (jira.jql) return jira.jql;
-  return `project = "${jira.project}" AND assignee = "${jira.assignee}" AND status = Backlog ORDER BY priority`;
+  return `project = "${jira.project}" AND assignee = ${formatAssignee(jira.assignee)} AND status = Backlog ORDER BY priority`;
 }
 
 export function buildActiveJql(jira: JiraConfig): string {
-  return `project = "${jira.project}" AND assignee = "${jira.assignee}" AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC`;
+  return `project = "${jira.project}" AND assignee = ${formatAssignee(jira.assignee)} AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC`;
 }
