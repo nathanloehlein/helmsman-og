@@ -103,3 +103,61 @@ describe('prToShipped', () => {
     expect(prToShipped(pr({ title: 'fix', headRef: 'main' })).ticketId).toBe('—');
   });
 });
+
+import { buildActivity, buildSteps } from './snapshot';
+import type { ActivityEvent, WorkStep } from '../src/types';
+
+const CURRENT: JiraIssue = {
+  key: 'AIROBUILD-482',
+  fields: {
+    summary: 'Add retry',
+    status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
+    priority: { name: 'P2 - Medium' },
+    resolutiondate: null,
+  },
+  changelog: {
+    histories: [
+      { created: '2026-08-17T00:00:00.000Z', items: [{ field: 'status', fromString: null, toString: 'Backlog' }] },
+      { created: '2026-08-17T01:00:00.000Z', items: [{ field: 'status', fromString: 'Backlog', toString: 'In Progress' }] },
+    ],
+  },
+};
+
+describe('buildActivity', () => {
+  it('merges status transitions and PR events, newest first', () => {
+    const prs: GithubPr[] = [
+      { number: 7, title: 'AIROBUILD-482 retry', headRef: 'f/AIROBUILD-482', authorLogin: 'bot', mergedAt: '2026-08-17T03:00:00.000Z', createdAt: '2026-08-17T01:00:00.000Z', reviewDecision: null },
+    ];
+    const feed = buildActivity([CURRENT], prs);
+    expect(feed[0].time).toBe('2026-08-17T03:00:00.000Z');
+    expect(feed[0].text).toContain('merged');
+    expect(feed[0].accent).toBe(true);
+    const times = feed.map((e) => e.time);
+    expect(times).toEqual([...times].sort().reverse());
+  });
+
+  it('caps at 12 events', () => {
+    const many: JiraIssue[] = Array.from({ length: 20 }, (_, i) => ({
+      key: `K-${i}`,
+      fields: { summary: 's', status: { name: 'Done', statusCategory: { key: 'done' } }, priority: null, resolutiondate: null },
+      changelog: { histories: [{ created: `2026-08-1${i % 9}T00:00:00.000Z`, items: [{ field: 'status', fromString: 'In Progress', toString: 'Done' }] }] },
+    }));
+    expect(buildActivity(many, []).length).toBe(12);
+  });
+});
+
+describe('buildSteps', () => {
+  it('turns transitions into done steps and marks the tail active while in progress', () => {
+    const steps = buildSteps(CURRENT, []);
+    expect(steps[0].state).toBe('done');
+    expect(steps[steps.length - 1].state).toBe('active');
+  });
+
+  it('adds a step for a linked PR', () => {
+    const prs: GithubPr[] = [
+      { number: 9, title: 'AIROBUILD-482 retry', headRef: 'f/AIROBUILD-482', authorLogin: 'bot', mergedAt: null, createdAt: '2026-08-17T02:00:00.000Z', reviewDecision: null },
+    ];
+    const steps = buildSteps(CURRENT, prs);
+    expect(steps.some((s) => s.text.includes('#9'))).toBe(true);
+  });
+});
