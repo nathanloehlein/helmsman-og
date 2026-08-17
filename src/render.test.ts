@@ -49,6 +49,27 @@ describe('renderDashboard', () => {
     expect(el.querySelector('.degraded-banner')).toBeNull();
   });
 
+  it('lists distinct shipped repos in the selector and filters by the chosen one', () => {
+    const el: HTMLDivElement = root();
+    const withRepos: DashboardSnapshot = snapshot({
+      shipped: [
+        { number: 1, title: 'a', ticketId: '—', status: 'in-review', openedAt: NOW.toISOString(), repo: 'org/alpha' },
+        { number: 2, title: 'b', ticketId: '—', status: 'merged', openedAt: NOW.toISOString(), repo: 'org/beta' },
+        { number: 3, title: 'c', ticketId: '—', status: 'in-review', openedAt: NOW.toISOString(), repo: 'org/alpha' },
+      ],
+    });
+
+    renderDashboard(el, withRepos, NOW);
+    const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.repo-select');
+    expect(select).not.toBeNull();
+    expect(Array.from(select!.options).map((o) => o.value)).toEqual(['', 'org/alpha', 'org/beta']);
+    expect(el.querySelectorAll('.pr-card').length).toBe(3);
+
+    renderDashboard(el, withRepos, NOW, [], 'org/alpha');
+    expect(el.querySelectorAll('.pr-card').length).toBe(2);
+    expect(el.querySelector('.repo-tag')?.textContent).toBe('alpha');
+  });
+
   it('escapes untrusted ticket titles to prevent XSS', () => {
     const el: HTMLDivElement = root();
     const payload: string = '<img src=x onerror=alert(1)>';

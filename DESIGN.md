@@ -48,6 +48,7 @@ Authored inline SVGs at one consistent stroke — check (done step), filled dot 
 - **Sparkline**: cyan stroke with a `drop-shadow` glow; gradient area fill.
 - **Empty states**: centered muted note per panel ("No backlog tickets assigned." / "No recent pull requests." / "No recent activity.").
 - **Degraded banner**: amber-tinted, names which sources fell back to sample data.
+- **Repo selector**: a HUD-styled `<select>` in the Recently Shipped head, listing "All repos" + the distinct repos present in the shipped PRs. Choosing one filters the panel and retints the topbar label to that repo's short name. Custom cyan chevron, hover + `:focus-visible` glow ring for keyboard users. Selection is held by the client view controller (`DashboardView`) so it survives the 30s poll re-render.
 
 ## Responsive
 

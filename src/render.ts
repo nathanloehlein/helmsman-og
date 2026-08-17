@@ -38,6 +38,10 @@ function formatCycle(minutes: number): string {
   return `${(minutes / 1440).toFixed(1)}d`
 };
 
+function shortRepo(repo: string): string {
+  return repo.split('/').pop() ?? repo
+}
+
 function buildSparkline(values: number[]): string {
   const width = 220;
   const top = 8;
@@ -79,8 +83,28 @@ export function renderDashboard(
   data: DashboardSnapshot,
   now: Date,
   degraded: string[] = [],
+  filterRepo: string | null = null,
 ): void {
   const queue = sortByPriority(data.queue);
+
+  const shippedRepos: string[] = Array.from(
+    new Set(data.shipped.map((pr) => pr.repo).filter((r): r is string => !!r)),
+  ).sort();
+  const activeRepo: string | null =
+    filterRepo && shippedRepos.includes(filterRepo) ? filterRepo : null;
+  const visibleShipped = activeRepo
+    ? data.shipped.filter((pr) => pr.repo === activeRepo)
+    : data.shipped;
+  const displayRepo: string = activeRepo ? shortRepo(activeRepo) : data.repo;
+
+  const repoOptions: string = ['<option value="">All repos</option>']
+    .concat(
+      shippedRepos.map(
+        (repo) =>
+          `<option value="${esc(repo)}"${repo === activeRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
+      ),
+    )
+    .join('');
 
   const queueItems = queue.length
     ? queue
@@ -108,10 +132,10 @@ export function renderDashboard(
     )
     .join('');
 
-  const shippedCards = data.shipped
+  const shippedCards = visibleShipped
     .map((pr) => {
       const status = PR_STATUS[pr.status];
-      const repoShort: string = pr.repo ? (pr.repo.split('/').pop() ?? pr.repo) : '';
+      const repoShort: string = pr.repo ? shortRepo(pr.repo) : '';
       const subParts: string[] = [
         pr.ticketId !== '—' ? esc(pr.ticketId) : '',
         repoShort ? esc(repoShort) : '',
@@ -157,7 +181,7 @@ export function renderDashboard(
         <span class="pulse-dot" aria-hidden="true"></span>
         <div class="status-text"><strong>Working</strong>${claimed}</div>
         <div class="topbar-sep"></div>
-        <span class="repo-tag">${esc(data.repo)}</span>
+        <span class="repo-tag">${esc(displayRepo)}</span>
         <div class="topbar-sep"></div>
         <span class="brand">BACKLOG RUNNER</span>
         <div class="topbar-stats">
@@ -223,7 +247,10 @@ export function renderDashboard(
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">Recently shipped</span>
-          <span class="panel-count mono">${data.shipped.length}</span>
+          <div class="panel-head-controls">
+            <select class="repo-select" aria-label="Filter by repository">${repoOptions}</select>
+            <span class="panel-count mono">${visibleShipped.length}</span>
+          </div>
         </div>
         <div class="shipped-grid">${shippedCards}</div>
       </div>
