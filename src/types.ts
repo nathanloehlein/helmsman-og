@@ -38,6 +38,4 @@ export interface DailyStats {
   completedToday: number;
   awaitingReview: number;
   avgCycleMinutes: number;
-  tokensSpent: number;
-  estCostUsd: number;
 }

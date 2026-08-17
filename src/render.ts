@@ -162,8 +162,6 @@ export function renderDashboard(root: HTMLElement, data: DashboardSnapshot, now:
             <div class="stat-row"><span class="stat-label">Tickets completed</span><span class="stat-value">${data.stats.completedToday}</span></div>
             <div class="stat-row"><span class="stat-label">PRs awaiting review</span><span class="stat-value">${data.stats.awaitingReview}</span></div>
             <div class="stat-row"><span class="stat-label">Avg cycle time</span><span class="stat-value">${data.stats.avgCycleMinutes}m</span></div>
-            <div class="stat-row"><span class="stat-label">Tokens spent</span><span class="stat-value">${(data.stats.tokensSpent / 1_000_000).toFixed(1)}M</span></div>
-            <div class="stat-row"><span class="stat-label">Est. cost</span><span class="stat-value">$${data.stats.estCostUsd.toFixed(2)}</span></div>
             <div class="spark-wrap">
               <div class="spark-label">Throughput, last 7 days</div>
               ${buildSparkline(data.throughput7d)}
