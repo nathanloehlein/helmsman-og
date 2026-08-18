@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, sep } from 'node:path';
 import { existsSync } from 'node:fs';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import { openDb } from './db';
@@ -40,16 +40,18 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     }
     const rel: string = url.pathname === '/' ? '/index.html' : url.pathname;
     const file: string = normalize(join(DIST, rel));
-    if (file.startsWith(DIST) && existsSync(file)) {
+    if (file.startsWith(DIST + sep) && existsSync(file)) {
+      const buf: Buffer = await readFile(file);
       res.writeHead(200, { 'Content-Type': MIME[extname(file)] ?? 'application/octet-stream' });
-      res.end(await readFile(file));
+      res.end(buf);
       return;
     }
     res.writeHead(404);
     res.end('not found');
   })().catch((err: unknown) => {
-    res.writeHead(500);
-    res.end(String(err));
+    process.stderr.write(`request error: ${String(err)}\n`);
+    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('internal error');
   });
 });
 
