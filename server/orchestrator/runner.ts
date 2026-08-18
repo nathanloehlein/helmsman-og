@@ -14,29 +14,37 @@ export interface RunnerDeps {
 
 export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<string> {
   const runId: string = deps.genId();
-  const worktree: { path: string; branch: string } = await deps.createWorktree(task.repo, runId);
+  let worktreePath: string | null = null;
+  try {
+    const worktree: { path: string; branch: string } = await deps.createWorktree(task.repo, runId);
+    worktreePath = worktree.path;
 
-  const row: RunRow = {
-    id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
-    status: 'running', attempt: 1, prNumber: null, startedAt: deps.now(),
-    endedAt: null, costUsd: null, worktreePath: worktree.path,
-  };
-  deps.db.insertRun(row);
+    const row: RunRow = {
+      id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
+      status: 'running', attempt: 1, prNumber: null, startedAt: deps.now(),
+      endedAt: null, costUsd: null, worktreePath: worktree.path,
+    };
+    deps.db.insertRun(row);
 
-  const onEvent = (e: AgentEvent): void => {
-    deps.db.appendEvent(runId, e.kind, e.text, deps.now());
-    deps.bus.publish(runId, e);
-  };
+    const onEvent = (e: AgentEvent): void => {
+      deps.db.appendEvent(runId, e.kind, e.text, deps.now());
+      deps.bus.publish(runId, e);
+    };
 
-  const handle: AgentHandle = deps.adapter.start(task, worktree.path, onEvent);
-  const result: AgentResult = await handle.exit;
+    const handle: AgentHandle = deps.adapter.start(task, worktree.path, onEvent);
+    const result: AgentResult = await handle.exit;
 
-  deps.db.updateRun(runId, {
-    status: result.ok ? 'succeeded' : 'failed',
-    prNumber: result.prNumber ?? null,
-    costUsd: result.costUsd ?? null,
-    endedAt: deps.now(),
-  });
-  await deps.removeWorktree(task.repo, worktree.path);
+    deps.db.updateRun(runId, {
+      status: result.ok ? 'succeeded' : 'failed',
+      prNumber: result.prNumber ?? null,
+      costUsd: result.costUsd ?? null,
+      endedAt: deps.now(),
+    });
+  } catch (err) {
+    deps.bus.publish(runId, { kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    deps.db.updateRun(runId, { status: 'failed', endedAt: deps.now() });
+  } finally {
+    if (worktreePath) await deps.removeWorktree(task.repo, worktreePath);
+  }
   return runId;
 }
