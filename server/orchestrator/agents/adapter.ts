@@ -1,0 +1,31 @@
+export interface AgentTask {
+  ticketId: string;
+  title: string;
+  repo: string;
+  jiraBaseUrl: string;
+}
+
+export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error';
+
+export interface AgentEvent {
+  kind: AgentEventKind;
+  text: string;
+  costUsd?: number;
+  prNumber?: number;
+}
+
+export interface AgentResult {
+  ok: boolean;
+  prNumber?: number;
+  costUsd?: number;
+}
+
+export interface AgentHandle {
+  stop(): void;
+  readonly exit: Promise<AgentResult>;
+}
+
+export interface AgentAdapter {
+  readonly id: string;
+  start(task: AgentTask, workdir: string, onEvent: (e: AgentEvent) => void): AgentHandle;
+}
