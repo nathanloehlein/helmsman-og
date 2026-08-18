@@ -61,6 +61,7 @@
 
 html {
   background: var(--void);
+  height: 100%;
 }
 
 body {
@@ -71,9 +72,14 @@ body {
   font-size: 14px;
   line-height: 1.5;
   padding: 28px;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   position: relative;
   -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
 }
 
 /* Ambient depth: a faint HUD grid + a cool overhead glow, fixed behind content. */
@@ -126,12 +132,15 @@ body::after {
 
 .wrap {
   width: 100%;
+  height: 100%;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 18px;
   position: relative;
   z-index: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .degraded-banner {
