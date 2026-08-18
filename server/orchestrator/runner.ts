@@ -34,7 +34,7 @@ async function claimTicket(
     onEvent({ kind: 'log', text: `claimed ticket ${ticketId}: assigned bot and transitioned to ${statusInProgress}` });
   } catch (err) {
     const text: string = err instanceof Error ? err.message : String(err);
-    onEvent({ kind: 'error', text: `jira claim failed: ${text}` });
+    onEvent({ kind: 'log', text: `jira claim failed (non-fatal): ${text}` });
   }
 }
 
@@ -49,7 +49,7 @@ async function markInReview(
     onEvent({ kind: 'log', text: `transitioned ticket ${ticketId} to ${statusInReview}` });
   } catch (err) {
     const text: string = err instanceof Error ? err.message : String(err);
-    onEvent({ kind: 'error', text: `jira transition failed: ${text}` });
+    onEvent({ kind: 'log', text: `jira transition failed (non-fatal): ${text}` });
   }
 }
 
@@ -105,7 +105,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
         prNumber = await deps.findPrNumber(task.repo, worktree.branch);
       } catch (err) {
         const text: string = err instanceof Error ? err.message : String(err);
-        onEvent({ kind: 'error', text: `find PR failed: ${text}` });
+        onEvent({ kind: 'log', text: `find PR failed (non-fatal): ${text}` });
       }
     }
 

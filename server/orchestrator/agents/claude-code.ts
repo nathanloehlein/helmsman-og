@@ -15,10 +15,11 @@ function buildPrompt(task: AgentTask): string {
 export const claudeCodeAdapter: AgentAdapter = {
   id: 'claude-code',
   start(task: AgentTask, workdir: string, onEvent: (e: AgentEvent) => void): AgentHandle {
+    const { JIRA_API_TOKEN, JIRA_EMAIL, ...agentEnv } = process.env;
     const child: ChildProcess = spawn(
       'claude',
       ['-p', buildPrompt(task), '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
-      { cwd: workdir, env: process.env },
+      { cwd: workdir, env: agentEnv },
     );
 
     let prNumber: number | undefined;

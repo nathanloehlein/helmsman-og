@@ -133,10 +133,13 @@ never merges — the human review gate is real.
 | `ORCHESTRATOR_PORT` | orchestrator port (default `8787`) |
 | `AGENT_MAX_CONCURRENCY` | max simultaneous runs (default `3`) |
 
-> **Security:** the agent is spawned with `--dangerously-skip-permissions` so it can edit,
-> commit, and open a PR unattended. This grants full tool access with no prompts — it is
-> only acceptable because each run is sandboxed in a throwaway per-run git worktree. Do not
-> point `AGENTS_ROOT` at a repo you can't afford an autonomous agent to modify.
+> **Security:** the agent is spawned with `--dangerously-skip-permissions`, so it edits,
+> commits, and opens a PR with full, unattended tool access on the host — a per-run git
+> worktree is a working directory, not a sandbox (it shares the repo's git object store and
+> the agent has the same host, shell, and filesystem access as the orchestrator process).
+> It inherits `GITHUB_TOKEN` to open its PR; `JIRA_API_TOKEN` and `JIRA_EMAIL` are withheld
+> since the orchestrator makes all Jira writes itself. Only point `AGENTS_ROOT` at repos,
+> and only launch tickets, you're willing to let an autonomous agent modify on this machine.
 
 ### Degraded mode
 

@@ -228,7 +228,7 @@ describe('startRun', () => {
 
     const row = db.getRun(id);
     expect(row?.status).toBe('succeeded');
-    expect(db.listEvents(id).some((e) => e.kind === 'error')).toBe(true);
+    expect(db.listEvents(id).some((e) => e.kind === 'log' && e.text.includes('non-fatal'))).toBe(true);
     db.close();
   });
 
@@ -241,7 +241,7 @@ describe('startRun', () => {
 
     const row = db.getRun(id);
     expect(row?.status).toBe('succeeded');
-    expect(db.listEvents(id).some((e) => e.kind === 'error')).toBe(true);
+    expect(db.listEvents(id).some((e) => e.kind === 'log' && e.text.includes('non-fatal'))).toBe(true);
     db.close();
   });
 
