@@ -56,7 +56,7 @@ export function openDb(path: string): Db {
       sql.prepare(`INSERT INTO runs (${COLS.join(',')}) VALUES (${COLS.map((c) => '@' + c).join(',')})`).run(r);
     },
     updateRun(id: string, patch: Partial<RunRow>): void {
-      const keys: string[] = Object.keys(patch);
+      const keys: string[] = Object.keys(patch).filter((k) => COLS.includes(k));
       if (keys.length === 0) return;
       const set: string = keys.map((k) => `${k} = @${k}`).join(', ');
       sql.prepare(`UPDATE runs SET ${set} WHERE id = @id`).run({ ...patch, id });

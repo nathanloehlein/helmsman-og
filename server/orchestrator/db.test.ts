@@ -47,4 +47,24 @@ describe('db', () => {
     expect(evs.map((e) => e.text)).toEqual(['claimed', 'working']);
     expect(evs[0].kind).toBe('phase');
   });
+
+  it('lists runs newest-first and respects limit', () => {
+    db = openDb(':memory:');
+    db.insertRun(run({ id: 'r1', startedAt: '2026-08-18T00:00:00.000Z' }));
+    db.insertRun(run({ id: 'r2', startedAt: '2026-08-18T00:00:02.000Z' }));
+    db.insertRun(run({ id: 'r3', startedAt: '2026-08-18T00:00:01.000Z' }));
+    const all: string[] = db.listRuns(10).map((r) => r.id);
+    expect(all).toEqual(['r2', 'r3', 'r1']);
+    const limited: string[] = db.listRuns(2).map((r) => r.id);
+    expect(limited).toEqual(['r2', 'r3']);
+  });
+
+  it('updateRun with empty patch is a no-op', () => {
+    db = openDb(':memory:');
+    db.insertRun(run());
+    const before: RunRow | null = db.getRun('r1');
+    db.updateRun('r1', {});
+    const after: RunRow | null = db.getRun('r1');
+    expect(after).toEqual(before);
+  });
 });
