@@ -15,17 +15,17 @@ export interface RunnerDeps {
 
 export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<string> {
   const runId: string = deps.genId();
+  const initial: RunRow = {
+    id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
+    status: 'running', attempt: 1, prNumber: null, startedAt: deps.now(),
+    endedAt: null, costUsd: null, worktreePath: null,
+  };
+  deps.db.insertRun(initial);
   let worktreePath: string | null = null;
   try {
     const worktree: { path: string; branch: string } = await deps.createWorktree(task.repo, runId);
     worktreePath = worktree.path;
-
-    const row: RunRow = {
-      id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
-      status: 'running', attempt: 1, prNumber: null, startedAt: deps.now(),
-      endedAt: null, costUsd: null, worktreePath: worktree.path,
-    };
-    deps.db.insertRun(row);
+    deps.db.updateRun(runId, { worktreePath: worktree.path });
 
     const onEvent = (e: AgentEvent): void => {
       deps.db.appendEvent(runId, e.kind, e.text, deps.now());
@@ -43,7 +43,9 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       endedAt: deps.now(),
     });
   } catch (err) {
-    deps.bus.publish(runId, { kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    const text: string = err instanceof Error ? err.message : String(err);
+    deps.db.appendEvent(runId, 'error', text, deps.now());
+    deps.bus.publish(runId, { kind: 'error', text });
     deps.db.updateRun(runId, { status: 'failed', endedAt: deps.now() });
   } finally {
     if (worktreePath) await deps.removeWorktree(task.repo, worktreePath);

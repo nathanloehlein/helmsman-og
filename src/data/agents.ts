@@ -22,6 +22,10 @@ export interface RunEvent {
 
 export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): () => void {
   const src: EventSource = new EventSource(`/api/agents/${encodeURIComponent(runId)}/log`);
-  src.onmessage = (m: MessageEvent<string>): void => onEvent(JSON.parse(m.data) as RunEvent);
+  src.onmessage = (m: MessageEvent<string>): void => {
+    const event: RunEvent = JSON.parse(m.data) as RunEvent;
+    onEvent(event);
+    if (event.kind === 'result' || event.kind === 'error') src.close();
+  };
   return (): void => src.close();
 }

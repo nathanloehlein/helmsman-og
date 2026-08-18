@@ -48,11 +48,16 @@ describe('startRun', () => {
     db.close();
   });
 
-  it('marks failed and does not remove a worktree when createWorktree rejects', async () => {
+  it('persists a failed run row and error event, and does not remove a worktree, when createWorktree rejects', async () => {
     const db: Db = openDb(':memory:');
     const remove = vi.fn(async () => undefined);
     const d: RunnerDeps = { ...deps(db, fakeAdapter([], true)), createWorktree: async () => { throw new Error('git fail'); }, removeWorktree: remove };
-    await expect(startRun(task, d)).resolves.toBeDefined();
+    const id = await startRun(task, d);
+    const row = db.getRun(id);
+    expect(row).not.toBeNull();
+    expect(row?.status).toBe('failed');
+    expect(row?.worktreePath).toBeNull();
+    expect(db.listEvents(id).some((e) => e.kind === 'error' && e.text === 'git fail')).toBe(true);
     expect(remove).not.toHaveBeenCalled();
     db.close();
   });

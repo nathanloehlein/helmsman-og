@@ -70,7 +70,13 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       const events: RunEventRow[] = db.listEvents(logMatch[1]);
       for (const e of events) res.write(`data: ${JSON.stringify(e)}\n\n`);
-      const off: () => void = bus.subscribe(logMatch[1], (ev: AgentEvent) => res.write(`data: ${JSON.stringify(ev)}\n\n`));
+      const off: () => void = bus.subscribe(logMatch[1], (ev: AgentEvent) => {
+        res.write(`data: ${JSON.stringify(ev)}\n\n`);
+        if (ev.kind === 'result' || ev.kind === 'error') {
+          off();
+          res.end();
+        }
+      });
       req.on('close', off);
       return;
     }
@@ -104,4 +110,4 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   });
 });
 
-server.listen(PORT, () => process.stdout.write(`orchestrator on :${PORT}\n`));
+server.listen(PORT, '127.0.0.1', () => process.stdout.write(`orchestrator on :${PORT}\n`));
