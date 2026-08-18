@@ -41,6 +41,10 @@ export const claudeCodeAdapter: AgentAdapter = {
 
     const exit: Promise<AgentResult> = new Promise((resolve) => {
       child.on('close', (code: number | null) => resolve({ ok: code === 0, prNumber, costUsd }));
+      child.on('error', (err: Error) => {
+        onEvent({ kind: 'error', text: err.message });
+        resolve({ ok: false, prNumber, costUsd });
+      });
     });
 
     return { stop: () => child.kill('SIGTERM'), exit };
