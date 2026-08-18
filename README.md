@@ -1,33 +1,44 @@
 # Backlog Runner
 
-This repo ships a live agent dashboard — run `npm run dev` and it renders in the
-browser (mock data for now).
+A control plane for Jira-backlog-driven coding agents. Launch a CLI agent against a
+ticket, watch it work live (explore → implement → test → open a PR), and keep a human
+approval gate before anything merges — running multiple agents across repos, one at a
+time per repo. The dashboard (backlog queue, current run, activity feed, shipped PRs)
+is the view; the **orchestrator** behind it spawns and supervises the agents.
 
-Dashboard prototype for a Jira-backlog-driven coding agent: current task, priority
-queue, PR history, and a live activity feed. Built to visualize the "agent claims
-a ticket, implements it, opens a PR, picks the next one" loop with a human
-approval gate before merge.
+## Status
+
+- **Built (P0 + P1):** the orchestrator, SQLite run store, dashboard API, and a
+  Claude Code agent adapter — launch a ticket, run it in an isolated git worktree,
+  stream its events to a live log drawer, and record the run. The agent opens a PR
+  and **never merges**.
+- **Planned:** Jira status writes + the In-Review gate (P2), a multi-agent running
+  view (P3), an auto-claim scheduler (P4), a generic-command adapter + hardening (P5).
+  See `docs/superpowers/plans/`.
 
 ## Stack
 
-TypeScript (strict) + Vite, no runtime framework. Logic (`src/logic/`) is pure and
-unit-tested with Vitest; `src/render.ts` is the only thing that touches the DOM.
+TypeScript (strict). A **Vite** front end (pure logic in `src/logic/`, unit-tested with
+Vitest; `src/render.ts` owns the DOM) plus a persistent **Node orchestrator**
+(`server/orchestrator/`, `node:http` + `node:child_process`) that serves the API, owns a
+**SQLite** run store (better-sqlite3), and spawns agents in per-run git worktrees. No
+runtime framework.
 
 ## Data
 
-Live data flows through `GET /api/dashboard` (served by the Vite dev-server plugin),
-which fetches from Jira and GitHub in `server/` and assembles a `DashboardSnapshot`.
-`src/data/mock.ts` is the server-side fallback payload: a static `DashboardSnapshot`
-the endpoint substitutes per-source when a live source can't be reached. See
-[Wiring this dashboard to the real thing](#wiring-this-dashboard-to-the-real-thing).
+`GET /api/dashboard` is served by the **orchestrator** (`server/orchestrator/`), which
+queries Jira + GitHub and assembles a `DashboardSnapshot`; in dev, Vite proxies `/api`
+to it. `src/data/mock.ts` is the server-side fallback payload the endpoint substitutes
+per-source when a live source can't be reached (see [Degraded mode](#degraded-mode)).
 
 ## Commands
 
 ```bash
 npm install
-npm run dev      # dev server
-npm run build    # production build to dist/
-npm test         # vitest
+npm run dev          # orchestrator (:8787) + Vite dev server (proxies /api)
+npm run orchestrator # orchestrator only
+npm run build        # production build to dist/
+npm test             # vitest
 ```
 
 ## Background: the agent this dashboard watches
@@ -85,26 +96,52 @@ dependency ordering between tickets (ticket B can't start until ticket A
 merges — that's a dependency graph, not a queue). Until then, Jira-as-state +
 a bounded per-ticket agent session is the whole architecture.
 
-### Wiring this dashboard to the real thing
-
-The browser polls `GET /api/dashboard`, served by a Vite dev-server plugin
-that queries Jira and GitHub directly — no separate backend process.
+## Setup
 
 1. `cp .env.example .env`
 2. Fill in `.env`:
    - `JIRA_API_TOKEN` — an [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens)
      for the `JIRA_EMAIL` account
-   - `GITHUB_TOKEN` — a GitHub PAT with read access to `GITHUB_REPO`
-3. `npm run dev`, then open the printed local URL.
+   - `GITHUB_TOKEN` — a GitHub PAT with read access to your repos
+   - `AGENTS_ROOT` — a local directory holding a checkout of each repo agents work in
+     (the orchestrator creates a git worktree per run under `<AGENTS_ROOT>/<repo>`)
+3. `npm run dev`, then open the printed Vite URL.
 
-The client (`src/main.ts`) calls `loadDashboard()` from `src/data/live.ts`
-on load and every 30s (`POLL_MS`) thereafter, re-rendering in place. A
-transient poll failure is swallowed silently — the last good render stays
-on screen.
+The client (`src/main.ts`) calls `loadDashboard()` from `src/data/live.ts` on load and
+every 30s (`POLL_MS`), re-rendering in place; a transient poll failure keeps the last
+good render.
 
-**Degraded mode:** if `.env` is missing or a token is invalid, the plugin
-falls back per-source to `src/data/mock.ts` for whichever of Jira/GitHub
-it couldn't reach, and the response's `degraded` array names which sources
-are mocked (e.g. `["jira", "github"]` with no `.env` at all). The dashboard
-renders a banner above the topbar naming the degraded sources so it's never
-silently showing fake data as real.
+## Running agents
+
+Click **Launch** on a backlog ticket (or `POST /api/agents/launch {ticketId,title,repo}`).
+The orchestrator creates a git worktree under `AGENTS_ROOT`, spawns a Claude Code agent
+(`claude -p --output-format stream-json`) in it, streams the agent's events to a live log
+drawer over SSE (`GET /api/agents/:id/log`), records the run in SQLite, and removes the
+worktree when it finishes. `POST /api/agents/:id/stop` SIGTERMs a run. One run per repo at
+a time; global concurrency is capped by `AGENT_MAX_CONCURRENCY`. The agent opens a PR and
+never merges — the human review gate is real.
+
+## Configuration
+
+| Var | Purpose |
+| --- | --- |
+| `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | Jira Cloud REST auth (read) |
+| `JIRA_PROJECT` / `JIRA_ASSIGNEE` / `JIRA_JQL` | queue scope (JQL, or project+assignee) |
+| `GITHUB_TOKEN` / `GITHUB_PR_AUTHOR` / `GITHUB_REPO` | GitHub auth + shipped-PR/label defaults |
+| `REPO_PROJECT_MAP` | `repo=JIRA_PROJECT` pairs; the repo selector re-scopes the whole dashboard |
+| `AGENTS_ROOT` | directory of per-repo checkouts the orchestrator worktrees from |
+| `ORCHESTRATOR_PORT` | orchestrator port (default `8787`) |
+| `AGENT_MAX_CONCURRENCY` | max simultaneous runs (default `3`) |
+
+> **Security:** the agent is spawned with `--dangerously-skip-permissions` so it can edit,
+> commit, and open a PR unattended. This grants full tool access with no prompts — it is
+> only acceptable because each run is sandboxed in a throwaway per-run git worktree. Do not
+> point `AGENTS_ROOT` at a repo you can't afford an autonomous agent to modify.
+
+### Degraded mode
+
+If `.env` is missing or a token is invalid, the orchestrator falls back per-source to
+`src/data/mock.ts` for whichever of Jira/GitHub it couldn't reach, and the response's
+`degraded` array names which sources are mocked (e.g. `["jira","github"]` with no `.env`).
+The dashboard renders a banner naming the degraded sources so it never shows fake data as
+real.
