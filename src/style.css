@@ -676,12 +676,6 @@ body::after {
   text-align: center;
 }
 
-.panel-head-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 .repo-select {
   appearance: none;
   -webkit-appearance: none;

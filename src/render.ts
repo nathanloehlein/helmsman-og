@@ -172,7 +172,7 @@ export function renderDashboard(
         <span class="pulse-dot" aria-hidden="true"></span>
         <div class="status-text"><strong>Working</strong>${claimed}</div>
         <div class="topbar-sep"></div>
-        <span class="repo-tag">${esc(data.repo)}</span>
+        <select class="repo-select" aria-label="Scope dashboard by repository">${repoOptions}</select>
         <div class="topbar-sep"></div>
         <span class="brand">BACKLOG RUNNER</span>
         <div class="topbar-stats">
@@ -238,10 +238,7 @@ export function renderDashboard(
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">Recently shipped</span>
-          <div class="panel-head-controls">
-            <select class="repo-select" aria-label="Scope dashboard by repository">${repoOptions}</select>
-            <span class="panel-count mono">${data.shipped.length}</span>
-          </div>
+          <span class="panel-count mono">${data.shipped.length}</span>
         </div>
         <div class="shipped-grid">${shippedCards}</div>
       </div>
