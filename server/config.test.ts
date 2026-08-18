@@ -81,4 +81,31 @@ describe('loadConfig', () => {
       'project = "AIROBUILD" AND assignee = currentUser() AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC',
     );
   });
+
+  it('defaults botAccountId to null, maxAttempts to 1, and jira lifecycle statuses', () => {
+    const cfg = loadConfig(FULL);
+    expect(cfg.botAccountId).toBeNull();
+    expect(cfg.maxAttempts).toBe(1);
+    expect(cfg.statusInProgress).toBe('In Progress');
+    expect(cfg.statusInReview).toBe('In Review');
+  });
+
+  it('overrides botAccountId, maxAttempts, and jira lifecycle statuses from env', () => {
+    const cfg = loadConfig({
+      ...FULL,
+      BOT_ACCOUNT_ID: 'acct-123',
+      AGENT_MAX_ATTEMPTS: '3',
+      JIRA_STATUS_IN_PROGRESS: 'Doing',
+      JIRA_STATUS_IN_REVIEW: 'Ready for Review',
+    });
+    expect(cfg.botAccountId).toBe('acct-123');
+    expect(cfg.maxAttempts).toBe(3);
+    expect(cfg.statusInProgress).toBe('Doing');
+    expect(cfg.statusInReview).toBe('Ready for Review');
+  });
+
+  it('falls back to maxAttempts 1 when AGENT_MAX_ATTEMPTS is not a valid number', () => {
+    const cfg = loadConfig({ ...FULL, AGENT_MAX_ATTEMPTS: 'not-a-number' });
+    expect(cfg.maxAttempts).toBe(1);
+  });
 });

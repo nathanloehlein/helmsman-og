@@ -20,6 +20,10 @@ export interface AppConfig {
   github: GithubConfig | null;
   repoLabel: string;
   repoProjectMap: RepoProjectMap;
+  botAccountId: string | null;
+  maxAttempts: number;
+  statusInProgress: string;
+  statusInReview: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -65,7 +69,22 @@ export function loadConfig(env: Env): AppConfig {
 
   const repoLabel: string = repo ?? (github ? `@${github.author}` : 'backlog-runner');
   const repoProjectMap: RepoProjectMap = parseRepoProjectMap(req(env, 'REPO_PROJECT_MAP'));
-  return { jira, github, repoLabel, repoProjectMap };
+  const botAccountId: string | null = req(env, 'BOT_ACCOUNT_ID');
+  const maxAttemptsRaw: string | null = req(env, 'AGENT_MAX_ATTEMPTS');
+  const parsedMaxAttempts: number = maxAttemptsRaw ? parseInt(maxAttemptsRaw, 10) : NaN;
+  const maxAttempts: number = Number.isFinite(parsedMaxAttempts) ? parsedMaxAttempts : 1;
+  const statusInProgress: string = req(env, 'JIRA_STATUS_IN_PROGRESS') ?? 'In Progress';
+  const statusInReview: string = req(env, 'JIRA_STATUS_IN_REVIEW') ?? 'In Review';
+  return {
+    jira,
+    github,
+    repoLabel,
+    repoProjectMap,
+    botAccountId,
+    maxAttempts,
+    statusInProgress,
+    statusInReview,
+  };
 }
 
 function formatAssignee(assignee: string): string {
