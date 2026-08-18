@@ -79,7 +79,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     }
 
     let result: AgentResult = { ok: false };
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    for (let attempt: number = 1; attempt <= maxAttempts; attempt += 1) {
       if (attempt > 1) {
         deps.db.updateRun(runId, { attempt });
         onEvent({ kind: 'log', text: `retry ${attempt}/${maxAttempts}` });
