@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { startRun, type RunnerDeps } from './runner';
 import { RunBus } from './event-bus';
 import { openDb, type Db } from './db';
+import type { JiraActions } from './jira-actions';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentTask } from './agents/adapter';
 
 const task: AgentTask = { ticketId: 'LEKA-1', title: 'do it', repo: 'o/r', jiraBaseUrl: 'https://x' };
@@ -12,6 +13,35 @@ function fakeAdapter(events: AgentEvent[], ok: boolean, prNumber?: number): Agen
     start(_t: AgentTask, _wd: string, onEvent: (e: AgentEvent) => void): AgentHandle {
       for (const e of events) onEvent(e);
       return { stop: () => undefined, exit: Promise.resolve({ ok, prNumber, costUsd: 0.1 }) };
+    },
+  };
+}
+
+function flakyAdapter(failures: number, events: AgentEvent[], prNumber?: number): AgentAdapter {
+  let calls: number = 0;
+  return {
+    id: 'flaky',
+    start(_t: AgentTask, _wd: string, onEvent: (e: AgentEvent) => void): AgentHandle {
+      calls += 1;
+      const ok: boolean = calls > failures;
+      for (const e of events) onEvent(e);
+      return { stop: () => undefined, exit: Promise.resolve({ ok, prNumber, costUsd: 0.1 }) };
+    },
+  };
+}
+
+function fakeJira(): JiraActions & { assignCalls: Array<{ ticketId: string; accountId: string }>; transitionCalls: Array<{ ticketId: string; statusName: string }> } {
+  const assignCalls: Array<{ ticketId: string; accountId: string }> = [];
+  const transitionCalls: Array<{ ticketId: string; statusName: string }> = [];
+  return {
+    assignCalls,
+    transitionCalls,
+    async assign(ticketId: string, accountId: string): Promise<void> {
+      assignCalls.push({ ticketId, accountId });
+    },
+    async transition(ticketId: string, statusName: string): Promise<boolean> {
+      transitionCalls.push({ ticketId, statusName });
+      return true;
     },
   };
 }
@@ -59,6 +89,118 @@ describe('startRun', () => {
     expect(row?.worktreePath).toBeNull();
     expect(db.listEvents(id).some((e) => e.kind === 'error' && e.text === 'git fail')).toBe(true);
     expect(remove).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it('assigns the bot and transitions to In Progress before the adapter runs', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    let adapterCalledAfterTransition: boolean = false;
+    const adapter: AgentAdapter = {
+      id: 'fake',
+      start(_t: AgentTask, _wd: string, onEvent: (e: AgentEvent) => void): AgentHandle {
+        adapterCalledAfterTransition = jira.transitionCalls.length > 0 && jira.assignCalls.length > 0;
+        onEvent({ kind: 'result', text: 'done' });
+        return { stop: () => undefined, exit: Promise.resolve({ ok: true, costUsd: 0.1 }) };
+      },
+    };
+    const d: RunnerDeps = { ...deps(db, adapter), jira, botAccountId: 'bot-acc' };
+
+    await startRun(task, d);
+
+    expect(jira.assignCalls).toEqual([{ ticketId: 'LEKA-1', accountId: 'bot-acc' }]);
+    expect(jira.transitionCalls[0]).toEqual({ ticketId: 'LEKA-1', statusName: 'In Progress' });
+    expect(adapterCalledAfterTransition).toBe(true);
+    db.close();
+  });
+
+  it('transitions to In Review and sets prNumber when a PR is detected on success', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async (_repo: string, _branch: string) => 42);
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true)), jira, botAccountId: 'bot-acc', findPrNumber };
+
+    const id = await startRun(task, d);
+
+    expect(findPrNumber).toHaveBeenCalledWith('o/r', 'agent/x');
+    const row = db.getRun(id);
+    expect(row?.prNumber).toBe(42);
+    expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Review' });
+    db.close();
+  });
+
+  it('retries a failing adapter up to maxAttempts, then succeeds and reaches In Review', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async () => 99);
+    const adapter: AgentAdapter = flakyAdapter(1, []);
+    const d: RunnerDeps = { ...deps(db, adapter), jira, botAccountId: 'bot-acc', findPrNumber, maxAttempts: 2 };
+
+    const id = await startRun(task, d);
+
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    expect(row?.attempt).toBe(2);
+    expect(row?.prNumber).toBe(99);
+    expect(db.listEvents(id).some((e) => e.kind === 'log' && e.text.includes('retry'))).toBe(true);
+    expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Review' });
+    db.close();
+  });
+
+  it('fails after exhausting maxAttempts and never transitions to In Review', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async () => 99);
+    const adapter: AgentAdapter = flakyAdapter(5, []);
+    const d: RunnerDeps = { ...deps(db, adapter), jira, botAccountId: 'bot-acc', findPrNumber, maxAttempts: 2 };
+
+    const id = await startRun(task, d);
+
+    const row = db.getRun(id);
+    expect(row?.status).toBe('failed');
+    expect(row?.attempt).toBe(2);
+    expect(findPrNumber).not.toHaveBeenCalled();
+    expect(jira.transitionCalls.every((c) => c.statusName !== 'In Review')).toBe(true);
+    expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Progress' });
+    db.close();
+  });
+
+  it('does not crash when jira.assign/transition throw, and still runs the adapter', async () => {
+    const db: Db = openDb(':memory:');
+    const jira: JiraActions = {
+      assign: async () => { throw new Error('assign boom'); },
+      transition: async () => { throw new Error('transition boom'); },
+    };
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true, 5)), jira, botAccountId: 'bot-acc' };
+
+    const id = await startRun(task, d);
+
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    expect(db.listEvents(id).some((e) => e.kind === 'error')).toBe(true);
+    db.close();
+  });
+
+  it('does not crash when findPrNumber rejects', async () => {
+    const db: Db = openDb(':memory:');
+    const findPrNumber = vi.fn(async () => { throw new Error('lookup boom'); });
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true, 5)), findPrNumber };
+
+    const id = await startRun(task, d);
+
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    expect(db.listEvents(id).some((e) => e.kind === 'error')).toBe(true);
+    db.close();
+  });
+
+  it('behaves exactly like P1 when jira and findPrNumber deps are absent', async () => {
+    const db: Db = openDb(':memory:');
+    const id = await startRun(task, deps(db, fakeAdapter([{ kind: 'phase', text: 'exploring' }], true, 7)));
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    expect(row?.prNumber).toBe(7);
+    expect(row?.attempt).toBe(1);
     db.close();
   });
 });
