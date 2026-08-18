@@ -8,6 +8,9 @@ export interface ApiResult {
 export interface RouterDeps {
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   db: Db;
+  canStart: (repo: string) => { ok: boolean; reason?: string };
+  launch: (body: { ticketId: string; title: string; repo: string }) => string;
+  stop: (runId: string) => boolean;
 }
 
 export async function handleApi(
@@ -23,6 +26,18 @@ export async function handleApi(
   }
   if (path === '/api/agents' && method === 'GET') {
     return { status: 200, json: { runs: deps.db.listRuns(50) } };
+  }
+  if (path === '/api/agents/launch' && method === 'POST') {
+    const b = _body as { ticketId?: string; title?: string; repo?: string } | null;
+    if (!b?.ticketId || !b.repo) return { status: 400, json: { error: 'ticketId and repo required' } };
+    const gate = deps.canStart(b.repo);
+    if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
+    const runId = deps.launch({ ticketId: b.ticketId, title: b.title ?? b.ticketId, repo: b.repo });
+    return { status: 200, json: { runId } };
+  }
+  const stopMatch: RegExpMatchArray | null = path.match(/^\/api\/agents\/([^/]+)\/stop$/);
+  if (stopMatch && method === 'POST') {
+    return { status: 200, json: { stopped: deps.stop(stopMatch[1]) } };
   }
   if (path.startsWith('/api/')) {
     return { status: 404, json: { error: 'not found' } };

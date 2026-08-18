@@ -10,6 +10,7 @@ export interface RunnerDeps {
   removeWorktree: (repo: string, path: string) => Promise<void>;
   now: () => string;
   genId: () => string;
+  onStart?: (handle: AgentHandle) => void;
 }
 
 export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<string> {
@@ -32,6 +33,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     };
 
     const handle: AgentHandle = deps.adapter.start(task, worktree.path, onEvent);
+    deps.onStart?.(handle);
     const result: AgentResult = await handle.exit;
 
     deps.db.updateRun(runId, {
