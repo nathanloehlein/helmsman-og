@@ -11,6 +11,7 @@ class DashboardView {
   private repos: string[] = [];
   private selectedRepo: string | null = null;
   private activeStreamUnsubscribe: (() => void) | null = null;
+  private launchSeq: number = 0;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -67,12 +68,15 @@ class DashboardView {
     const repo: string | undefined = btn.dataset.repo;
     if (!ticketId || !repo) return;
     this.stopActiveStream();
+    const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
       const result: LaunchResult = await launchAgent(ticketId, title ?? ticketId, repo);
+      if (seq !== this.launchSeq) return;
       this.openDrawer(ticketId, title ?? ticketId);
       this.activeStreamUnsubscribe = openRunStream(result.runId, (event: RunEvent): void => this.appendLine(event));
     } catch (err: unknown) {
+      if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Launch failed';
       this.openDrawer(ticketId, title ?? ticketId);
       this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
