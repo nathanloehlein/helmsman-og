@@ -2,18 +2,28 @@ import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
 import { renderDashboard, ICON_CLOSE } from './render';
 import type { DashboardSnapshot } from './data/mock';
-import { launchAgent, openRunStream, type LaunchResult, type RunEvent } from './data/agents';
+import { launchAgent, openRunStream, getRun, type LaunchResult, type RunEvent, type RunSummary } from './data/agents';
+
+function deriveTicketStatus(summary: RunSummary): string {
+  if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
+  if (summary.status === 'succeeded') return 'Succeeded';
+  if (summary.status === 'failed') return 'Failed';
+  if (summary.status === 'stopped') return 'Stopped';
+  return summary.status;
+}
 
 export class DashboardView {
   private readonly root: HTMLElement;
   private readonly drawer: HTMLElement;
   private readonly drawerTitle: HTMLElement;
   private readonly drawerBody: HTMLElement;
+  private readonly drawerFooter: HTMLElement;
   private snapshot: DashboardSnapshot | null = null;
   private degraded: string[] = [];
   private repos: string[] = [];
   private selectedRepo: string | null = null;
   private activeStreamUnsubscribe: (() => void) | null = null;
+  private activeRunId: string | null = null;
   private launchSeq: number = 0;
 
   constructor(root: HTMLElement) {
@@ -28,16 +38,19 @@ export class DashboardView {
         <span class="run-drawer-title mono"></span>
         <button class="run-drawer-close" aria-label="Close">${ICON_CLOSE}</button>
       </div>
-      <div class="run-drawer-body mono"></div>`;
+      <div class="run-drawer-body mono"></div>
+      <div class="run-drawer-footer mono"></div>`;
     const titleEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-title');
     const bodyEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-body');
+    const footerEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-footer');
     const closeBtn: HTMLButtonElement | null = drawer.querySelector<HTMLButtonElement>('.run-drawer-close');
-    if (!titleEl || !bodyEl || !closeBtn) throw new Error('run drawer construction failed');
+    if (!titleEl || !bodyEl || !footerEl || !closeBtn) throw new Error('run drawer construction failed');
     closeBtn.addEventListener('click', (): void => this.closeDrawer());
     document.body.appendChild(drawer);
     this.drawer = drawer;
     this.drawerTitle = titleEl;
     this.drawerBody = bodyEl;
+    this.drawerFooter = footerEl;
   }
 
   async refresh(): Promise<void> {
@@ -82,11 +95,13 @@ export class DashboardView {
     const repo: string | undefined = btn.dataset.repo;
     if (!ticketId || !repo) return;
     this.stopActiveStream();
+    this.activeRunId = null;
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
       const result: LaunchResult = await launchAgent(ticketId, title ?? ticketId, repo);
       if (seq !== this.launchSeq) return;
+      this.activeRunId = result.runId;
       this.openDrawer(ticketId, title ?? ticketId);
       this.activeStreamUnsubscribe = openRunStream(result.runId, (event: RunEvent): void => this.appendLine(event));
     } catch (err: unknown) {
@@ -102,11 +117,13 @@ export class DashboardView {
   private openDrawer(ticketId: string, title: string): void {
     this.drawerTitle.textContent = `${ticketId} — ${title}`;
     this.drawerBody.innerHTML = '';
+    this.drawerFooter.textContent = '';
     this.drawer.hidden = false;
   }
 
   private closeDrawer(): void {
     this.stopActiveStream();
+    this.activeRunId = null;
     this.drawer.hidden = true;
   }
 
@@ -116,6 +133,40 @@ export class DashboardView {
     line.textContent = event.text;
     this.drawerBody.appendChild(line);
     this.drawerBody.scrollTop = this.drawerBody.scrollHeight;
+    if (event.kind === 'result' || event.kind === 'error') void this.renderFooter(event.runId);
+  }
+
+  private async renderFooter(runId: string): Promise<void> {
+    if (!runId || runId !== this.activeRunId) return;
+    const summary: RunSummary | null = await getRun(runId);
+    if (runId !== this.activeRunId) return;
+    this.paintFooter(summary);
+  }
+
+  private paintFooter(summary: RunSummary | null): void {
+    this.drawerFooter.textContent = '';
+    if (!summary) return;
+
+    const statusLine: HTMLDivElement = document.createElement('div');
+    statusLine.className = 'run-drawer-footer-status';
+    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
+    this.drawerFooter.appendChild(statusLine);
+
+    if (summary.prNumber == null) return;
+    const prLine: HTMLDivElement = document.createElement('div');
+    prLine.className = 'run-drawer-footer-pr';
+    const repoParts: string[] = summary.repo.split('/');
+    if (repoParts.length === 2 && repoParts[0] && repoParts[1]) {
+      const link: HTMLAnchorElement = document.createElement('a');
+      link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `PR #${summary.prNumber}`;
+      prLine.appendChild(link);
+    } else {
+      prLine.textContent = `PR #${summary.prNumber}`;
+    }
+    this.drawerFooter.appendChild(prLine);
   }
 }
 

@@ -71,6 +71,39 @@ describe('DashboardView drawer survives polling', () => {
     expect(FakeEventSource.instances[0].closed).toBe(false);
   });
 
+  it('renders a PR link and ticket status in the drawer footer when the run reaches the gate', async () => {
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      const payload: unknown = url.includes('/api/agents/launch')
+        ? { runId: 'run-1' }
+        : url.includes('/api/agents')
+          ? { runs: [{ id: 'run-1', status: 'succeeded', prNumber: 42, repo: 'acme/widgets' }] }
+          : response;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.launch-btn')!.click();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+
+    const stream: FakeEventSource = FakeEventSource.instances[0];
+    stream.onmessage?.({
+      data: JSON.stringify({ id: 1, runId: 'run-1', ts: new Date().toISOString(), kind: 'result', text: 'done' }),
+    } as MessageEvent<string>);
+
+    const footer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer-footer')!;
+    await vi.waitFor(() => expect(footer.querySelector('a')).not.toBeNull());
+
+    const link: HTMLAnchorElement = footer.querySelector<HTMLAnchorElement>('a')!;
+    expect(link.textContent).toBe('PR #42');
+    expect(link.getAttribute('href')).toBe('https://github.com/acme/widgets/pull/42');
+    expect(footer.textContent).toContain('In Review');
+  });
+
   it('closes the drawer and stops the stream when the close button is clicked', async () => {
     const response: DashboardResponse = await buildResponse();
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
