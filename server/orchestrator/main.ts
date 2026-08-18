@@ -27,7 +27,11 @@ const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javasc
 
 function launch(body: { ticketId: string; title: string; repo: string }): string {
   const runId: string = randomUUID();
-  pm.add(runId, body.repo, () => undefined);
+  const control: { stopped: boolean; handle: AgentHandle | null } = { stopped: false, handle: null };
+  pm.add(runId, body.repo, () => {
+    control.stopped = true;
+    control.handle?.stop();
+  });
   void startRun(
     { ticketId: body.ticketId, title: body.title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '' },
     {
@@ -38,7 +42,10 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
       removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
       now: () => new Date().toISOString(),
       genId: () => runId,
-      onStart: (handle: AgentHandle) => pm.add(runId, body.repo, () => handle.stop()),
+      onStart: (handle: AgentHandle) => {
+        control.handle = handle;
+        if (control.stopped) handle.stop();
+      },
     },
   ).finally(() => pm.remove(runId));
   return runId;
