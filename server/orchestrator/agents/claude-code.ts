@@ -17,7 +17,7 @@ export const claudeCodeAdapter: AgentAdapter = {
   start(task: AgentTask, workdir: string, onEvent: (e: AgentEvent) => void): AgentHandle {
     const child: ChildProcess = spawn(
       'claude',
-      ['-p', buildPrompt(task), '--output-format', 'stream-json', '--verbose'],
+      ['-p', buildPrompt(task), '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
       { cwd: workdir, env: process.env },
     );
 
