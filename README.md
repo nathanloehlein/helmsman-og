@@ -12,9 +12,11 @@ unit-tested with Vitest; `src/render.ts` is the only thing that touches the DOM.
 
 ## Data
 
-`src/data/mock.ts` is the seam. It returns a `DashboardSnapshot` from static mock
-data today — swap its implementation for real calls against the Jira and GitHub
-REST APIs and the rest of the app is unchanged.
+Live data flows through `GET /api/dashboard` (served by the Vite dev-server plugin),
+which fetches from Jira and GitHub in `server/` and assembles a `DashboardSnapshot`.
+`src/data/mock.ts` is the server-side fallback payload: a static `DashboardSnapshot`
+the endpoint substitutes per-source when a live source can't be reached. See
+[Wiring this dashboard to the real thing](#wiring-this-dashboard-to-the-real-thing).
 
 ## Commands
 
@@ -82,15 +84,24 @@ a bounded per-ticket agent session is the whole architecture.
 
 ### Wiring this dashboard to the real thing
 
-`src/data/mock.ts` is the seam — replace `loadDashboard()` with real calls and
-nothing else in the app changes:
+The browser polls `GET /api/dashboard`, served by a Vite dev-server plugin
+that queries Jira and GitHub directly — no separate backend process.
 
-- **Queue panel** ← Jira JQL, filtered `assignee = bot AND status = Backlog`
-- **Working-on panel** ← the agent's own current-ticket state + step log
-- **Shipped panel** ← GitHub PR list, filtered by branch prefix or label
-- **Activity feed** ← the agent's structured log output, tailed
+1. `cp .env.example .env`
+2. Fill in `.env`:
+   - `JIRA_API_TOKEN` — an [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens)
+     for the `JIRA_EMAIL` account
+   - `GITHUB_TOKEN` — a GitHub PAT with read access to `GITHUB_REPO`
+3. `npm run dev`, then open the printed local URL.
 
-Cheapest real version: a small read-only page polling the Jira and GitHub
-REST APIs on an interval (30s is plenty) — no new state store, because Jira
-and GitHub already are the state. Only reach for a websocket push or a
-dedicated DB if you need updates faster than a poll can deliver.
+The client (`src/main.ts`) calls `loadDashboard()` from `src/data/live.ts`
+on load and every 30s (`POLL_MS`) thereafter, re-rendering in place. A
+transient poll failure is swallowed silently — the last good render stays
+on screen.
+
+**Degraded mode:** if `.env` is missing or a token is invalid, the plugin
+falls back per-source to `src/data/mock.ts` for whichever of Jira/GitHub
+it couldn't reach, and the response's `degraded` array names which sources
+are mocked (e.g. `["jira", "github"]` with no `.env` at all). The dashboard
+renders a banner above the topbar naming the degraded sources so it's never
+silently showing fake data as real.

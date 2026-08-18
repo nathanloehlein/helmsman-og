@@ -66,8 +66,6 @@ const STATS: DailyStats = {
   completedToday: 3,
   awaitingReview: 2,
   avgCycleMinutes: 34,
-  tokensSpent: 1_200_000,
-  estCostUsd: 4.8,
 };
 
 const THROUGHPUT_7D = [1, 2, 1, 3, 2, 3, 3];
