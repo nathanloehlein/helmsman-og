@@ -52,14 +52,14 @@ Authored inline SVGs at one consistent stroke — check (done step), filled dot 
 
 ## Responsive
 
-- Grid `300px · 1fr · 260px` → single column at `≤980px`.
+- Grid `300px · 1fr · 260px` → single column at `≤899px`.
 - Topbar wraps at `≤600px`; the mini-stats reflow to a full-width row under a hairline so nothing clips. Body padding tightens to 16px.
 
 ## Full-viewport layout (≥981px)
 
 The dashboard fills the whole window — width (no max-width cap; body padding is the gutter) and height (no page scroll). `body`/`#app`/`.wrap` chain to `100vh`; the grid takes the remaining height (`flex: 1; min-height: 0; align-items: stretch`) and long lists scroll inside their panels (backlog queue, working-on body, activity feed). The Today panel is pinned (`flex: none`) so it never shrinks below its content. Recently Shipped is a bottom band capped at `34vh` with its own internal scroll.
 
-The full-screen shell is gated on `@media (min-width: 981px) and (min-height: 760px)` — it only engages when the window is both wide and tall enough to hold the layout. Below either threshold (narrow or short window) everything reverts to natural document flow and the page scrolls, so no panel is ever clipped or unreachable on resize.
+The full-screen shell is gated on `@media (min-width: 900px) and (min-height: 760px)` — it only engages when the window is both wide and tall enough to hold the layout (matching the 3-col breakpoint so any multi-column window also fills the height). Below either threshold (narrow or short window) everything reverts to natural document flow and the page scrolls, so no panel is ever clipped or unreachable on resize.
 
 ## Intentional deviation
 

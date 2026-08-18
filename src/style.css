@@ -287,7 +287,7 @@ body::after {
   align-items: start;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 899px) {
   .grid {
     grid-template-columns: 1fr;
   }
@@ -734,7 +734,7 @@ body::after {
    lists scroll internally. Only when the window is both wide and tall enough
    to hold the layout; otherwise (narrow or short) it reverts to natural
    document flow and the page scrolls, so nothing is ever clipped. */
-@media (min-width: 981px) and (min-height: 760px) {
+@media (min-width: 900px) and (min-height: 760px) {
   body {
     height: 100vh;
     overflow: hidden;
