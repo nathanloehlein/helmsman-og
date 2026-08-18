@@ -1,4 +1,4 @@
-import type { Db, RunRow } from './db';
+import type { Db, RunRow, RunStatus } from './db';
 import type { RunBus } from './event-bus';
 import type { JiraActions } from './jira-actions';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } from './agents/adapter';
@@ -18,6 +18,7 @@ export interface RunnerDeps {
   statusInReview?: string;
   findPrNumber?: (repo: string, branch: string) => Promise<number | null>;
   maxAttempts?: number;
+  isStopped?: () => boolean;
 }
 
 async function claimTicket(
@@ -54,7 +55,7 @@ async function markInReview(
 
 export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<string> {
   const runId: string = deps.genId();
-  const maxAttempts: number = deps.maxAttempts ?? 1;
+  const maxAttempts: number = Math.max(1, deps.maxAttempts ?? 1);
   const statusInProgress: string = deps.statusInProgress ?? 'In Progress';
   const statusInReview: string = deps.statusInReview ?? 'In Review';
   const initial: RunRow = {
@@ -79,6 +80,8 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     }
 
     let result: AgentResult = { ok: false };
+    let totalCost: number | null = null;
+    let stopped: boolean = false;
     for (let attempt: number = 1; attempt <= maxAttempts; attempt += 1) {
       if (attempt > 1) {
         deps.db.updateRun(runId, { attempt });
@@ -87,7 +90,13 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       const handle: AgentHandle = deps.adapter.start(task, worktree.path, onEvent);
       deps.onStart?.(handle);
       result = await handle.exit;
+      if (result.costUsd != null) totalCost = (totalCost ?? 0) + result.costUsd;
       if (result.ok) break;
+      if (deps.isStopped?.()) {
+        stopped = true;
+        onEvent({ kind: 'log', text: 'run stopped, no further attempts' });
+        break;
+      }
     }
 
     let prNumber: number | null = result.prNumber ?? null;
@@ -100,10 +109,11 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       }
     }
 
+    const status: RunStatus = stopped ? 'stopped' : result.ok ? 'succeeded' : 'failed';
     deps.db.updateRun(runId, {
-      status: result.ok ? 'succeeded' : 'failed',
+      status,
       prNumber,
-      costUsd: result.costUsd ?? null,
+      costUsd: totalCost,
       endedAt: deps.now(),
     });
 

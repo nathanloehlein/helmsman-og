@@ -30,6 +30,18 @@ function flakyAdapter(failures: number, events: AgentEvent[], prNumber?: number)
   };
 }
 
+function sequenceAdapter(results: Array<{ ok: boolean; costUsd?: number; prNumber?: number }>): AgentAdapter {
+  let calls: number = 0;
+  return {
+    id: 'sequence',
+    start(_t: AgentTask, _wd: string, _onEvent: (e: AgentEvent) => void): AgentHandle {
+      const result = results[Math.min(calls, results.length - 1)];
+      calls += 1;
+      return { stop: () => undefined, exit: Promise.resolve(result) };
+    },
+  };
+}
+
 function fakeJira(): JiraActions & { assignCalls: Array<{ ticketId: string; accountId: string }>; transitionCalls: Array<{ ticketId: string; statusName: string }> } {
   const assignCalls: Array<{ ticketId: string; accountId: string }> = [];
   const transitionCalls: Array<{ ticketId: string; statusName: string }> = [];
@@ -162,6 +174,45 @@ describe('startRun', () => {
     expect(findPrNumber).not.toHaveBeenCalled();
     expect(jira.transitionCalls.every((c) => c.statusName !== 'In Review')).toBe(true);
     expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Progress' });
+    db.close();
+  });
+
+  it('stops retrying and marks the run stopped when isStopped signals a stop after a failed attempt', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async () => 99);
+    let calls: number = 0;
+    const adapter: AgentAdapter = {
+      id: 'fake',
+      start(_t: AgentTask, _wd: string, onEvent: (e: AgentEvent) => void): AgentHandle {
+        calls += 1;
+        onEvent({ kind: 'result', text: 'not ok' });
+        return { stop: () => undefined, exit: Promise.resolve({ ok: false, costUsd: 0.1 }) };
+      },
+    };
+    const isStopped = vi.fn(() => true);
+    const d: RunnerDeps = { ...deps(db, adapter), jira, botAccountId: 'bot-acc', findPrNumber, maxAttempts: 3, isStopped };
+
+    const id = await startRun(task, d);
+
+    expect(calls).toBe(1);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('stopped');
+    expect(findPrNumber).not.toHaveBeenCalled();
+    expect(jira.transitionCalls.every((c) => c.statusName !== 'In Review')).toBe(true);
+    db.close();
+  });
+
+  it('accumulates cost across retried attempts', async () => {
+    const db: Db = openDb(':memory:');
+    const adapter: AgentAdapter = sequenceAdapter([{ ok: false, costUsd: 0.1 }, { ok: true, costUsd: 0.2 }]);
+    const d: RunnerDeps = { ...deps(db, adapter), maxAttempts: 2 };
+
+    const id = await startRun(task, d);
+
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    expect(row?.costUsd).toBeCloseTo(0.3);
     db.close();
   });
 
