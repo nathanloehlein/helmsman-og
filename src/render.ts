@@ -28,6 +28,9 @@ const ICON_ACTIVE: string =
 const ICON_LOCK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.5 7V5.1a2.5 2.5 0 0 1 5 0V7"/></svg>'
 
+const ICON_CLOSE: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
+
 function formatCycle(minutes: number): string {
   if (minutes <= 0) return '—'
   if (minutes < 60) return `${minutes}m`
@@ -107,6 +110,7 @@ export function renderDashboard(
           <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
         </div>
         <span class="queue-title">${esc(ticket.title)}</span>
+        <button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="Launch agent for ${esc(ticket.id)}">Launch</button>
       </li>`,
         )
         .join('')
@@ -241,6 +245,14 @@ export function renderDashboard(
           <span class="panel-count mono">${data.shipped.length}</span>
         </div>
         <div class="shipped-grid">${shippedCards}</div>
+      </div>
+
+      <div class="run-drawer" hidden>
+        <div class="run-drawer-head">
+          <span class="run-drawer-title mono"></span>
+          <button class="run-drawer-close" aria-label="Close">${ICON_CLOSE}</button>
+        </div>
+        <div class="run-drawer-body mono"></div>
       </div>
     </div>`;
 }
