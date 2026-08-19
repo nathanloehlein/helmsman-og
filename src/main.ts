@@ -7,6 +7,7 @@ import {
   openRunStream,
   getRun,
   listRuns,
+  stopAgent,
   type LaunchResult,
   type RunEvent,
   type RunStatusSummary,
@@ -96,8 +97,42 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+
     const launchBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.launch-btn');
-    if (launchBtn) void this.handleLaunchClick(launchBtn);
+    if (launchBtn) {
+      void this.handleLaunchClick(launchBtn);
+      return;
+    }
+
+    const stopBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.agent-stop');
+    if (stopBtn) {
+      event.stopPropagation();
+      this.handleStopClick(stopBtn);
+      return;
+    }
+
+    const agentRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row');
+    if (agentRow) this.handleAgentRowClick(agentRow);
+  }
+
+  private handleStopClick(btn: HTMLButtonElement): void {
+    const runId: string | undefined = btn.dataset.runid;
+    if (!runId) return;
+    void stopAgent(runId);
+    void this.refresh();
+  }
+
+  private handleAgentRowClick(row: HTMLElement): void {
+    const runId: string | undefined = row.dataset.runid;
+    if (!runId) return;
+    const ticketEl: HTMLElement | null = row.querySelector<HTMLElement>('.ticket-id');
+    const ticketId: string = ticketEl?.textContent ?? runId;
+
+    this.stopActiveStream();
+    ++this.launchSeq;
+    this.activeRunId = runId;
+    this.openDrawer(ticketId, ticketId);
+    this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {
