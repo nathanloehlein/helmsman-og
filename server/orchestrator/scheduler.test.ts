@@ -97,6 +97,51 @@ describe('AutoClaimScheduler', () => {
     expect(logSpy).toHaveBeenCalled();
   });
 
+  it('does not launch when canStart flips to false during the backlog fetch await (TOCTOU close)', async () => {
+    const launchSpy = vi.fn();
+    const canStartSpy = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const fetchSpy = vi.fn().mockResolvedValue({ ticketId: 'TICK-1', title: 'Ticket' });
+
+    const deps: SchedulerDeps = {
+      canStart: canStartSpy,
+      fetchTopBacklog: fetchSpy,
+      launch: launchSpy,
+    };
+
+    const scheduler = new AutoClaimScheduler(deps);
+    scheduler.setEnabled('repo', true);
+
+    await scheduler.tick();
+
+    expect(canStartSpy).toHaveBeenCalledTimes(2);
+    expect(launchSpy).not.toHaveBeenCalled();
+  });
+
+  it('launches once when canStart stays true on both the initial gate and the re-check', async () => {
+    const launchSpy = vi.fn();
+    const canStartSpy = vi.fn().mockReturnValue(true);
+    const fetchSpy = vi.fn().mockResolvedValue({ ticketId: 'TICK-1', title: 'Ticket' });
+
+    const deps: SchedulerDeps = {
+      canStart: canStartSpy,
+      fetchTopBacklog: fetchSpy,
+      launch: launchSpy,
+    };
+
+    const scheduler = new AutoClaimScheduler(deps);
+    scheduler.setEnabled('repo', true);
+
+    await scheduler.tick();
+
+    expect(canStartSpy).toHaveBeenCalledTimes(2);
+    expect(launchSpy).toHaveBeenCalledOnce();
+    expect(launchSpy).toHaveBeenCalledWith({
+      ticketId: 'TICK-1',
+      title: 'Ticket',
+      repo: 'repo',
+    });
+  });
+
   it('disabling a repo stops it from being ticked', async () => {
     const launchSpy = vi.fn();
     const fetchSpy = vi.fn().mockResolvedValue({ ticketId: 'TICK-1', title: 'Ticket' });

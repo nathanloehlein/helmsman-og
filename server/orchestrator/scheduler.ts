@@ -44,6 +44,10 @@ export class AutoClaimScheduler {
           continue;
         }
 
+        if (!this.deps.canStart(repo)) {
+          continue;
+        }
+
         this.deps.launch({
           ticketId: ticket.ticketId,
           title: ticket.title,
