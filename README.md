@@ -8,13 +8,13 @@ is the view; the **orchestrator** behind it spawns and supervises the agents.
 
 ## Status
 
-- **Built (P0–P4):** the orchestrator, SQLite run store, dashboard API, and a
+- **Built (P0–P5):** the orchestrator, SQLite run store, dashboard API, and a
   Claude Code agent adapter — launch a ticket, run it in an isolated git worktree,
   stream its events to a live log drawer, and record the run (P0–P1); Jira status
   writes with an In-Review gate (P2); a multi-agent running view with per-run stop
-  and live logs (P3); and an opt-in per-repo auto-claim scheduler (P4). The agent
-  opens a PR and **never merges**.
-- **Planned:** a generic-command adapter + hardening (P5). See `docs/superpowers/plans/`.
+  and live logs (P3); an opt-in per-repo auto-claim scheduler (P4); and a generic-command
+  adapter plus hardening — crash recovery, orphaned-worktree sweep, and cost/attempt
+  caps (P5). The agent opens a PR and **never merges**.
 
 ## Stack
 
@@ -132,6 +132,28 @@ ticket per tick; off by default; toggling off stops further claims. A repo with 
 `REPO_PROJECT_MAP` entry can't be auto-claimed. Toggle state is held in memory
 (`POST /api/repos/:repo/auto-claim {enabled}`), so it resets when the orchestrator restarts.
 
+### Agent backends
+
+Two adapters implement the same `AgentAdapter` contract, selected by `AGENT_ADAPTER`:
+`claude-code` (default) spawns `claude -p --output-format stream-json` and parses tool
+uses, text, and final cost; `command` runs a configured `AGENT_CMD` template
+(`{ticket} {repo} {title}` placeholders) and streams each stdout line as a log event. The
+command adapter never uses a shell — the template is tokenized and placeholders are
+substituted per argv token — so a ticket title with shell metacharacters can't inject.
+
+### Caps
+
+`AGENT_MAX_ATTEMPTS` bounds retries; `AGENT_MAX_COST_USD` (opt-in) stops the retry loop
+once accumulated cost across attempts reaches the cap. Both, and the live attempt/cost of
+each run, show on the running-agent rows (`×attempt/max`, `$cost/$cap`).
+
+### Resilience
+
+On startup the orchestrator reconciles any run left `running` by a crash to `failed`
+(its child process is gone) and sweeps orphaned agent worktrees — those under a repo's
+`.worktrees/` that no live run owns. Both are fail-soft: a failure is logged and never
+blocks the server from listening.
+
 ## Configuration
 
 | Var | Purpose |
@@ -144,6 +166,8 @@ ticket per tick; off by default; toggling off stops further claims. A repo with 
 | `ORCHESTRATOR_PORT` | orchestrator port (default `8787`) |
 | `AGENT_MAX_CONCURRENCY` | max simultaneous runs (default `3`) |
 | `AUTO_CLAIM_INTERVAL_MS` | auto-claim heartbeat interval in ms (default `60000`) |
+| `AGENT_ADAPTER` / `AGENT_CMD` | agent backend: `claude-code` (default) or `command` + its template |
+| `AGENT_MAX_COST_USD` | optional cost cap (USD) across a run's retry attempts; unset = no cap |
 
 > **Security:** the agent is spawned with `--dangerously-skip-permissions`, so it edits,
 > commits, and opens a PR with full, unattended tool access on the host — a per-run git
