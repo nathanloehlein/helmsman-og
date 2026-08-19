@@ -137,6 +137,43 @@ describe('renderDashboard', () => {
     expect(emptyNote?.textContent).toContain('No agents running.');
   });
 
+  it('shows the attempt against maxAttempts when caps are provided', () => {
+    const el: HTMLDivElement = root();
+    const runs: RunSummary[] = [
+      {
+        id: 'run-1',
+        ticketId: 'ABC-1',
+        repo: 'org/alpha',
+        status: 'running',
+        attempt: 2,
+        prNumber: null,
+        startedAt: NOW.toISOString(),
+        costUsd: null,
+      },
+    ];
+    renderDashboard(el, snapshot(), NOW, [], [], null, runs, [], { maxAttempts: 3, maxCostUsd: null });
+    expect(el.innerHTML).toContain('2/3');
+  });
+
+  it('shows the cost against maxCostUsd when caps are provided', () => {
+    const el: HTMLDivElement = root();
+    const runs: RunSummary[] = [
+      {
+        id: 'run-1',
+        ticketId: 'ABC-1',
+        repo: 'org/alpha',
+        status: 'running',
+        attempt: 1,
+        prNumber: null,
+        startedAt: NOW.toISOString(),
+        costUsd: 1.25,
+      },
+    ];
+    renderDashboard(el, snapshot(), NOW, [], [], null, runs, [], { maxAttempts: 3, maxCostUsd: 5 });
+    expect(el.innerHTML).toContain('1.25');
+    expect(el.innerHTML).toContain('5');
+  });
+
   it('renders the auto-claim toggle checked when the selected repo is in the auto-claim list', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], ['org/alpha']);

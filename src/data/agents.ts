@@ -37,9 +37,17 @@ export interface RunSummary {
   costUsd: number | null;
 }
 
+export interface AgentCaps {
+  maxAttempts: number;
+  maxCostUsd: number | null;
+}
+
+const DEFAULT_CAPS: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
+
 interface AgentsListResponse {
   runs: RunSummary[];
   autoClaim?: string[];
+  caps?: AgentCaps;
 }
 
 export async function getRun(runId: string): Promise<RunStatusSummary | null> {
@@ -55,14 +63,14 @@ export async function getRun(runId: string): Promise<RunStatusSummary | null> {
   }
 }
 
-export async function fetchAgents(): Promise<{ runs: RunSummary[]; autoClaim: string[] }> {
+export async function fetchAgents(): Promise<{ runs: RunSummary[]; autoClaim: string[]; caps: AgentCaps }> {
   try {
     const res: Response = await fetch('/api/agents');
-    if (!res.ok) return { runs: [], autoClaim: [] };
+    if (!res.ok) return { runs: [], autoClaim: [], caps: DEFAULT_CAPS };
     const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
-    return { runs: payload.runs ?? [], autoClaim: payload.autoClaim ?? [] };
+    return { runs: payload.runs ?? [], autoClaim: payload.autoClaim ?? [], caps: payload.caps ?? DEFAULT_CAPS };
   } catch {
-    return { runs: [], autoClaim: [] };
+    return { runs: [], autoClaim: [], caps: DEFAULT_CAPS };
   }
 }
 

@@ -96,6 +96,7 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
       findPrNumber: (repo: string, branch: string) =>
         config.github ? findPrNumberByBranch(config.github, repo, branch) : Promise.resolve(null),
       maxAttempts: config.maxAttempts,
+      maxCostUsd: config.maxCostUsd,
       isStopped: () => control.stopped,
     },
   ).finally(() => pm.remove(runId));
@@ -158,6 +159,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       stop: (id: string) => pm.stop(id),
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),
+      caps: () => ({ maxAttempts: config.maxAttempts, maxCostUsd: config.maxCostUsd }),
     });
     if (api) {
       res.writeHead(api.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

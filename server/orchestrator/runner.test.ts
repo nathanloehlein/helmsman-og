@@ -216,6 +216,45 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('stops before exceeding maxCostUsd and marks the run failed with a cost-cap log', async () => {
+    const db: Db = openDb(':memory:');
+    let calls: number = 0;
+    const adapter: AgentAdapter = {
+      id: 'cost',
+      start(_t: AgentTask, _wd: string, _onEvent: (e: AgentEvent) => void): AgentHandle {
+        calls += 1;
+        return { stop: () => undefined, exit: Promise.resolve({ ok: false, costUsd: 0.6 }) };
+      },
+    };
+    const d: RunnerDeps = { ...deps(db, adapter), maxAttempts: 3, maxCostUsd: 1.0 };
+
+    const id = await startRun(task, d);
+
+    expect(calls).toBe(2);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('failed');
+    expect(db.listEvents(id).some((e) => e.kind === 'log' && e.text.includes('cost cap'))).toBe(true);
+    db.close();
+  });
+
+  it('runs the full maxAttempts when maxCostUsd is not set (cap is opt-in)', async () => {
+    const db: Db = openDb(':memory:');
+    let calls: number = 0;
+    const adapter: AgentAdapter = {
+      id: 'cost',
+      start(_t: AgentTask, _wd: string, _onEvent: (e: AgentEvent) => void): AgentHandle {
+        calls += 1;
+        return { stop: () => undefined, exit: Promise.resolve({ ok: false, costUsd: 0.6 }) };
+      },
+    };
+    const d: RunnerDeps = { ...deps(db, adapter), maxAttempts: 3, maxCostUsd: null };
+
+    await startRun(task, d);
+
+    expect(calls).toBe(3);
+    db.close();
+  });
+
   it('does not crash when jira.assign/transition throw, and still runs the adapter', async () => {
     const db: Db = openDb(':memory:');
     const jira: JiraActions = {
