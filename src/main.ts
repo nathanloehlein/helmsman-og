@@ -133,7 +133,7 @@ export class DashboardView {
     line.textContent = event.text;
     this.drawerBody.appendChild(line);
     this.drawerBody.scrollTop = this.drawerBody.scrollHeight;
-    if (event.kind === 'result' || event.kind === 'error') void this.renderFooter(event.runId);
+    if (event.kind === 'run-complete') void this.renderFooter(event.runId);
   }
 
   private async renderFooter(runId: string): Promise<void> {

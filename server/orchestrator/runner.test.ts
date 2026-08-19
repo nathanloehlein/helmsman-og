@@ -254,4 +254,46 @@ describe('startRun', () => {
     expect(row?.attempt).toBe(1);
     db.close();
   });
+
+  it('publishes a single run-complete event with the final status, after the run row is already terminal, on success', async () => {
+    const db: Db = openDb(':memory:');
+    const d: RunnerDeps = deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true, 7));
+    const completeEvents: AgentEvent[] = [];
+    const statusesAtRunComplete: Array<string | undefined> = [];
+    d.bus.subscribe('run-1', (e: AgentEvent): void => {
+      if (e.kind !== 'run-complete') return;
+      completeEvents.push(e);
+      statusesAtRunComplete.push(db.getRun('run-1')?.status);
+    });
+
+    const id = await startRun(task, d);
+
+    expect(completeEvents).toHaveLength(1);
+    expect(completeEvents[0].text).toBe('succeeded');
+    expect(statusesAtRunComplete).toEqual(['succeeded']);
+    expect(statusesAtRunComplete[0]).not.toBe('running');
+    expect(db.listEvents(id).filter((e) => e.kind === 'run-complete')).toHaveLength(1);
+    db.close();
+  });
+
+  it('publishes a single run-complete event with the final status, after the run row is already terminal, on failure', async () => {
+    const db: Db = openDb(':memory:');
+    const d: RunnerDeps = deps(db, fakeAdapter([{ kind: 'result', text: 'nope' }], false));
+    const completeEvents: AgentEvent[] = [];
+    const statusesAtRunComplete: Array<string | undefined> = [];
+    d.bus.subscribe('run-1', (e: AgentEvent): void => {
+      if (e.kind !== 'run-complete') return;
+      completeEvents.push(e);
+      statusesAtRunComplete.push(db.getRun('run-1')?.status);
+    });
+
+    const id = await startRun(task, d);
+
+    expect(completeEvents).toHaveLength(1);
+    expect(completeEvents[0].text).toBe('failed');
+    expect(statusesAtRunComplete).toEqual(['failed']);
+    expect(statusesAtRunComplete[0]).not.toBe('running');
+    expect(db.listEvents(id).filter((e) => e.kind === 'run-complete')).toHaveLength(1);
+    db.close();
+  });
 });

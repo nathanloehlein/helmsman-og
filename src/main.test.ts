@@ -92,7 +92,7 @@ describe('DashboardView drawer survives polling', () => {
 
     const stream: FakeEventSource = FakeEventSource.instances[0];
     stream.onmessage?.({
-      data: JSON.stringify({ id: 1, runId: 'run-1', ts: new Date().toISOString(), kind: 'result', text: 'done' }),
+      data: JSON.stringify({ id: 1, runId: 'run-1', ts: new Date().toISOString(), kind: 'run-complete', text: 'succeeded' }),
     } as MessageEvent<string>);
 
     const footer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer-footer')!;

@@ -48,7 +48,7 @@ export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): ()
   src.onmessage = (m: MessageEvent<string>): void => {
     const event: RunEvent = JSON.parse(m.data) as RunEvent;
     onEvent(event);
-    if (event.kind === 'result' || event.kind === 'error') src.close();
+    if (event.kind === 'run-complete') src.close();
   };
   return (): void => src.close();
 }
