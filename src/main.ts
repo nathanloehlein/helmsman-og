@@ -106,8 +106,7 @@ export class DashboardView {
 
     const stopBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.agent-stop');
     if (stopBtn) {
-      event.stopPropagation();
-      this.handleStopClick(stopBtn);
+      void this.handleStopClick(stopBtn);
       return;
     }
 
@@ -115,11 +114,11 @@ export class DashboardView {
     if (agentRow) this.handleAgentRowClick(agentRow);
   }
 
-  private handleStopClick(btn: HTMLButtonElement): void {
+  private async handleStopClick(btn: HTMLButtonElement): Promise<void> {
     const runId: string | undefined = btn.dataset.runid;
     if (!runId) return;
-    void stopAgent(runId);
-    void this.refresh();
+    await stopAgent(runId);
+    await this.refresh();
   }
 
   private handleAgentRowClick(row: HTMLElement): void {
@@ -131,7 +130,7 @@ export class DashboardView {
     this.stopActiveStream();
     ++this.launchSeq;
     this.activeRunId = runId;
-    this.openDrawer(ticketId, ticketId);
+    this.openDrawer(ticketId, '');
     this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
   }
 
@@ -161,7 +160,7 @@ export class DashboardView {
   }
 
   private openDrawer(ticketId: string, title: string): void {
-    this.drawerTitle.textContent = `${ticketId} — ${title}`;
+    this.drawerTitle.textContent = title ? `${ticketId} — ${title}` : ticketId;
     this.drawerBody.innerHTML = '';
     this.drawerFooter.textContent = '';
     this.drawer.hidden = false;
@@ -179,7 +178,7 @@ export class DashboardView {
     line.textContent = event.text;
     this.drawerBody.appendChild(line);
     this.drawerBody.scrollTop = this.drawerBody.scrollHeight;
-    if (event.kind === 'run-complete') void this.renderFooter(event.runId);
+    if (event.kind === 'run-complete') void this.renderFooter(this.activeRunId ?? '');
   }
 
   private async renderFooter(runId: string): Promise<void> {
