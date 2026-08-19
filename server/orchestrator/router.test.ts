@@ -9,6 +9,8 @@ const deps: RouterDeps = {
   canStart: (_repo: string) => ({ ok: true }),
   launch: (_body: { ticketId: string; title: string; repo: string }) => 'run-0',
   stop: (_id: string) => false,
+  setAutoClaim: (_repo: string, _enabled: boolean) => {},
+  autoClaimRepos: () => ['o/r'],
 };
 
 describe('handleApi', () => {
@@ -22,6 +24,12 @@ describe('handleApi', () => {
     const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
     expect(r?.status).toBe(200);
     expect((r?.json as { runs: unknown[] }).runs).toHaveLength(1);
+  });
+
+  it('includes autoClaim repos from autoClaimRepos()', async () => {
+    const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
+    expect(r?.status).toBe(200);
+    expect((r?.json as { autoClaim: string[] }).autoClaim).toEqual(['o/r']);
   });
 
   it('returns null for non-API paths', async () => {
@@ -52,5 +60,24 @@ describe('agent control routes', () => {
   it('stops a run', async () => {
     const r = await handleApi('POST', '/api/agents/run-9/stop', new URLSearchParams(), null, launchDeps);
     expect(r?.status).toBe(200);
+  });
+});
+
+describe('auto-claim toggle route', () => {
+  it('toggles auto-claim for a repo and echoes the result', async () => {
+    const setAutoClaim = vi.fn();
+    const toggleDeps = { ...launchDeps, setAutoClaim } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/repos/o%2Fr/auto-claim', new URLSearchParams(), { enabled: true }, toggleDeps);
+    expect(setAutoClaim).toHaveBeenCalledWith('o/r', true);
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({ repo: 'o/r', enabled: true });
+  });
+
+  it('URL-decodes the repo segment', async () => {
+    const setAutoClaim = vi.fn();
+    const toggleDeps = { ...launchDeps, setAutoClaim } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/repos/owner%2Fname/auto-claim', new URLSearchParams(), { enabled: false }, toggleDeps);
+    expect(setAutoClaim).toHaveBeenCalledWith('owner/name', false);
+    expect(r?.json).toEqual({ repo: 'owner/name', enabled: false });
   });
 });

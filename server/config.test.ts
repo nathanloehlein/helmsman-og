@@ -108,4 +108,19 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ ...FULL, AGENT_MAX_ATTEMPTS: 'not-a-number' });
     expect(cfg.maxAttempts).toBe(1);
   });
+
+  it('defaults autoClaimIntervalMs to 60000', () => {
+    const cfg = loadConfig(FULL);
+    expect(cfg.autoClaimIntervalMs).toBe(60000);
+  });
+
+  it('overrides autoClaimIntervalMs from AUTO_CLAIM_INTERVAL_MS', () => {
+    const cfg = loadConfig({ ...FULL, AUTO_CLAIM_INTERVAL_MS: '15000' });
+    expect(cfg.autoClaimIntervalMs).toBe(15000);
+  });
+
+  it('falls back to autoClaimIntervalMs 60000 when AUTO_CLAIM_INTERVAL_MS is not a valid number', () => {
+    const cfg = loadConfig({ ...FULL, AUTO_CLAIM_INTERVAL_MS: 'not-a-number' });
+    expect(cfg.autoClaimIntervalMs).toBe(60000);
+  });
 });

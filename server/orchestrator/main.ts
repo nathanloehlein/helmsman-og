@@ -14,8 +14,11 @@ import { claudeCodeAdapter } from './agents/claude-code';
 import { createWorktree, removeWorktree } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
+import { AutoClaimScheduler } from './scheduler';
+import { fetchQueueIssues } from '../jira';
 import type { AgentEvent, AgentHandle } from './agents/adapter';
 import type { RunEventRow } from './db';
+import type { JiraIssue } from '../types';
 
 process.loadEnvFile('.env');
 
@@ -64,6 +67,24 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
   return runId;
 }
 
+function fetchTopBacklog(repo: string): Promise<{ ticketId: string; title: string } | null> {
+  const project: string | undefined = config.repoProjectMap[repo];
+  if (!project || !config.jira) return Promise.resolve(null);
+  return fetchQueueIssues({ ...config.jira, project }).then(
+    (issues: JiraIssue[]): { ticketId: string; title: string } | null =>
+      issues[0] ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
+  );
+}
+
+const scheduler: AutoClaimScheduler = new AutoClaimScheduler({
+  canStart: (r: string) => pm.canStart(r).ok,
+  fetchTopBacklog,
+  launch,
+  onLog: (m: string) => process.stderr.write(m + '\n'),
+});
+
+setInterval(() => void scheduler.tick(), config.autoClaimIntervalMs);
+
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
@@ -100,6 +121,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       canStart: (repo: string) => pm.canStart(repo),
       launch,
       stop: (id: string) => pm.stop(id),
+      setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
+      autoClaimRepos: () => scheduler.enabledRepos(),
     });
     if (api) {
       res.writeHead(api.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

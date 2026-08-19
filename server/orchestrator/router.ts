@@ -11,6 +11,8 @@ export interface RouterDeps {
   canStart: (repo: string) => { ok: boolean; reason?: string };
   launch: (body: { ticketId: string; title: string; repo: string }) => string;
   stop: (runId: string) => boolean;
+  setAutoClaim: (repo: string, enabled: boolean) => void;
+  autoClaimRepos: () => string[];
 }
 
 export async function handleApi(
@@ -25,7 +27,7 @@ export async function handleApi(
     return { status: 200, json: payload };
   }
   if (path === '/api/agents' && method === 'GET') {
-    return { status: 200, json: { runs: deps.db.listRuns(50) } };
+    return { status: 200, json: { runs: deps.db.listRuns(50), autoClaim: deps.autoClaimRepos() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
     const b = _body as { ticketId?: string; title?: string; repo?: string } | null;
@@ -38,6 +40,13 @@ export async function handleApi(
   const stopMatch: RegExpMatchArray | null = path.match(/^\/api\/agents\/([^/]+)\/stop$/);
   if (stopMatch && method === 'POST') {
     return { status: 200, json: { stopped: deps.stop(stopMatch[1]) } };
+  }
+  const autoClaimMatch: RegExpMatchArray | null = path.match(/^\/api\/repos\/(.+)\/auto-claim$/);
+  if (autoClaimMatch && method === 'POST') {
+    const repo: string = decodeURIComponent(autoClaimMatch[1]);
+    const enabled: boolean = (_body as { enabled?: boolean } | null)?.enabled === true;
+    deps.setAutoClaim(repo, enabled);
+    return { status: 200, json: { repo, enabled } };
   }
   if (path.startsWith('/api/')) {
     return { status: 404, json: { error: 'not found' } };
