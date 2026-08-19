@@ -1,5 +1,8 @@
 # Backlog Runner
 
+This repo ships a live agent dashboard — run `npm run dev` and it renders in the
+browser (mock data for now).
+
 Dashboard prototype for a Jira-backlog-driven coding agent: current task, priority
 queue, PR history, and a live activity feed. Built to visualize the "agent claims
 a ticket, implements it, opens a PR, picks the next one" loop with a human
