@@ -13,7 +13,7 @@ import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
-import { createWorktree, removeWorktree } from './worktree';
+import { createWorktree, listAgentWorktrees, removeWorktree, removeWorktreeAt, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
 import { AutoClaimScheduler } from './scheduler';
@@ -37,6 +37,24 @@ try {
   if (recovered.length > 0) process.stdout.write(`recovered ${recovered.length} interrupted run(s)\n`);
 } catch (err: unknown) {
   process.stderr.write(`run recovery failed: ${String(err)}\n`);
+}
+
+try {
+  const repos: string[] = [...Object.keys(config.repoProjectMap), ...(config.github?.repo ? [config.github.repo] : [])];
+  const repoDirs: string[] = [
+    ...new Set(repos.map((repo: string) => join(AGENTS_ROOT, repo.split('/').pop() ?? repo))),
+  ];
+  if (repoDirs.length > 0) {
+    const removed: string[] = await sweepOrphanedWorktrees({
+      listAgentWorktrees,
+      remove: removeWorktreeAt,
+      isActiveRunId: (id: string) => pm.hasRun(id),
+      repoDirs,
+    });
+    if (removed.length > 0) process.stdout.write(`swept ${removed.length} orphaned worktree(s)\n`);
+  }
+} catch (err: unknown) {
+  process.stderr.write(`worktree sweep failed: ${String(err)}\n`);
 }
 
 const adapter: AgentAdapter =
