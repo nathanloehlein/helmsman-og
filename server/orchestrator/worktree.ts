@@ -22,12 +22,12 @@ export async function createWorktree(agentsRoot: string, repo: string, runId: st
 }
 
 export async function removeWorktreeAt(repoDir: string, worktreePath: string): Promise<void> {
-  await run('git', ['-C', repoDir, 'worktree', 'remove', '--force', worktreePath]).catch(() => undefined);
+  await run('git', ['-C', repoDir, 'worktree', 'remove', '--force', worktreePath]);
 }
 
 export async function removeWorktree(agentsRoot: string, repo: string, worktreePath: string): Promise<void> {
   const repoDir: string = join(agentsRoot, repoBasename(repo));
-  await removeWorktreeAt(repoDir, worktreePath);
+  await removeWorktreeAt(repoDir, worktreePath).catch(() => undefined);
 }
 
 export async function listAgentWorktrees(repoDir: string): Promise<string[]> {

@@ -93,13 +93,13 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       result = await handle.exit;
       if (result.costUsd != null) totalCost = (totalCost ?? 0) + result.costUsd;
       if (result.ok) break;
-      if (deps.maxCostUsd != null && totalCost != null && totalCost >= deps.maxCostUsd) {
-        onEvent({ kind: 'log', text: 'cost cap reached, no further attempts' });
-        break;
-      }
       if (deps.isStopped?.()) {
         stopped = true;
         onEvent({ kind: 'log', text: 'run stopped, no further attempts' });
+        break;
+      }
+      if (deps.maxCostUsd != null && totalCost != null && totalCost >= deps.maxCostUsd) {
+        onEvent({ kind: 'log', text: 'cost cap reached, no further attempts' });
         break;
       }
     }
