@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import { loadConfig, type AppConfig } from '../config';
 import { openDb } from './db';
+import { recoverOrphanedRuns } from './recovery';
 import { handleApi } from './router';
 import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
@@ -30,6 +31,13 @@ const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCU
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const config: AppConfig = loadConfig(process.env);
+
+try {
+  const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
+  if (recovered.length > 0) process.stdout.write(`recovered ${recovered.length} interrupted run(s)\n`);
+} catch (err: unknown) {
+  process.stderr.write(`run recovery failed: ${String(err)}\n`);
+}
 
 const adapter: AgentAdapter =
   config.agentAdapter === 'command' && config.agentCmd
