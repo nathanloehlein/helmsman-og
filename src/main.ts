@@ -6,7 +6,8 @@ import {
   launchAgent,
   openRunStream,
   getRun,
-  listRuns,
+  fetchAgents,
+  setAutoClaim,
   stopAgent,
   type LaunchResult,
   type RunEvent,
@@ -33,6 +34,7 @@ export class DashboardView {
   private repos: string[] = [];
   private selectedRepo: string | null = null;
   private runs: RunSummary[] = [];
+  private autoClaimRepos: string[] = [];
   private activeStreamUnsubscribe: (() => void) | null = null;
   private activeRunId: string | null = null;
   private launchSeq: number = 0;
@@ -72,13 +74,24 @@ export class DashboardView {
       this.repos = response.repos;
       this.selectedRepo = response.selectedRepo;
     }
-    this.runs = await listRuns();
+    const agents: { runs: RunSummary[]; autoClaim: string[] } = await fetchAgents();
+    this.runs = agents.runs;
+    this.autoClaimRepos = agents.autoClaim;
     this.paint();
   }
 
   private paint(): void {
     if (!this.snapshot) return;
-    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo, this.runs);
+    renderDashboard(
+      this.root,
+      this.snapshot,
+      new Date(),
+      this.degraded,
+      this.repos,
+      this.selectedRepo,
+      this.runs,
+      this.autoClaimRepos,
+    );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
     if (select) {
@@ -87,6 +100,18 @@ export class DashboardView {
         void this.refresh();
       });
     }
+    const autoClaimCheckbox: HTMLInputElement | null =
+      this.root.querySelector<HTMLInputElement>('.auto-claim-toggle');
+    if (autoClaimCheckbox) {
+      autoClaimCheckbox.addEventListener('change', () => void this.handleAutoClaimChange(autoClaimCheckbox));
+    }
+  }
+
+  private async handleAutoClaimChange(checkbox: HTMLInputElement): Promise<void> {
+    const repo: string | null = this.selectedRepo;
+    if (!repo) return;
+    await setAutoClaim(repo, checkbox.checked);
+    await this.refresh();
   }
 
   private stopActiveStream(): void {

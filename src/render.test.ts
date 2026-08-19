@@ -136,4 +136,26 @@ describe('renderDashboard', () => {
     expect(emptyNote).not.toBeNull();
     expect(emptyNote?.textContent).toContain('No agents running.');
   });
+
+  it('renders the auto-claim toggle checked when the selected repo is in the auto-claim list', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], ['org/alpha']);
+    const toggle: HTMLInputElement | null = el.querySelector<HTMLInputElement>('.auto-claim-toggle');
+    expect(toggle).not.toBeNull();
+    expect(toggle!.checked).toBe(true);
+  });
+
+  it('renders the auto-claim toggle unchecked when the selected repo is not in the auto-claim list', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], []);
+    const toggle: HTMLInputElement | null = el.querySelector<HTMLInputElement>('.auto-claim-toggle');
+    expect(toggle).not.toBeNull();
+    expect(toggle!.checked).toBe(false);
+  });
+
+  it('omits the auto-claim toggle when no repo is selected', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], null, [], ['org/alpha']);
+    expect(el.querySelector('.auto-claim-toggle')).toBeNull();
+  });
 });

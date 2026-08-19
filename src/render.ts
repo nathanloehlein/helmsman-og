@@ -80,6 +80,7 @@ export function renderDashboard(
   repos: string[] = [],
   selectedRepo: string | null = null,
   runs: RunSummary[] = [],
+  autoClaimRepos: string[] = [],
 ): void {
   const queue = sortByPriority(data.queue);
   const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
@@ -92,6 +93,10 @@ export function renderDashboard(
       ),
     )
     .join('');
+
+  const autoClaimToggle: string = selectedRepo
+    ? `<label class="auto-claim"><input type="checkbox" class="auto-claim-toggle"${autoClaimRepos.includes(selectedRepo) ? ' checked' : ''}><span>Auto-claim</span></label>`
+    : '';
 
   const queueItems = queue.length
     ? queue
@@ -176,6 +181,7 @@ export function renderDashboard(
         <div class="status-text"><strong>Working</strong>${claimed}</div>
         <div class="topbar-sep"></div>
         <select class="repo-select" aria-label="Scope dashboard by repository">${repoOptions}</select>
+        ${autoClaimToggle}
         <div class="topbar-sep"></div>
         <span class="brand">BACKLOG RUNNER</span>
         <div class="topbar-stats">

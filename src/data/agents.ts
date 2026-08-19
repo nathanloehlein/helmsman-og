@@ -39,6 +39,7 @@ export interface RunSummary {
 
 interface AgentsListResponse {
   runs: RunSummary[];
+  autoClaim?: string[];
 }
 
 export async function getRun(runId: string): Promise<RunStatusSummary | null> {
@@ -54,20 +55,32 @@ export async function getRun(runId: string): Promise<RunStatusSummary | null> {
   }
 }
 
-export async function listRuns(): Promise<RunSummary[]> {
+export async function fetchAgents(): Promise<{ runs: RunSummary[]; autoClaim: string[] }> {
   try {
     const res: Response = await fetch('/api/agents');
-    if (!res.ok) return [];
+    if (!res.ok) return { runs: [], autoClaim: [] };
     const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
-    return payload.runs ?? [];
+    return { runs: payload.runs ?? [], autoClaim: payload.autoClaim ?? [] };
   } catch {
-    return [];
+    return { runs: [], autoClaim: [] };
   }
 }
 
 export async function stopAgent(runId: string): Promise<void> {
   try {
     await fetch(`/api/agents/${encodeURIComponent(runId)}/stop`, { method: 'POST' });
+  } catch {
+    return;
+  }
+}
+
+export async function setAutoClaim(repo: string, enabled: boolean): Promise<void> {
+  try {
+    await fetch(`/api/repos/${encodeURIComponent(repo)}/auto-claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
   } catch {
     return;
   }
