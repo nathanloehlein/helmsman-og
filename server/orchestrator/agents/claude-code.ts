@@ -7,8 +7,10 @@ function buildPrompt(task: AgentTask): string {
   return [
     `Work Jira ticket ${task.ticketId}: ${task.title}.`,
     `The repository checkout is your current working directory.`,
-    `Explore, implement the change, run the tests, then open a pull request with the ticket id in the title.`,
-    `Do NOT merge. Stop after the PR is open.`,
+    `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
+    `Explore, implement the change, run the tests, commit on a new branch, then push it and open a pull request with the ticket id in the title using the gh CLI.`,
+    `Pushing the branch and opening the PR are required steps, not optional — do them without asking.`,
+    `Do NOT merge the PR. Stop only after the PR is open.`,
   ].join(' ');
 }
 
