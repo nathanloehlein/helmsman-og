@@ -11,12 +11,13 @@ import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
+import { commandAdapter } from './agents/command';
 import { createWorktree, removeWorktree } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
 import { AutoClaimScheduler } from './scheduler';
 import { fetchQueueIssues } from '../jira';
-import type { AgentEvent, AgentHandle } from './agents/adapter';
+import type { AgentAdapter, AgentEvent, AgentHandle } from './agents/adapter';
 import type { RunEventRow } from './db';
 import type { JiraIssue } from '../types';
 
@@ -29,6 +30,14 @@ const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCU
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const config: AppConfig = loadConfig(process.env);
+
+const adapter: AgentAdapter =
+  config.agentAdapter === 'command' && config.agentCmd
+    ? commandAdapter(config.agentCmd)
+    : claudeCodeAdapter;
+if (config.agentAdapter === 'command' && !config.agentCmd) {
+  process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n');
+}
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
@@ -45,7 +54,7 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
     {
       db,
       bus,
-      adapter: claudeCodeAdapter,
+      adapter,
       createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
       removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
       now: () => new Date().toISOString(),
