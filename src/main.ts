@@ -2,9 +2,18 @@ import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
 import { renderDashboard, ICON_CLOSE } from './render';
 import type { DashboardSnapshot } from './data/mock';
-import { launchAgent, openRunStream, getRun, type LaunchResult, type RunEvent, type RunSummary } from './data/agents';
+import {
+  launchAgent,
+  openRunStream,
+  getRun,
+  listRuns,
+  type LaunchResult,
+  type RunEvent,
+  type RunStatusSummary,
+  type RunSummary,
+} from './data/agents';
 
-function deriveTicketStatus(summary: RunSummary): string {
+function deriveTicketStatus(summary: RunStatusSummary): string {
   if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
   if (summary.status === 'succeeded') return 'Succeeded';
   if (summary.status === 'failed') return 'Failed';
@@ -22,6 +31,7 @@ export class DashboardView {
   private degraded: string[] = [];
   private repos: string[] = [];
   private selectedRepo: string | null = null;
+  private runs: RunSummary[] = [];
   private activeStreamUnsubscribe: (() => void) | null = null;
   private activeRunId: string | null = null;
   private launchSeq: number = 0;
@@ -61,12 +71,13 @@ export class DashboardView {
       this.repos = response.repos;
       this.selectedRepo = response.selectedRepo;
     }
+    this.runs = await listRuns();
     this.paint();
   }
 
   private paint(): void {
     if (!this.snapshot) return;
-    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo);
+    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo, this.runs);
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
     if (select) {
@@ -138,12 +149,12 @@ export class DashboardView {
 
   private async renderFooter(runId: string): Promise<void> {
     if (!runId || runId !== this.activeRunId) return;
-    const summary: RunSummary | null = await getRun(runId);
+    const summary: RunStatusSummary | null = await getRun(runId);
     if (runId !== this.activeRunId) return;
     this.paintFooter(summary);
   }
 
-  private paintFooter(summary: RunSummary | null): void {
+  private paintFooter(summary: RunStatusSummary | null): void {
     this.drawerFooter.textContent = '';
     if (!summary) return;
 

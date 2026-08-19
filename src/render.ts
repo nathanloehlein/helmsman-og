@@ -3,6 +3,7 @@ import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority, TicketStatus } from './types';
+import type { RunSummary } from './data/agents';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
@@ -88,6 +89,7 @@ export function renderDashboard(
   degraded: string[] = [],
   repos: string[] = [],
   selectedRepo: string | null = null,
+  _runs: RunSummary[] = [],
 ): void {
   const queue = sortByPriority(data.queue);
 

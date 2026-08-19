@@ -20,26 +20,56 @@ export interface RunEvent {
   text: string;
 }
 
-export interface RunSummary {
+export interface RunStatusSummary {
   status: string;
   prNumber: number | null;
   repo: string;
 }
 
-interface AgentsListResponse {
-  runs: Array<{ id: string; status: string; prNumber: number | null; repo: string }>;
+export interface RunSummary {
+  id: string;
+  ticketId: string;
+  repo: string;
+  status: string;
+  attempt: number;
+  prNumber: number | null;
+  startedAt: string;
+  costUsd: number | null;
 }
 
-export async function getRun(runId: string): Promise<RunSummary | null> {
+interface AgentsListResponse {
+  runs: RunSummary[];
+}
+
+export async function getRun(runId: string): Promise<RunStatusSummary | null> {
   try {
     const res: Response = await fetch('/api/agents');
     if (!res.ok) return null;
     const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
-    const row: AgentsListResponse['runs'][number] | undefined = payload.runs.find((r) => r.id === runId);
+    const row: RunSummary | undefined = payload.runs.find((r) => r.id === runId);
     if (!row) return null;
     return { status: row.status, prNumber: row.prNumber, repo: row.repo };
   } catch {
     return null;
+  }
+}
+
+export async function listRuns(): Promise<RunSummary[]> {
+  try {
+    const res: Response = await fetch('/api/agents');
+    if (!res.ok) return [];
+    const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
+    return payload.runs ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function stopAgent(runId: string): Promise<void> {
+  try {
+    await fetch(`/api/agents/${encodeURIComponent(runId)}/stop`, { method: 'POST' });
+  } catch {
+    return;
   }
 }
 
