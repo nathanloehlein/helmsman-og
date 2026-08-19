@@ -14,6 +14,18 @@ describe('buildArgv', () => {
     const argv: string[] = buildArgv('run --title {title}', task);
     expect(argv).toEqual(['run', '--title', 'a;', 'rm', '-rf', '/']);
   });
+
+  it('drops empty tokens produced by a whitespace-padded substitution', () => {
+    const task: AgentTask = { ticketId: 'ABC-1', repo: 'o/r', title: ' Fix bug ', jiraBaseUrl: '' };
+    const argv: string[] = buildArgv('run --title {title}', task);
+    expect(argv).toEqual(['run', '--title', 'Fix', 'bug']);
+  });
+
+  it('drops the placeholder token entirely when it substitutes to an empty string', () => {
+    const task: AgentTask = { ticketId: 'ABC-1', repo: 'o/r', title: '', jiraBaseUrl: '' };
+    const argv: string[] = buildArgv('run --title {title}', task);
+    expect(argv).toEqual(['run', '--title']);
+  });
 });
 
 describe('commandAdapter', () => {
@@ -31,5 +43,17 @@ describe('commandAdapter', () => {
 
   it('reports id "command"', () => {
     expect(commandAdapter('node -e 0').id).toBe('command');
+  });
+
+  it('resolves ok:false and emits an error event for an empty command template, without throwing', async () => {
+    const task: AgentTask = { ticketId: 'X-1', title: 't', repo: 'o/r', jiraBaseUrl: '' };
+    const events: AgentEvent[] = [];
+    const adapter = commandAdapter('   ');
+    const handle = adapter.start(task, process.cwd(), (e: AgentEvent) => events.push(e));
+    const result: AgentResult = await handle.exit;
+
+    expect(result).toEqual({ ok: false });
+    expect(events.some((e: AgentEvent) => e.kind === 'error')).toBe(true);
+    expect(() => handle.stop()).not.toThrow();
   });
 });
