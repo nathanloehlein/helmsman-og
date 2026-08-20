@@ -127,6 +127,10 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     deps.db.updateRun(runId, { status: 'failed', endedAt: deps.now() });
   } finally {
     if (worktreePath) await deps.removeWorktree(task.repo, worktreePath);
+    const finalRow: RunRow | null = deps.db.getRun(runId);
+    const finalStatus: string = finalRow?.status ?? 'failed';
+    deps.db.appendEvent(runId, 'run-complete', finalStatus, deps.now());
+    deps.bus.publish(runId, { kind: 'run-complete', text: finalStatus });
   }
   return runId;
 }

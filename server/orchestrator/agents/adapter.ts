@@ -5,7 +5,7 @@ export interface AgentTask {
   jiraBaseUrl: string;
 }
 
-export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error';
+export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error' | 'run-complete';
 
 export interface AgentEvent {
   kind: AgentEventKind;

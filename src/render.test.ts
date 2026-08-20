@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { renderDashboard } from './render';
 import type { DashboardSnapshot } from './data/mock';
+import type { RunSummary } from './data/agents';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -72,12 +73,67 @@ describe('renderDashboard', () => {
     const el: HTMLDivElement = root();
     const payload: string = '<img src=x onerror=alert(1)>';
     const malicious: DashboardSnapshot = snapshot({
-      currentTicket: { id: 'X-1', title: payload, priority: 'P1', status: 'in-progress', repo: 'o/r' },
+      queue: [{ id: 'X-1', title: payload, priority: 'P1', status: 'in-progress', repo: 'o/r' }],
     });
     renderDashboard(el, malicious, NOW);
-    expect(el.innerHTML).not.toContain(payload);
-    expect(el.innerHTML).not.toContain('<img src=x');
-    expect(el.innerHTML).toContain('&lt;img');
     expect(el.querySelector('img')).toBeNull();
+    expect(el.querySelector('.queue-title')?.textContent).toBe(payload);
+    expect(el.innerHTML).toContain('&lt;img');
+  });
+
+  it('renders an agent-row for each running run and skips non-running ones', () => {
+    const el: HTMLDivElement = root();
+    const runs: RunSummary[] = [
+      {
+        id: 'run-1',
+        ticketId: 'ABC-1',
+        repo: 'org/alpha',
+        status: 'running',
+        attempt: 1,
+        prNumber: null,
+        startedAt: NOW.toISOString(),
+        costUsd: null,
+      },
+      {
+        id: 'run-2',
+        ticketId: 'ABC-2',
+        repo: 'org/beta',
+        status: 'running',
+        attempt: 2,
+        prNumber: null,
+        startedAt: NOW.toISOString(),
+        costUsd: 1.23,
+      },
+      {
+        id: 'run-3',
+        ticketId: 'ABC-3',
+        repo: 'org/gamma',
+        status: 'succeeded',
+        attempt: 1,
+        prNumber: 4,
+        startedAt: NOW.toISOString(),
+        costUsd: 0.5,
+      },
+    ];
+
+    renderDashboard(el, snapshot(), NOW, [], [], null, runs);
+
+    const rows: NodeListOf<HTMLLIElement> = el.querySelectorAll<HTMLLIElement>('.agent-row');
+    expect(rows.length).toBe(2);
+    rows.forEach((rowEl) => {
+      expect(rowEl.dataset.runid).toBeTruthy();
+      expect(rowEl.querySelector('.agent-stop')).not.toBeNull();
+    });
+    expect(el.innerHTML).toContain('ABC-1');
+    expect(el.innerHTML).toContain('ABC-2');
+    expect(el.innerHTML).not.toContain('ABC-3');
+  });
+
+  it('shows the empty note when no agents are running', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], [], null, []);
+    const emptyNote: Element | null = el.querySelector('.agent-list .empty-note');
+    expect(emptyNote).not.toBeNull();
+    expect(emptyNote?.textContent).toContain('No agents running.');
   });
 });

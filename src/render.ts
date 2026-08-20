@@ -2,16 +2,10 @@ import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
-import type { PrStatus, Priority, TicketStatus } from './types';
+import type { PrStatus, Priority } from './types';
+import type { RunSummary } from './data/agents';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
-
-const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
-  backlog: 'Backlog',
-  'in-progress': 'In progress',
-  'in-review': 'In review',
-  done: 'Done',
-};
 
 const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'in-review': { label: 'In review', chipClass: 'chip-review' },
@@ -19,14 +13,11 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'changes-requested': { label: 'Changes requested', chipClass: 'chip-blocked' },
 }
 
-const ICON_CHECK: string =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>'
-
-const ICON_ACTIVE: string =
-  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="8" r="3.4"/></svg>'
-
 const ICON_LOCK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.5 7V5.1a2.5 2.5 0 0 1 5 0V7"/></svg>'
+
+const ICON_STOP: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1.2"/></svg>'
 
 export const ICON_CLOSE: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
@@ -88,8 +79,10 @@ export function renderDashboard(
   degraded: string[] = [],
   repos: string[] = [],
   selectedRepo: string | null = null,
+  runs: RunSummary[] = [],
 ): void {
   const queue = sortByPriority(data.queue);
+  const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
 
   const repoOptions: string = ['<option value="">All repos</option>']
     .concat(
@@ -116,16 +109,22 @@ export function renderDashboard(
         .join('')
     : '<li class="empty-note">No backlog tickets assigned.</li>';
 
-  const stepRows = data.steps
-    .map(
-      (step) => `
-      <div class="step step-${step.state}">
-        <span class="step-time mono">${formatRelativeTime(step.time, now)}</span>
-        <span class="step-icon">${step.state === 'done' ? ICON_CHECK : ICON_ACTIVE}</span>
-        <span class="step-text">${step.text}</span>
-      </div>`,
-    )
-    .join('');
+  const agentRows: string = activeRuns.length
+    ? activeRuns
+        .map(
+          (run) => `
+      <li class="agent-row" data-runid="${esc(run.id)}">
+        <span class="ticket-id">${esc(run.ticketId)}</span>
+        <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
+        <span class="chip chip-progress">Running</span>
+        <span class="agent-elapsed mono">${formatRelativeTime(run.startedAt, now)}</span>
+        ${run.attempt > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}</span>` : ''}
+        ${run.costUsd != null ? `<span class="agent-cost mono">$${run.costUsd.toFixed(2)}</span>` : ''}
+        <button class="agent-stop" data-runid="${esc(run.id)}" aria-label="Stop run ${esc(run.ticketId)}">${ICON_STOP}</button>
+      </li>`,
+        )
+        .join('')
+    : '<li class="empty-note">No agents running.</li>';
 
   const shippedCards = data.shipped
     .map((pr) => {
@@ -197,20 +196,11 @@ export function renderDashboard(
 
         <div class="panel">
           <div class="panel-head">
-            <span class="panel-title">Working on</span>
-            <span class="chip chip-progress">${TICKET_STATUS_LABEL[data.currentTicket.status]}</span>
+            <span class="panel-title">Agents running</span>
+            <span class="panel-count mono">${activeRuns.length}</span>
           </div>
-          <div class="working-body">
-            <div class="ticket-head">
-              <div>
-                <span class="ticket-id">${esc(data.currentTicket.id)}</span>
-                <h2 class="ticket-headline">${esc(data.currentTicket.title)}</h2>
-                <div class="ticket-meta">
-                  <span class="repo-tag mono">${esc(data.currentTicket.repo)}</span>
-                </div>
-              </div>
-            </div>
-            <div class="step-list">${stepRows}</div>
+          <div class="agents-body">
+            <ul class="agent-list">${agentRows}</ul>
             <div class="perm-note">
               ${ICON_LOCK}
               <span>Read/write scoped to this branch only. Merge requires human approval &mdash; agent never merges to main.</span>

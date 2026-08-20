@@ -2,9 +2,19 @@ import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
 import { renderDashboard, ICON_CLOSE } from './render';
 import type { DashboardSnapshot } from './data/mock';
-import { launchAgent, openRunStream, getRun, type LaunchResult, type RunEvent, type RunSummary } from './data/agents';
+import {
+  launchAgent,
+  openRunStream,
+  getRun,
+  listRuns,
+  stopAgent,
+  type LaunchResult,
+  type RunEvent,
+  type RunStatusSummary,
+  type RunSummary,
+} from './data/agents';
 
-function deriveTicketStatus(summary: RunSummary): string {
+function deriveTicketStatus(summary: RunStatusSummary): string {
   if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
   if (summary.status === 'succeeded') return 'Succeeded';
   if (summary.status === 'failed') return 'Failed';
@@ -22,6 +32,7 @@ export class DashboardView {
   private degraded: string[] = [];
   private repos: string[] = [];
   private selectedRepo: string | null = null;
+  private runs: RunSummary[] = [];
   private activeStreamUnsubscribe: (() => void) | null = null;
   private activeRunId: string | null = null;
   private launchSeq: number = 0;
@@ -61,12 +72,13 @@ export class DashboardView {
       this.repos = response.repos;
       this.selectedRepo = response.selectedRepo;
     }
+    this.runs = await listRuns();
     this.paint();
   }
 
   private paint(): void {
     if (!this.snapshot) return;
-    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo);
+    renderDashboard(this.root, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo, this.runs);
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
     if (select) {
@@ -85,8 +97,41 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+
     const launchBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.launch-btn');
-    if (launchBtn) void this.handleLaunchClick(launchBtn);
+    if (launchBtn) {
+      void this.handleLaunchClick(launchBtn);
+      return;
+    }
+
+    const stopBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.agent-stop');
+    if (stopBtn) {
+      void this.handleStopClick(stopBtn);
+      return;
+    }
+
+    const agentRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row');
+    if (agentRow) this.handleAgentRowClick(agentRow);
+  }
+
+  private async handleStopClick(btn: HTMLButtonElement): Promise<void> {
+    const runId: string | undefined = btn.dataset.runid;
+    if (!runId) return;
+    await stopAgent(runId);
+    await this.refresh();
+  }
+
+  private handleAgentRowClick(row: HTMLElement): void {
+    const runId: string | undefined = row.dataset.runid;
+    if (!runId) return;
+    const ticketEl: HTMLElement | null = row.querySelector<HTMLElement>('.ticket-id');
+    const ticketId: string = ticketEl?.textContent ?? runId;
+
+    this.stopActiveStream();
+    ++this.launchSeq;
+    this.activeRunId = runId;
+    this.openDrawer(ticketId, '');
+    this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {
@@ -115,7 +160,7 @@ export class DashboardView {
   }
 
   private openDrawer(ticketId: string, title: string): void {
-    this.drawerTitle.textContent = `${ticketId} — ${title}`;
+    this.drawerTitle.textContent = title ? `${ticketId} — ${title}` : ticketId;
     this.drawerBody.innerHTML = '';
     this.drawerFooter.textContent = '';
     this.drawer.hidden = false;
@@ -133,17 +178,17 @@ export class DashboardView {
     line.textContent = event.text;
     this.drawerBody.appendChild(line);
     this.drawerBody.scrollTop = this.drawerBody.scrollHeight;
-    if (event.kind === 'result' || event.kind === 'error') void this.renderFooter(event.runId);
+    if (event.kind === 'run-complete') void this.renderFooter(this.activeRunId ?? '');
   }
 
   private async renderFooter(runId: string): Promise<void> {
     if (!runId || runId !== this.activeRunId) return;
-    const summary: RunSummary | null = await getRun(runId);
+    const summary: RunStatusSummary | null = await getRun(runId);
     if (runId !== this.activeRunId) return;
     this.paintFooter(summary);
   }
 
-  private paintFooter(summary: RunSummary | null): void {
+  private paintFooter(summary: RunStatusSummary | null): void {
     this.drawerFooter.textContent = '';
     if (!summary) return;
 

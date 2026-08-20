@@ -84,8 +84,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const events: RunEventRow[] = db.listEvents(logMatch[1]);
       for (const e of events) res.write(`data: ${JSON.stringify(e)}\n\n`);
       const off: () => void = bus.subscribe(logMatch[1], (ev: AgentEvent) => {
-        res.write(`data: ${JSON.stringify(ev)}\n\n`);
-        if (ev.kind === 'result' || ev.kind === 'error') {
+        res.write(`data: ${JSON.stringify({ ...ev, runId: logMatch[1] })}\n\n`);
+        if (ev.kind === 'run-complete') {
           off();
           res.end();
         }
