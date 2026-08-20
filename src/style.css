@@ -720,6 +720,22 @@ body::after {
   color: var(--text);
 }
 
+.auto-claim {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.auto-claim-toggle {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 @media (max-width: 600px) {
   body {
     padding: 16px;

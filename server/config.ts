@@ -24,6 +24,7 @@ export interface AppConfig {
   maxAttempts: number;
   statusInProgress: string;
   statusInReview: string;
+  autoClaimIntervalMs: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -75,6 +76,9 @@ export function loadConfig(env: Env): AppConfig {
   const maxAttempts: number = Number.isFinite(parsedMaxAttempts) ? parsedMaxAttempts : 1;
   const statusInProgress: string = req(env, 'JIRA_STATUS_IN_PROGRESS') ?? 'In Progress';
   const statusInReview: string = req(env, 'JIRA_STATUS_IN_REVIEW') ?? 'In Review';
+  const autoClaimIntervalMsRaw: string | null = req(env, 'AUTO_CLAIM_INTERVAL_MS');
+  const parsedAutoClaimIntervalMs: number = autoClaimIntervalMsRaw ? parseInt(autoClaimIntervalMsRaw, 10) : NaN;
+  const autoClaimIntervalMs: number = Number.isFinite(parsedAutoClaimIntervalMs) ? parsedAutoClaimIntervalMs : 60000;
   return {
     jira,
     github,
@@ -84,6 +88,7 @@ export function loadConfig(env: Env): AppConfig {
     maxAttempts,
     statusInProgress,
     statusInReview,
+    autoClaimIntervalMs,
   };
 }
 

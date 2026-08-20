@@ -200,4 +200,35 @@ describe('DashboardView drawer survives polling', () => {
     expect(drawer.hidden).toBe(true);
     expect(FakeEventSource.instances[0].closed).toBe(true);
   });
+
+  it('posts to the auto-claim endpoint when the toggle is switched off', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const scopedResponse: DashboardResponse = { ...response, repos: ['org/alpha'], selectedRepo: 'org/alpha' };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/auto-claim')) return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [], autoClaim: ['org/alpha'] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => scopedResponse } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const toggle: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.auto-claim-toggle');
+    expect(toggle).not.toBeNull();
+    expect(toggle!.checked).toBe(true);
+
+    toggle!.checked = false;
+    toggle!.dispatchEvent(new Event('change'));
+
+    await vi.waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/repos/org%2Falpha/auto-claim')),
+      ).toBe(true);
+    });
+  });
 });

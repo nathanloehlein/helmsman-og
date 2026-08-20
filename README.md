@@ -8,13 +8,13 @@ is the view; the **orchestrator** behind it spawns and supervises the agents.
 
 ## Status
 
-- **Built (P0 + P1):** the orchestrator, SQLite run store, dashboard API, and a
+- **Built (P0–P4):** the orchestrator, SQLite run store, dashboard API, and a
   Claude Code agent adapter — launch a ticket, run it in an isolated git worktree,
-  stream its events to a live log drawer, and record the run. The agent opens a PR
-  and **never merges**.
-- **Planned:** Jira status writes + the In-Review gate (P2), a multi-agent running
-  view (P3), an auto-claim scheduler (P4), a generic-command adapter + hardening (P5).
-  See `docs/superpowers/plans/`.
+  stream its events to a live log drawer, and record the run (P0–P1); Jira status
+  writes with an In-Review gate (P2); a multi-agent running view with per-run stop
+  and live logs (P3); and an opt-in per-repo auto-claim scheduler (P4). The agent
+  opens a PR and **never merges**.
+- **Planned:** a generic-command adapter + hardening (P5). See `docs/superpowers/plans/`.
 
 ## Stack
 
@@ -121,6 +121,17 @@ worktree when it finishes. `POST /api/agents/:id/stop` SIGTERMs a run. One run p
 a time; global concurrency is capped by `AGENT_MAX_CONCURRENCY`. The agent opens a PR and
 never merges — the human review gate is real.
 
+### Auto-claim
+
+Scope the dashboard to a single repo and flip the **Auto-claim** toggle to let the
+orchestrator work that repo's backlog unattended. Every `AUTO_CLAIM_INTERVAL_MS` a
+per-repo heartbeat pulls the top backlog ticket for the repo's mapped Jira project
+(`REPO_PROJECT_MAP`) and launches an agent — but only while that repo is idle, so it
+never double-claims (it defers to the same single-flight gate as manual Launch). One
+ticket per tick; off by default; toggling off stops further claims. A repo with no
+`REPO_PROJECT_MAP` entry can't be auto-claimed. Toggle state is held in memory
+(`POST /api/repos/:repo/auto-claim {enabled}`), so it resets when the orchestrator restarts.
+
 ## Configuration
 
 | Var | Purpose |
@@ -132,6 +143,7 @@ never merges — the human review gate is real.
 | `AGENTS_ROOT` | directory of per-repo checkouts the orchestrator worktrees from |
 | `ORCHESTRATOR_PORT` | orchestrator port (default `8787`) |
 | `AGENT_MAX_CONCURRENCY` | max simultaneous runs (default `3`) |
+| `AUTO_CLAIM_INTERVAL_MS` | auto-claim heartbeat interval in ms (default `60000`) |
 
 > **Security:** the agent is spawned with `--dangerously-skip-permissions`, so it edits,
 > commits, and opens a PR with full, unattended tool access on the host — a per-run git
