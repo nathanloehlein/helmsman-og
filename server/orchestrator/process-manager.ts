@@ -34,6 +34,10 @@ export class ProcessManager {
     return true;
   }
 
+  hasRun(runId: string): boolean {
+    return this.entries.has(runId);
+  }
+
   activeRepos(): string[] {
     return Array.from(this.entries.values()).map((e) => e.repo);
   }

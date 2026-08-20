@@ -9,6 +9,7 @@ import {
   fetchAgents,
   setAutoClaim,
   stopAgent,
+  type AgentCaps,
   type LaunchResult,
   type RunEvent,
   type RunStatusSummary,
@@ -35,6 +36,7 @@ export class DashboardView {
   private selectedRepo: string | null = null;
   private runs: RunSummary[] = [];
   private autoClaimRepos: string[] = [];
+  private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private activeStreamUnsubscribe: (() => void) | null = null;
   private activeRunId: string | null = null;
   private launchSeq: number = 0;
@@ -74,9 +76,10 @@ export class DashboardView {
       this.repos = response.repos;
       this.selectedRepo = response.selectedRepo;
     }
-    const agents: { runs: RunSummary[]; autoClaim: string[] } = await fetchAgents();
+    const agents: { runs: RunSummary[]; autoClaim: string[]; caps: AgentCaps } = await fetchAgents();
     this.runs = agents.runs;
     this.autoClaimRepos = agents.autoClaim;
+    this.caps = agents.caps;
     this.paint();
   }
 
@@ -91,6 +94,7 @@ export class DashboardView {
       this.selectedRepo,
       this.runs,
       this.autoClaimRepos,
+      this.caps,
     );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');

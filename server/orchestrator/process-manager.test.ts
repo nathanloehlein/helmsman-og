@@ -31,4 +31,13 @@ describe('ProcessManager', () => {
     expect(stop).toHaveBeenCalledOnce();
     expect(pm.stop('missing')).toBe(false);
   });
+
+  it('hasRun reflects whether a run id is tracked', () => {
+    const pm = new ProcessManager(4);
+    pm.add('r1', 'o/r', () => undefined);
+    expect(pm.hasRun('r1')).toBe(true);
+    expect(pm.hasRun('nope')).toBe(false);
+    pm.remove('r1');
+    expect(pm.hasRun('r1')).toBe(false);
+  });
 });

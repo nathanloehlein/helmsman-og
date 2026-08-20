@@ -3,7 +3,7 @@ import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority } from './types';
-import type { RunSummary } from './data/agents';
+import type { AgentCaps, RunSummary } from './data/agents';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
@@ -81,6 +81,7 @@ export function renderDashboard(
   selectedRepo: string | null = null,
   runs: RunSummary[] = [],
   autoClaimRepos: string[] = [],
+  caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
 ): void {
   const queue = sortByPriority(data.queue);
   const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
@@ -123,8 +124,8 @@ export function renderDashboard(
         <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
         <span class="chip chip-progress">Running</span>
         <span class="agent-elapsed mono">${formatRelativeTime(run.startedAt, now)}</span>
-        ${run.attempt > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}</span>` : ''}
-        ${run.costUsd != null ? `<span class="agent-cost mono">$${run.costUsd.toFixed(2)}</span>` : ''}
+        ${caps.maxAttempts > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}/${caps.maxAttempts}</span>` : run.attempt > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}</span>` : ''}
+        ${run.costUsd != null ? `<span class="agent-cost mono">$${run.costUsd.toFixed(2)}${caps.maxCostUsd != null ? `/$${caps.maxCostUsd.toFixed(2)}` : ''}</span>` : ''}
         <button class="agent-stop" data-runid="${esc(run.id)}" aria-label="Stop run ${esc(run.ticketId)}">${ICON_STOP}</button>
       </li>`,
         )

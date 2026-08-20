@@ -203,6 +203,27 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('marks the run stopped, not failed, when a stop and the cost cap collide on the same attempt', async () => {
+    const db: Db = openDb(':memory:');
+    let calls: number = 0;
+    const adapter: AgentAdapter = {
+      id: 'collision',
+      start(_t: AgentTask, _wd: string, _onEvent: (e: AgentEvent) => void): AgentHandle {
+        calls += 1;
+        return { stop: () => undefined, exit: Promise.resolve({ ok: false, costUsd: 0.6 }) };
+      },
+    };
+    const isStopped = vi.fn(() => true);
+    const d: RunnerDeps = { ...deps(db, adapter), maxAttempts: 3, maxCostUsd: 0.5, isStopped };
+
+    const id = await startRun(task, d);
+
+    expect(calls).toBe(1);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('stopped');
+    db.close();
+  });
+
   it('accumulates cost across retried attempts', async () => {
     const db: Db = openDb(':memory:');
     const adapter: AgentAdapter = sequenceAdapter([{ ok: false, costUsd: 0.1 }, { ok: true, costUsd: 0.2 }]);
@@ -213,6 +234,45 @@ describe('startRun', () => {
     const row = db.getRun(id);
     expect(row?.status).toBe('succeeded');
     expect(row?.costUsd).toBeCloseTo(0.3);
+    db.close();
+  });
+
+  it('stops before exceeding maxCostUsd and marks the run failed with a cost-cap log', async () => {
+    const db: Db = openDb(':memory:');
+    let calls: number = 0;
+    const adapter: AgentAdapter = {
+      id: 'cost',
+      start(_t: AgentTask, _wd: string, _onEvent: (e: AgentEvent) => void): AgentHandle {
+        calls += 1;
+        return { stop: () => undefined, exit: Promise.resolve({ ok: false, costUsd: 0.6 }) };
+      },
+    };
+    const d: RunnerDeps = { ...deps(db, adapter), maxAttempts: 3, maxCostUsd: 1.0 };
+
+    const id = await startRun(task, d);
+
+    expect(calls).toBe(2);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('failed');
+    expect(db.listEvents(id).some((e) => e.kind === 'log' && e.text.includes('cost cap'))).toBe(true);
+    db.close();
+  });
+
+  it('runs the full maxAttempts when maxCostUsd is not set (cap is opt-in)', async () => {
+    const db: Db = openDb(':memory:');
+    let calls: number = 0;
+    const adapter: AgentAdapter = {
+      id: 'cost',
+      start(_t: AgentTask, _wd: string, _onEvent: (e: AgentEvent) => void): AgentHandle {
+        calls += 1;
+        return { stop: () => undefined, exit: Promise.resolve({ ok: false, costUsd: 0.6 }) };
+      },
+    };
+    const d: RunnerDeps = { ...deps(db, adapter), maxAttempts: 3, maxCostUsd: null };
+
+    await startRun(task, d);
+
+    expect(calls).toBe(3);
     db.close();
   });
 

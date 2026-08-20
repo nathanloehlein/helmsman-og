@@ -25,6 +25,9 @@ export interface AppConfig {
   statusInProgress: string;
   statusInReview: string;
   autoClaimIntervalMs: number;
+  agentAdapter: 'claude-code' | 'command';
+  agentCmd: string | null;
+  maxCostUsd: number | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -79,6 +82,12 @@ export function loadConfig(env: Env): AppConfig {
   const autoClaimIntervalMsRaw: string | null = req(env, 'AUTO_CLAIM_INTERVAL_MS');
   const parsedAutoClaimIntervalMs: number = autoClaimIntervalMsRaw ? parseInt(autoClaimIntervalMsRaw, 10) : NaN;
   const autoClaimIntervalMs: number = Number.isFinite(parsedAutoClaimIntervalMs) ? parsedAutoClaimIntervalMs : 60000;
+  const agentCmd: string | null = req(env, 'AGENT_CMD');
+  const agentAdapter: 'claude-code' | 'command' =
+    req(env, 'AGENT_ADAPTER') === 'command' ? 'command' : 'claude-code';
+  const maxCostRaw: string | null = req(env, 'AGENT_MAX_COST_USD');
+  const parsedMaxCost: number = maxCostRaw ? parseFloat(maxCostRaw) : NaN;
+  const maxCostUsd: number | null = Number.isFinite(parsedMaxCost) ? parsedMaxCost : null;
   return {
     jira,
     github,
@@ -89,6 +98,9 @@ export function loadConfig(env: Env): AppConfig {
     statusInProgress,
     statusInReview,
     autoClaimIntervalMs,
+    agentAdapter,
+    agentCmd,
+    maxCostUsd,
   };
 }
 

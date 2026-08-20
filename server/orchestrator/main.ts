@@ -6,17 +6,19 @@ import { randomUUID } from 'node:crypto';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import { loadConfig, type AppConfig } from '../config';
 import { openDb } from './db';
+import { recoverOrphanedRuns } from './recovery';
 import { handleApi } from './router';
 import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
-import { createWorktree, removeWorktree } from './worktree';
+import { commandAdapter } from './agents/command';
+import { createWorktree, listAgentWorktrees, removeWorktree, removeWorktreeAt, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
 import { AutoClaimScheduler } from './scheduler';
 import { fetchQueueIssues } from '../jira';
-import type { AgentEvent, AgentHandle } from './agents/adapter';
+import type { AgentAdapter, AgentEvent, AgentHandle } from './agents/adapter';
 import type { RunEventRow } from './db';
 import type { JiraIssue } from '../types';
 
@@ -29,6 +31,39 @@ const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCU
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const config: AppConfig = loadConfig(process.env);
+
+try {
+  const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
+  if (recovered.length > 0) process.stdout.write(`recovered ${recovered.length} interrupted run(s)\n`);
+} catch (err: unknown) {
+  process.stderr.write(`run recovery failed: ${String(err)}\n`);
+}
+
+try {
+  const repos: string[] = [...Object.keys(config.repoProjectMap), ...(config.github?.repo ? [config.github.repo] : [])];
+  const repoDirs: string[] = [
+    ...new Set(repos.map((repo: string) => join(AGENTS_ROOT, repo.split('/').pop() ?? repo))),
+  ];
+  if (repoDirs.length > 0) {
+    const removed: string[] = await sweepOrphanedWorktrees({
+      listAgentWorktrees,
+      remove: removeWorktreeAt,
+      isActiveRunId: (id: string) => pm.hasRun(id),
+      repoDirs,
+    });
+    if (removed.length > 0) process.stdout.write(`swept ${removed.length} orphaned worktree(s)\n`);
+  }
+} catch (err: unknown) {
+  process.stderr.write(`worktree sweep failed: ${String(err)}\n`);
+}
+
+const adapter: AgentAdapter =
+  config.agentAdapter === 'command' && config.agentCmd
+    ? commandAdapter(config.agentCmd)
+    : claudeCodeAdapter;
+if (config.agentAdapter === 'command' && !config.agentCmd) {
+  process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n');
+}
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
@@ -45,7 +80,7 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
     {
       db,
       bus,
-      adapter: claudeCodeAdapter,
+      adapter,
       createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
       removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
       now: () => new Date().toISOString(),
@@ -61,6 +96,7 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
       findPrNumber: (repo: string, branch: string) =>
         config.github ? findPrNumberByBranch(config.github, repo, branch) : Promise.resolve(null),
       maxAttempts: config.maxAttempts,
+      maxCostUsd: config.maxCostUsd,
       isStopped: () => control.stopped,
     },
   ).finally(() => pm.remove(runId));
@@ -123,6 +159,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       stop: (id: string) => pm.stop(id),
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),
+      caps: () => ({ maxAttempts: config.maxAttempts, maxCostUsd: config.maxCostUsd }),
     });
     if (api) {
       res.writeHead(api.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

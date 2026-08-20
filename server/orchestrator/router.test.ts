@@ -11,6 +11,7 @@ const deps: RouterDeps = {
   stop: (_id: string) => false,
   setAutoClaim: (_repo: string, _enabled: boolean) => {},
   autoClaimRepos: () => ['o/r'],
+  caps: () => ({ maxAttempts: 3, maxCostUsd: 5 }),
 };
 
 describe('handleApi', () => {
@@ -30,6 +31,15 @@ describe('handleApi', () => {
     const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
     expect(r?.status).toBe(200);
     expect((r?.json as { autoClaim: string[] }).autoClaim).toEqual(['o/r']);
+  });
+
+  it('includes caps from caps()', async () => {
+    const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
+    expect(r?.status).toBe(200);
+    expect((r?.json as { caps: { maxAttempts: number; maxCostUsd: number | null } }).caps).toEqual({
+      maxAttempts: 3,
+      maxCostUsd: 5,
+    });
   });
 
   it('returns null for non-API paths', async () => {

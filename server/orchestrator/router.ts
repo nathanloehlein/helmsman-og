@@ -13,6 +13,7 @@ export interface RouterDeps {
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
+  caps: () => { maxAttempts: number; maxCostUsd: number | null };
 }
 
 export async function handleApi(
@@ -27,7 +28,7 @@ export async function handleApi(
     return { status: 200, json: payload };
   }
   if (path === '/api/agents' && method === 'GET') {
-    return { status: 200, json: { runs: deps.db.listRuns(50), autoClaim: deps.autoClaimRepos() } };
+    return { status: 200, json: { runs: deps.db.listRuns(50), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
     const b = _body as { ticketId?: string; title?: string; repo?: string } | null;

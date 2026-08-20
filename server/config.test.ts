@@ -123,4 +123,36 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ ...FULL, AUTO_CLAIM_INTERVAL_MS: 'not-a-number' });
     expect(cfg.autoClaimIntervalMs).toBe(60000);
   });
+
+  it('defaults agentAdapter to claude-code and agentCmd to null', () => {
+    const cfg = loadConfig(FULL);
+    expect(cfg.agentAdapter).toBe('claude-code');
+    expect(cfg.agentCmd).toBeNull();
+  });
+
+  it('selects the command adapter and template from env', () => {
+    const cfg = loadConfig({ ...FULL, AGENT_ADAPTER: 'command', AGENT_CMD: 'run {ticket}' });
+    expect(cfg.agentAdapter).toBe('command');
+    expect(cfg.agentCmd).toBe('run {ticket}');
+  });
+
+  it('falls back to claude-code for an unrecognized AGENT_ADAPTER value', () => {
+    const cfg = loadConfig({ ...FULL, AGENT_ADAPTER: 'foo' });
+    expect(cfg.agentAdapter).toBe('claude-code');
+  });
+
+  it('defaults maxCostUsd to null', () => {
+    const cfg = loadConfig(FULL);
+    expect(cfg.maxCostUsd).toBeNull();
+  });
+
+  it('parses AGENT_MAX_COST_USD as a float', () => {
+    const cfg = loadConfig({ ...FULL, AGENT_MAX_COST_USD: '2.5' });
+    expect(cfg.maxCostUsd).toBe(2.5);
+  });
+
+  it('falls back to maxCostUsd null when AGENT_MAX_COST_USD is not a valid number', () => {
+    const cfg = loadConfig({ ...FULL, AGENT_MAX_COST_USD: 'x' });
+    expect(cfg.maxCostUsd).toBeNull();
+  });
 });
