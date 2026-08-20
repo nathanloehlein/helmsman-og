@@ -20,6 +20,29 @@ export interface RunEvent {
   text: string;
 }
 
+export interface RunSummary {
+  status: string;
+  prNumber: number | null;
+  repo: string;
+}
+
+interface AgentsListResponse {
+  runs: Array<{ id: string; status: string; prNumber: number | null; repo: string }>;
+}
+
+export async function getRun(runId: string): Promise<RunSummary | null> {
+  try {
+    const res: Response = await fetch('/api/agents');
+    if (!res.ok) return null;
+    const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
+    const row: AgentsListResponse['runs'][number] | undefined = payload.runs.find((r) => r.id === runId);
+    if (!row) return null;
+    return { status: row.status, prNumber: row.prNumber, repo: row.repo };
+  } catch {
+    return null;
+  }
+}
+
 export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): () => void {
   const src: EventSource = new EventSource(`/api/agents/${encodeURIComponent(runId)}/log`);
   src.onmessage = (m: MessageEvent<string>): void => {

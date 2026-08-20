@@ -14,6 +14,10 @@ interface RawReview {
   state: string;
 }
 
+interface PullRequestItem {
+  number: number;
+}
+
 const API: string = 'https://api.github.com';
 
 function headers(github: GithubConfig): Record<string, string> {
@@ -79,4 +83,32 @@ export async function fetchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]
       };
     }),
   );
+}
+
+/**
+ * Finds the PR number for a given branch on the given repo, or null if no
+ * PR exists for that branch (or the lookup fails). Fails soft: never throws.
+ */
+export async function findPrNumberByBranch(
+  github: GithubConfig,
+  repo: string,
+  branch: string,
+): Promise<number | null> {
+  const owner: string = repo.split('/')[0] ?? '';
+  const params: URLSearchParams = new URLSearchParams({
+    head: `${owner}:${branch}`,
+    state: 'all',
+    per_page: '1',
+  });
+
+  try {
+    const res: Response = await fetch(`${API}/repos/${repo}/pulls?${params.toString()}`, {
+      headers: headers(github),
+    });
+    if (!res.ok) return null;
+    const prs: PullRequestItem[] = await res.json();
+    return prs[0]?.number ?? null;
+  } catch {
+    return null;
+  }
 }

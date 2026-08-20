@@ -4,6 +4,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { buildDashboardResponse } from '../dashboard-endpoint';
+import { loadConfig, type AppConfig } from '../config';
 import { openDb } from './db';
 import { handleApi } from './router';
 import { ProcessManager } from './process-manager';
@@ -11,6 +12,8 @@ import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { createWorktree, removeWorktree } from './worktree';
+import { makeJiraActions, type JiraActions } from './jira-actions';
+import { findPrNumberByBranch } from '../github';
 import type { AgentEvent, AgentHandle } from './agents/adapter';
 import type { RunEventRow } from './db';
 
@@ -22,6 +25,7 @@ const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.backlog-r
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
+const config: AppConfig = loadConfig(process.env);
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
@@ -32,6 +36,7 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
     control.stopped = true;
     control.handle?.stop();
   });
+  const jira: JiraActions | null = config.jira ? makeJiraActions(config.jira) : null;
   void startRun(
     { ticketId: body.ticketId, title: body.title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '' },
     {
@@ -46,6 +51,14 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
         control.handle = handle;
         if (control.stopped) handle.stop();
       },
+      jira,
+      botAccountId: config.botAccountId ?? undefined,
+      statusInProgress: config.statusInProgress,
+      statusInReview: config.statusInReview,
+      findPrNumber: (repo: string, branch: string) =>
+        config.github ? findPrNumberByBranch(config.github, repo, branch) : Promise.resolve(null),
+      maxAttempts: config.maxAttempts,
+      isStopped: () => control.stopped,
     },
   ).finally(() => pm.remove(runId));
   return runId;

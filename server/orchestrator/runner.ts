@@ -1,5 +1,6 @@
-import type { Db, RunRow } from './db';
+import type { Db, RunRow, RunStatus } from './db';
 import type { RunBus } from './event-bus';
+import type { JiraActions } from './jira-actions';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } from './agents/adapter';
 
 export interface RunnerDeps {
@@ -11,10 +12,52 @@ export interface RunnerDeps {
   now: () => string;
   genId: () => string;
   onStart?: (handle: AgentHandle) => void;
+  jira?: JiraActions | null;
+  botAccountId?: string;
+  statusInProgress?: string;
+  statusInReview?: string;
+  findPrNumber?: (repo: string, branch: string) => Promise<number | null>;
+  maxAttempts?: number;
+  isStopped?: () => boolean;
+}
+
+async function claimTicket(
+  jira: JiraActions,
+  ticketId: string,
+  accountId: string,
+  statusInProgress: string,
+  onEvent: (e: AgentEvent) => void,
+): Promise<void> {
+  try {
+    await jira.assign(ticketId, accountId);
+    await jira.transition(ticketId, statusInProgress);
+    onEvent({ kind: 'log', text: `claimed ticket ${ticketId}: assigned bot and transitioned to ${statusInProgress}` });
+  } catch (err) {
+    const text: string = err instanceof Error ? err.message : String(err);
+    onEvent({ kind: 'log', text: `jira claim failed (non-fatal): ${text}` });
+  }
+}
+
+async function markInReview(
+  jira: JiraActions,
+  ticketId: string,
+  statusInReview: string,
+  onEvent: (e: AgentEvent) => void,
+): Promise<void> {
+  try {
+    await jira.transition(ticketId, statusInReview);
+    onEvent({ kind: 'log', text: `transitioned ticket ${ticketId} to ${statusInReview}` });
+  } catch (err) {
+    const text: string = err instanceof Error ? err.message : String(err);
+    onEvent({ kind: 'log', text: `jira transition failed (non-fatal): ${text}` });
+  }
 }
 
 export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<string> {
   const runId: string = deps.genId();
+  const maxAttempts: number = Math.max(1, deps.maxAttempts ?? 1);
+  const statusInProgress: string = deps.statusInProgress ?? 'In Progress';
+  const statusInReview: string = deps.statusInReview ?? 'In Review';
   const initial: RunRow = {
     id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
     status: 'running', attempt: 1, prNumber: null, startedAt: deps.now(),
@@ -32,16 +75,51 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       deps.bus.publish(runId, e);
     };
 
-    const handle: AgentHandle = deps.adapter.start(task, worktree.path, onEvent);
-    deps.onStart?.(handle);
-    const result: AgentResult = await handle.exit;
+    if (deps.jira && deps.botAccountId) {
+      await claimTicket(deps.jira, task.ticketId, deps.botAccountId, statusInProgress, onEvent);
+    }
 
+    let result: AgentResult = { ok: false };
+    let totalCost: number | null = null;
+    let stopped: boolean = false;
+    for (let attempt: number = 1; attempt <= maxAttempts; attempt += 1) {
+      if (attempt > 1) {
+        deps.db.updateRun(runId, { attempt });
+        onEvent({ kind: 'log', text: `retry ${attempt}/${maxAttempts}` });
+      }
+      const handle: AgentHandle = deps.adapter.start(task, worktree.path, onEvent);
+      deps.onStart?.(handle);
+      result = await handle.exit;
+      if (result.costUsd != null) totalCost = (totalCost ?? 0) + result.costUsd;
+      if (result.ok) break;
+      if (deps.isStopped?.()) {
+        stopped = true;
+        onEvent({ kind: 'log', text: 'run stopped, no further attempts' });
+        break;
+      }
+    }
+
+    let prNumber: number | null = result.prNumber ?? null;
+    if (result.ok && deps.findPrNumber) {
+      try {
+        prNumber = await deps.findPrNumber(task.repo, worktree.branch);
+      } catch (err) {
+        const text: string = err instanceof Error ? err.message : String(err);
+        onEvent({ kind: 'log', text: `find PR failed (non-fatal): ${text}` });
+      }
+    }
+
+    const status: RunStatus = stopped ? 'stopped' : result.ok ? 'succeeded' : 'failed';
     deps.db.updateRun(runId, {
-      status: result.ok ? 'succeeded' : 'failed',
-      prNumber: result.prNumber ?? null,
-      costUsd: result.costUsd ?? null,
+      status,
+      prNumber,
+      costUsd: totalCost,
       endedAt: deps.now(),
     });
+
+    if (result.ok && deps.jira && prNumber != null) {
+      await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
+    }
   } catch (err) {
     const text: string = err instanceof Error ? err.message : String(err);
     deps.db.appendEvent(runId, 'error', text, deps.now());
