@@ -98,7 +98,6 @@ export async function buildDashboardResponse(
     const mock: DashboardSnapshot = await deps.loadMock();
     if (jiraDegraded) {
       snapshot.queue = mock.queue;
-      snapshot.currentTicket = mock.currentTicket;
       snapshot.steps = mock.steps;
       snapshot.stats = mock.stats;
       snapshot.throughput7d = mock.throughput7d;

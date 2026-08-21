@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sweepOrphanedWorktrees } from './worktree';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { sweepOrphanedWorktrees, discoverRepoDirs } from './worktree';
 
 describe('sweepOrphanedWorktrees', () => {
   it('removes only orphaned worktrees, leaving active runs untouched', async () => {
@@ -32,5 +35,24 @@ describe('sweepOrphanedWorktrees', () => {
     expect(remove).toHaveBeenCalledWith('/agents/r', '/agents/r/.worktrees/run-A');
     expect(remove).toHaveBeenCalledWith('/agents/r', '/agents/r/.worktrees/run-B');
     expect(removed).toEqual(['/agents/r/.worktrees/run-B']);
+  });
+});
+
+describe('discoverRepoDirs', () => {
+  it('returns only subdirectories that contain a .worktrees dir', async () => {
+    const root: string = await mkdtemp(join(tmpdir(), 'agents-'));
+    try {
+      await mkdir(join(root, 'repo-a', '.worktrees'), { recursive: true });
+      await mkdir(join(root, 'repo-b'), { recursive: true });
+      const dirs: string[] = await discoverRepoDirs(root);
+      expect(dirs).toEqual([join(root, 'repo-a')]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns [] for a nonexistent root without throwing', async () => {
+    const dirs: string[] = await discoverRepoDirs(join(tmpdir(), 'does-not-exist-xyz-123'));
+    expect(dirs).toEqual([]);
   });
 });

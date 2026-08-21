@@ -180,10 +180,6 @@ export interface SnapshotInput {
   now: Date;
 }
 
-function idleTicket(repo: string): Ticket {
-  return { id: '—', title: 'Idle — no ticket in progress', priority: 'P3', status: 'in-progress', repo };
-}
-
 export function assembleSnapshot(input: SnapshotInput): DashboardSnapshot {
   const { queueIssues, activeIssues, prs, repo, now } = input;
   const current: JiraIssue | undefined = activeIssues.find(
@@ -192,7 +188,6 @@ export function assembleSnapshot(input: SnapshotInput): DashboardSnapshot {
   return {
     repo,
     queue: queueIssues.map((i) => issueToTicket(i, repo)),
-    currentTicket: current ? issueToTicket(current, repo) : idleTicket(repo),
     steps: current ? buildSteps(current, prs) : [],
     shipped: prs.map(prToShipped),
     activity: buildActivity(activeIssues, prs),

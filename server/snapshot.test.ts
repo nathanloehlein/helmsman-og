@@ -226,7 +226,6 @@ describe('assembleSnapshot', () => {
     });
     expect(snap.queue.length).toBe(1);
     expect(snap.repo).toBe('o/r');
-    expect(snap.currentTicket.status).toBe('in-progress');
     expect(snap.steps).toEqual([]);
   });
 });
