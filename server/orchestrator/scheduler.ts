@@ -6,12 +6,11 @@ export interface SchedulerDeps {
 }
 
 export class AutoClaimScheduler {
-  private deps: SchedulerDeps;
-  private enabledRepoSet: Set<string>;
+  private readonly deps: SchedulerDeps;
+  private readonly enabledRepoSet: Set<string> = new Set();
 
   constructor(deps: SchedulerDeps) {
     this.deps = deps;
-    this.enabledRepoSet = new Set();
   }
 
   setEnabled(repo: string, enabled: boolean): void {

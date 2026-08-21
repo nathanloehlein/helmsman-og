@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { basename, join, sep } from 'node:path';
 
 const run = promisify(execFile);
@@ -9,7 +11,7 @@ export interface Worktree {
   branch: string;
 }
 
-function repoBasename(repo: string): string {
+export function repoBasename(repo: string): string {
   return repo.split('/').pop() ?? repo;
 }
 
@@ -41,7 +43,21 @@ export async function listAgentWorktrees(repoDir: string): Promise<string[]> {
       if (path.includes(marker)) paths.push(path);
     }
     return paths;
-  } catch {
+  } catch (err: unknown) {
+    process.stderr.write(`worktree list failed for ${repoDir}: ${String(err)}\n`);
+    return [];
+  }
+}
+
+export async function discoverRepoDirs(agentsRoot: string): Promise<string[]> {
+  try {
+    const entries: import('node:fs').Dirent[] = await readdir(agentsRoot, { withFileTypes: true });
+    return entries
+      .filter((entry: import('node:fs').Dirent): boolean => entry.isDirectory())
+      .map((entry: import('node:fs').Dirent): string => join(agentsRoot, entry.name))
+      .filter((dir: string): boolean => existsSync(join(dir, '.worktrees')));
+  } catch (err: unknown) {
+    process.stderr.write(`repo-dir discovery failed for ${agentsRoot}: ${String(err)}\n`);
     return [];
   }
 }

@@ -27,6 +27,24 @@ describe('handleApi', () => {
     expect((r?.json as { runs: unknown[] }).runs).toHaveLength(1);
   });
 
+  it('projects runs to a client-safe shape without leaking internal fields', async () => {
+    const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
+    const run = (r?.json as { runs: Record<string, unknown>[] }).runs[0];
+    expect(run).toEqual({
+      id: 'r1',
+      ticketId: 'T-1',
+      repo: 'o/r',
+      status: 'running',
+      attempt: 1,
+      prNumber: null,
+      startedAt: 'x',
+      costUsd: null,
+    });
+    expect(run).not.toHaveProperty('worktreePath');
+    expect(run).not.toHaveProperty('adapter');
+    expect(run).not.toHaveProperty('endedAt');
+  });
+
   it('includes autoClaim repos from autoClaimRepos()', async () => {
     const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
     expect(r?.status).toBe(200);

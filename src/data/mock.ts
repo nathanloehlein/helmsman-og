@@ -3,7 +3,6 @@ import type { ActivityEvent, DailyStats, ShippedPr, Ticket, WorkStep } from '../
 export interface DashboardSnapshot {
   repo: string;
   queue: Ticket[];
-  currentTicket: Ticket;
   steps: WorkStep[];
   shipped: ShippedPr[];
   activity: ActivityEvent[];
@@ -28,14 +27,6 @@ const QUEUE: Ticket[] = [
   { id: 'DEVX-462', title: 'Cache config lookup in gateway middleware', priority: 'P2', status: 'backlog', repo: REPO },
   { id: 'DEVX-457', title: 'Update Node engines field across services', priority: 'P3', status: 'backlog', repo: REPO },
 ];
-
-const CURRENT_TICKET: Ticket = {
-  id: 'DEVX-482',
-  title: 'Add retry / backoff to webhook dispatcher',
-  priority: 'P2',
-  status: 'in-progress',
-  repo: REPO,
-};
 
 const STEPS: WorkStep[] = [
   { time: minutesAgo(11), state: 'done', text: 'Claimed ticket, transitioned to <b>In Progress</b>' },
@@ -75,7 +66,6 @@ export async function loadDashboard(): Promise<DashboardSnapshot> {
   return {
     repo: REPO,
     queue: QUEUE,
-    currentTicket: CURRENT_TICKET,
     steps: STEPS,
     shipped: SHIPPED,
     activity: ACTIVITY,

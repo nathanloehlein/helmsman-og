@@ -1,8 +1,32 @@
-import type { Db } from './db';
+import type { Db, RunRow } from './db';
 
 export interface ApiResult {
   status: number;
   json: unknown;
+}
+
+export interface RunSummary {
+  id: string;
+  ticketId: string;
+  repo: string;
+  status: string;
+  attempt: number;
+  prNumber: number | null;
+  startedAt: string;
+  costUsd: number | null;
+}
+
+function toRunSummary(row: RunRow): RunSummary {
+  return {
+    id: row.id,
+    ticketId: row.ticketId,
+    repo: row.repo,
+    status: row.status,
+    attempt: row.attempt,
+    prNumber: row.prNumber,
+    startedAt: row.startedAt,
+    costUsd: row.costUsd,
+  };
 }
 
 export interface RouterDeps {
@@ -28,7 +52,7 @@ export async function handleApi(
     return { status: 200, json: payload };
   }
   if (path === '/api/agents' && method === 'GET') {
-    return { status: 200, json: { runs: deps.db.listRuns(50), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
+    return { status: 200, json: { runs: deps.db.listRuns(50).map(toRunSummary), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
     const b = _body as { ticketId?: string; title?: string; repo?: string } | null;

@@ -9,7 +9,6 @@ function snapshot(over: Partial<DashboardSnapshot> = {}): DashboardSnapshot {
   return {
     repo: 'o/r',
     queue: [],
-    currentTicket: { id: '—', title: 'Idle — no ticket in progress', priority: 'P3', status: 'in-progress', repo: 'o/r' },
     steps: [],
     shipped: [],
     activity: [],

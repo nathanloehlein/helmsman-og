@@ -13,7 +13,7 @@ import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
-import { createWorktree, listAgentWorktrees, removeWorktree, removeWorktreeAt, sweepOrphanedWorktrees } from './worktree';
+import { createWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
 import { AutoClaimScheduler } from './scheduler';
@@ -41,9 +41,9 @@ try {
 
 try {
   const repos: string[] = [...Object.keys(config.repoProjectMap), ...(config.github?.repo ? [config.github.repo] : [])];
-  const repoDirs: string[] = [
-    ...new Set(repos.map((repo: string) => join(AGENTS_ROOT, repo.split('/').pop() ?? repo))),
-  ];
+  const configuredDirs: string[] = repos.map((repo: string) => join(AGENTS_ROOT, repoBasename(repo)));
+  const discoveredDirs: string[] = await discoverRepoDirs(AGENTS_ROOT);
+  const repoDirs: string[] = [...new Set([...configuredDirs, ...discoveredDirs])];
   if (repoDirs.length > 0) {
     const removed: string[] = await sweepOrphanedWorktrees({
       listAgentWorktrees,
