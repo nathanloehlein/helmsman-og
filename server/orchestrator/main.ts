@@ -163,7 +163,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       autoClaimRepos: () => scheduler.enabledRepos(),
       caps: () => ({ maxAttempts: config.maxAttempts, maxCostUsd: config.maxCostUsd }),
       getConfig: () => ({ config: publicConfig(configStore.current()), overridden: Object.keys(configStore.overrides()) }),
-      setConfig: (key: string, value: string) => {
+      setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {
           configStore.setOverride(key, value, () => new Date().toISOString());
           return { ok: true as const };
