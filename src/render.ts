@@ -4,6 +4,7 @@ import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority } from './types';
 import type { AgentCaps, RunSummary } from './data/agents';
+import type { UiConfig } from './data/config';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
@@ -11,6 +12,12 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'in-review': { label: 'In review', chipClass: 'chip-review' },
   merged: { label: 'Merged', chipClass: 'chip-done' },
   'changes-requested': { label: 'Changes requested', chipClass: 'chip-blocked' },
+}
+
+const RUN_STATUS_CHIP: Record<string, { label: string; chipClass: string }> = {
+  succeeded: { label: 'Succeeded', chipClass: 'chip-done' },
+  failed: { label: 'Failed', chipClass: 'chip-blocked' },
+  stopped: { label: 'Stopped', chipClass: 'chip-progress' },
 }
 
 const ICON_LOCK: string =
@@ -82,9 +89,11 @@ export function renderDashboard(
   runs: RunSummary[] = [],
   autoClaimRepos: string[] = [],
   caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
+  uiConfig: UiConfig = { config: {}, overridden: [] },
 ): void {
   const queue = sortByPriority(data.queue);
   const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
+  const terminalRuns: RunSummary[] = runs.filter((r) => r.status !== 'running');
 
   const repoOptions: string = ['<option value="">All repos</option>']
     .concat(
@@ -174,6 +183,46 @@ export function renderDashboard(
     ? ` &middot; claimed ${formatRelativeTime(data.steps[0].time, now)}`
     : '';
 
+  const newRunRepoOptions: string = repos
+    .map((repo) => `<option value="${esc(repo)}">${esc(shortRepo(repo))}</option>`)
+    .join('');
+
+  const recentRunItems: string = terminalRuns.length
+    ? terminalRuns
+        .map((run) => {
+          const statusInfo = RUN_STATUS_CHIP[run.status] ?? { label: run.status, chipClass: 'chip-progress' };
+          const costText: string = run.costUsd != null ? `$${run.costUsd.toFixed(2)}` : '&mdash;';
+          const prLink: string =
+            run.prNumber != null
+              ? `<a class="recent-run-pr" href="https://github.com/${esc(run.repo)}/pull/${run.prNumber}" target="_blank" rel="noopener">#${run.prNumber}</a>`
+              : '';
+          return `
+      <li class="recent-run" data-runid="${esc(run.id)}">
+        <span class="ticket-id">${esc(run.ticketId || 'freeform')}</span>
+        <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
+        <span class="chip ${statusInfo.chipClass}">${statusInfo.label}</span>
+        <span class="agent-cost mono">${costText}</span>
+        ${prLink}
+      </li>`;
+        })
+        .join('')
+    : '<li class="empty-note">No past runs.</li>';
+
+  const configEntries: [string, unknown][] = Object.entries(uiConfig.config ?? {});
+  const configRows: string = configEntries.length
+    ? configEntries
+        .map(([key, value]) => {
+          const isOverridden: boolean = (uiConfig.overridden ?? []).includes(key);
+          return `
+      <div class="config-row" data-key="${esc(key)}">
+        <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}</span>
+        <input class="config-input" type="text" value="${esc(String(value ?? ''))}">
+        <button class="config-save" data-key="${esc(key)}">Save</button>
+      </div>`;
+        })
+        .join('')
+    : '<div class="empty-note">No configuration keys.</div>';
+
   root.innerHTML = `
     <div class="wrap">
       ${banner}
@@ -189,6 +238,31 @@ export function renderDashboard(
           <div class="mini-stat"><span class="num mono">${data.stats.completedToday}</span><span class="lbl">Shipped today</span></div>
           <div class="mini-stat"><span class="num mono">${data.stats.awaitingReview}</span><span class="lbl">Awaiting review</span></div>
           <div class="mini-stat"><span class="num mono">${formatCycle(data.stats.avgCycleMinutes)}</span><span class="lbl">Avg cycle</span></div>
+        </div>
+      </div>
+
+      <div class="panel newrun-panel">
+        <div class="panel-head">
+          <span class="panel-title">New run</span>
+        </div>
+        <div class="newrun-body">
+          <div class="newrun-mode-toggle">
+            <label class="newrun-mode-label">
+              <input type="radio" class="newrun-mode" name="newrun-mode" value="ticket" checked>
+              <span>Ticket</span>
+            </label>
+            <label class="newrun-mode-label">
+              <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform">
+              <span>Free-form</span>
+            </label>
+          </div>
+          <div class="newrun-fields">
+            <input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
+            <input class="newrun-title" type="text" placeholder="Title (optional)">
+            <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
+            <select class="newrun-repo" aria-label="Repository for new run">${newRunRepoOptions}</select>
+            <button class="newrun-launch">Launch run</button>
+          </div>
         </div>
       </div>
 
@@ -236,12 +310,28 @@ export function renderDashboard(
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel panel-shipped">
         <div class="panel-head">
           <span class="panel-title">Recently shipped</span>
           <span class="panel-count mono">${data.shipped.length}</span>
         </div>
         <div class="shipped-grid">${shippedCards}</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Recent runs</span>
+          <span class="panel-count mono">${terminalRuns.length}</span>
+        </div>
+        <ul class="recent-runs-list">${recentRunItems}</ul>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Config</span>
+        </div>
+        <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
+        <div class="config-list">${configRows}</div>
       </div>
     </div>`;
 }

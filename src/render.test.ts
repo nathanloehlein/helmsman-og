@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { renderDashboard } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
+import type { UiConfig } from './data/config';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -123,9 +124,10 @@ describe('renderDashboard', () => {
       expect(rowEl.dataset.runid).toBeTruthy();
       expect(rowEl.querySelector('.agent-stop')).not.toBeNull();
     });
-    expect(el.innerHTML).toContain('ABC-1');
-    expect(el.innerHTML).toContain('ABC-2');
-    expect(el.innerHTML).not.toContain('ABC-3');
+    const agentListHtml: string = el.querySelector('.agent-list')!.innerHTML;
+    expect(agentListHtml).toContain('ABC-1');
+    expect(agentListHtml).toContain('ABC-2');
+    expect(agentListHtml).not.toContain('ABC-3');
   });
 
   it('shows the empty note when no agents are running', () => {
@@ -193,5 +195,95 @@ describe('renderDashboard', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], null, [], ['org/alpha']);
     expect(el.querySelector('.auto-claim-toggle')).toBeNull();
+  });
+
+  it('renders both new-run mode controls and a launch button', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], null);
+
+    const modeInputs: NodeListOf<HTMLInputElement> = el.querySelectorAll<HTMLInputElement>('.newrun-mode');
+    expect(modeInputs.length).toBeGreaterThanOrEqual(2);
+    expect(el.querySelector('.newrun-ticket')).not.toBeNull();
+    expect(el.querySelector('.newrun-task')).not.toBeNull();
+    const repoSelect: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.newrun-repo');
+    expect(repoSelect).not.toBeNull();
+    expect(Array.from(repoSelect!.options).map((o) => o.value)).toEqual(
+      expect.arrayContaining(['org/alpha', 'org/beta']),
+    );
+    expect(el.querySelector('.newrun-launch')).not.toBeNull();
+  });
+
+  it('renders recent-run rows for terminal runs, excludes running ones, and links the PR', () => {
+    const el: HTMLDivElement = root();
+    const runs: RunSummary[] = [
+      {
+        id: 'run-1',
+        ticketId: 'ABC-1',
+        repo: 'org/alpha',
+        status: 'running',
+        attempt: 1,
+        prNumber: null,
+        startedAt: NOW.toISOString(),
+        costUsd: null,
+      },
+      {
+        id: 'run-2',
+        ticketId: 'ABC-2',
+        repo: 'org/beta',
+        status: 'succeeded',
+        attempt: 1,
+        prNumber: 42,
+        startedAt: NOW.toISOString(),
+        costUsd: 1.5,
+      },
+      {
+        id: 'run-3',
+        ticketId: 'ABC-3',
+        repo: 'org/gamma',
+        status: 'failed',
+        attempt: 2,
+        prNumber: null,
+        startedAt: NOW.toISOString(),
+        costUsd: 0.3,
+      },
+    ];
+
+    renderDashboard(el, snapshot(), NOW, [], [], null, runs);
+
+    const rows: NodeListOf<HTMLLIElement> = el.querySelectorAll<HTMLLIElement>('.recent-run');
+    expect(rows.length).toBe(2);
+    const recentRunsHtml: string = el.querySelector('.recent-runs-list')!.innerHTML;
+    expect(recentRunsHtml).not.toContain('ABC-1');
+    const link: HTMLAnchorElement | null = el.querySelector<HTMLAnchorElement>('a[href="https://github.com/org/beta/pull/42"]');
+    expect(link).not.toBeNull();
+  });
+
+  it('shows the empty note in the recent-runs panel when there are none', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], [], null, []);
+    const emptyNote: Element | null = el.querySelector('.recent-runs-list .empty-note');
+    expect(emptyNote).not.toBeNull();
+  });
+
+  it('renders a config row per key, marks overridden keys, and never renders a secret', () => {
+    const el: HTMLDivElement = root();
+    const uiConfig: UiConfig = {
+      config: { agentAdapter: 'claude-code', maxAttempts: 1 },
+      overridden: ['maxAttempts'],
+    };
+
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], { maxAttempts: 1, maxCostUsd: null }, uiConfig);
+
+    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-row');
+    expect(rows.length).toBe(2);
+    const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="agentAdapter"]');
+    expect(adapterRow).not.toBeNull();
+    expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
+    const attemptsRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="maxAttempts"]');
+    expect(attemptsRow).not.toBeNull();
+    expect(attemptsRow!.textContent).toContain('overridden');
+    expect(adapterRow!.textContent).not.toContain('overridden');
+    expect(el.querySelector('.config-row[data-key="JIRA_API_TOKEN"]')).toBeNull();
+    expect(el.innerHTML).not.toContain('JIRA_API_TOKEN');
   });
 });

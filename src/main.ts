@@ -4,6 +4,7 @@ import { renderDashboard, ICON_CLOSE } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import {
   launchAgent,
+  launchRun,
   openRunStream,
   getRun,
   fetchAgents,
@@ -11,10 +12,12 @@ import {
   stopAgent,
   type AgentCaps,
   type LaunchResult,
+  type LaunchRunBody,
   type RunEvent,
   type RunStatusSummary,
   type RunSummary,
 } from './data/agents';
+import { getConfig, setConfig, type UiConfig } from './data/config';
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
   if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
@@ -37,6 +40,7 @@ export class DashboardView {
   private runs: RunSummary[] = [];
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
+  private uiConfig: UiConfig = { config: {}, overridden: [] };
   private activeStreamUnsubscribe: (() => void) | null = null;
   private activeRunId: string | null = null;
   private launchSeq: number = 0;
@@ -80,6 +84,7 @@ export class DashboardView {
     this.runs = agents.runs;
     this.autoClaimRepos = agents.autoClaim;
     this.caps = agents.caps;
+    this.uiConfig = await getConfig();
     this.paint();
   }
 
@@ -95,6 +100,7 @@ export class DashboardView {
       this.runs,
       this.autoClaimRepos,
       this.caps,
+      this.uiConfig,
     );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
@@ -139,8 +145,20 @@ export class DashboardView {
       return;
     }
 
-    const agentRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row');
-    if (agentRow) this.handleAgentRowClick(agentRow);
+    const newRunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.newrun-launch');
+    if (newRunBtn) {
+      void this.handleNewRun(newRunBtn);
+      return;
+    }
+
+    const configSaveBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.config-save');
+    if (configSaveBtn) {
+      void this.handleConfigSave(configSaveBtn);
+      return;
+    }
+
+    const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
+    if (runRow) this.handleRunRowClick(runRow);
   }
 
   private async handleStopClick(btn: HTMLButtonElement): Promise<void> {
@@ -150,7 +168,7 @@ export class DashboardView {
     await this.refresh();
   }
 
-  private handleAgentRowClick(row: HTMLElement): void {
+  private handleRunRowClick(row: HTMLElement): void {
     const runId: string | undefined = row.dataset.runid;
     if (!runId) return;
     const ticketEl: HTMLElement | null = row.querySelector<HTMLElement>('.ticket-id');
@@ -158,8 +176,12 @@ export class DashboardView {
 
     this.stopActiveStream();
     ++this.launchSeq;
+    this.openRunDrawerAndStream(runId, ticketId, '');
+  }
+
+  private openRunDrawerAndStream(runId: string, ticketId: string, title: string): void {
     this.activeRunId = runId;
-    this.openDrawer(ticketId, '');
+    this.openDrawer(ticketId, title);
     this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
   }
 
@@ -175,9 +197,7 @@ export class DashboardView {
     try {
       const result: LaunchResult = await launchAgent(ticketId, title ?? ticketId, repo);
       if (seq !== this.launchSeq) return;
-      this.activeRunId = result.runId;
-      this.openDrawer(ticketId, title ?? ticketId);
-      this.activeStreamUnsubscribe = openRunStream(result.runId, (event: RunEvent): void => this.appendLine(event));
+      this.openRunDrawerAndStream(result.runId, ticketId, title ?? ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Launch failed';
@@ -186,6 +206,64 @@ export class DashboardView {
     } finally {
       btn.disabled = false;
     }
+  }
+
+  private buildNewRunPayload(mode: 'ticket' | 'freeform'): { body: LaunchRunBody; ticketId: string; title: string } | null {
+    const repoSelect: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.newrun-repo');
+    const repo: string = repoSelect?.value ?? '';
+    if (!repo) return null;
+
+    if (mode === 'freeform') {
+      const taskEl: HTMLTextAreaElement | null = this.root.querySelector<HTMLTextAreaElement>('.newrun-task');
+      const task: string = taskEl?.value ?? '';
+      return { body: { repo, task, mode: 'freeform' }, ticketId: 'freeform', title: task };
+    }
+
+    const ticketEl: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-ticket');
+    const titleEl: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-title');
+    const ticketId: string = ticketEl?.value ?? '';
+    const title: string = titleEl?.value || ticketId;
+    return { body: { ticketId, title, repo, mode: 'ticket' }, ticketId, title };
+  }
+
+  private async handleNewRun(btn: HTMLButtonElement): Promise<void> {
+    const modeInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-mode:checked');
+    const mode: 'ticket' | 'freeform' = modeInput?.value === 'freeform' ? 'freeform' : 'ticket';
+    const payload: { body: LaunchRunBody; ticketId: string; title: string } | null =
+      this.buildNewRunPayload(mode);
+    if (!payload) return;
+    const { body, ticketId, title } = payload;
+
+    this.stopActiveStream();
+    this.activeRunId = null;
+    const seq: number = ++this.launchSeq;
+    btn.disabled = true;
+    try {
+      const result: LaunchResult = await launchRun(body);
+      if (seq !== this.launchSeq) return;
+      this.openRunDrawerAndStream(result.runId, ticketId, title);
+    } catch (err: unknown) {
+      if (seq !== this.launchSeq) return;
+      const message: string = err instanceof Error ? err.message : 'Launch failed';
+      this.openDrawer(ticketId, title);
+      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  private async handleConfigSave(btn: HTMLButtonElement): Promise<void> {
+    const row: HTMLElement | null = btn.closest<HTMLElement>('.config-row');
+    const key: string | undefined = row?.dataset.key;
+    const input: HTMLInputElement | null = row?.querySelector<HTMLInputElement>('.config-input') ?? null;
+    if (!key || !input) return;
+    btn.disabled = true;
+    try {
+      await setConfig(key, input.value);
+    } finally {
+      btn.disabled = false;
+    }
+    await this.refresh();
   }
 
   private openDrawer(ticketId: string, title: string): void {
