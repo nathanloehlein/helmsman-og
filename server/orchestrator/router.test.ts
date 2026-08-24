@@ -12,6 +12,8 @@ const deps: RouterDeps = {
   setAutoClaim: (_repo: string, _enabled: boolean) => {},
   autoClaimRepos: () => ['o/r'],
   caps: () => ({ maxAttempts: 3, maxCostUsd: 5 }),
+  getConfig: () => ({ config: { agentAdapter: 'claude-code', maxAttempts: 1 }, overridden: ['AGENT_MAX_ATTEMPTS'] }),
+  setConfig: (_key: string, _value: string) => ({ ok: true }),
 };
 
 describe('handleApi', () => {
@@ -107,5 +109,43 @@ describe('auto-claim toggle route', () => {
     const r = await handleApi('POST', '/api/repos/owner%2Fname/auto-claim', new URLSearchParams(), { enabled: false }, toggleDeps);
     expect(setAutoClaim).toHaveBeenCalledWith('owner/name', false);
     expect(r?.json).toEqual({ repo: 'owner/name', enabled: false });
+  });
+});
+
+describe('config routes', () => {
+  it('returns config and overridden keys without leaking secret env keys', async () => {
+    const r = await handleApi('GET', '/api/config', new URLSearchParams(), null, deps);
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({
+      config: { agentAdapter: 'claude-code', maxAttempts: 1 },
+      overridden: ['AGENT_MAX_ATTEMPTS'],
+    });
+    const serialized = JSON.stringify(r?.json);
+    expect(serialized).not.toContain('JIRA_API_TOKEN');
+    expect(serialized).not.toContain('GITHUB_TOKEN');
+    expect(serialized).not.toContain('JIRA_EMAIL');
+  });
+
+  it('updates a config value', async () => {
+    const setConfig = vi.fn(() => ({ ok: true as const }));
+    const configDeps = { ...deps, setConfig } as unknown as RouterDeps;
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { key: 'AGENT_MAX_ATTEMPTS', value: '3' }, configDeps);
+    expect(setConfig).toHaveBeenCalledWith('AGENT_MAX_ATTEMPTS', '3');
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({ key: 'AGENT_MAX_ATTEMPTS', value: '3' });
+  });
+
+  it('rejects updates to a non-editable config key', async () => {
+    const setConfig = vi.fn(() => ({ ok: false as const, error: 'not an editable config key: JIRA_API_TOKEN' }));
+    const configDeps = { ...deps, setConfig } as unknown as RouterDeps;
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { key: 'JIRA_API_TOKEN', value: 'x' }, configDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'not an editable config key: JIRA_API_TOKEN' });
+  });
+
+  it('rejects an update missing key', async () => {
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { value: '3' }, deps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'key and value required' });
   });
 });

@@ -38,6 +38,8 @@ export interface RouterDeps {
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
   caps: () => { maxAttempts: number; maxCostUsd: number | null };
+  getConfig: () => { config: Record<string, unknown>; overridden: string[] };
+  setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
 }
 
 export async function handleApi(
@@ -72,6 +74,17 @@ export async function handleApi(
     const enabled: boolean = (_body as { enabled?: boolean } | null)?.enabled === true;
     deps.setAutoClaim(repo, enabled);
     return { status: 200, json: { repo, enabled } };
+  }
+  if (path === '/api/config' && method === 'GET') {
+    return { status: 200, json: deps.getConfig() };
+  }
+  if (path === '/api/config' && method === 'PUT') {
+    const b: { key?: string; value?: string } | null = _body as { key?: string; value?: string } | null;
+    if (typeof b?.key !== 'string' || typeof b?.value !== 'string') {
+      return { status: 400, json: { error: 'key and value required' } };
+    }
+    const r: { ok: true } | { ok: false; error: string } = deps.setConfig(b.key, b.value);
+    return r.ok ? { status: 200, json: { key: b.key, value: b.value } } : { status: 400, json: { error: r.error } };
   }
   if (path.startsWith('/api/')) {
     return { status: 404, json: { error: 'not found' } };
