@@ -41,6 +41,7 @@ export async function fetchIssueSummary(jira: JiraConfig, key: string): Promise<
     url.searchParams.set('fields', 'summary');
     const res: Response = await fetch(url, {
       headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     const body: { fields?: { summary?: string } } = await res.json();

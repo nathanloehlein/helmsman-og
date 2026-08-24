@@ -83,7 +83,7 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         : null;
     const title: string = body.title ?? fetchedTitle ?? ticketId;
     await startRun(
-      { ticketId, title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '', task: body.task },
+      { ticketId, title, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task },
       {
         db,
         bus,
