@@ -141,6 +141,21 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('uses the adapter-parsed PR number and does not call findPrNumber (fallback-only)', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async (_repo: string, _branch: string) => 999);
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true, 8922)), jira, botAccountId: 'bot-acc', findPrNumber };
+
+    const id = await startRun(task, d);
+
+    expect(findPrNumber).not.toHaveBeenCalled();
+    const row = db.getRun(id);
+    expect(row?.prNumber).toBe(8922);
+    expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Review' });
+    db.close();
+  });
+
   it('retries a failing adapter up to maxAttempts, then succeeds and reaches In Review', async () => {
     const db: Db = openDb(':memory:');
     const jira = fakeJira();
@@ -295,7 +310,7 @@ describe('startRun', () => {
   it('does not crash when findPrNumber rejects', async () => {
     const db: Db = openDb(':memory:');
     const findPrNumber = vi.fn(async () => { throw new Error('lookup boom'); });
-    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true, 5)), findPrNumber };
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true)), findPrNumber };
 
     const id = await startRun(task, d);
 
