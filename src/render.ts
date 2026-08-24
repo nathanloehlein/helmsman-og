@@ -190,7 +190,7 @@ export function renderDashboard(
   const recentRunItems: string = terminalRuns.length
     ? terminalRuns
         .map((run) => {
-          const statusInfo = RUN_STATUS_CHIP[run.status] ?? { label: run.status, chipClass: 'chip-progress' };
+          const statusInfo = RUN_STATUS_CHIP[run.status] ?? { label: esc(run.status), chipClass: 'chip-progress' };
           const costText: string = run.costUsd != null ? `$${run.costUsd.toFixed(2)}` : '&mdash;';
           const prLink: string =
             run.prNumber != null

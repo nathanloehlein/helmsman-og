@@ -216,12 +216,14 @@ export class DashboardView {
     if (mode === 'freeform') {
       const taskEl: HTMLTextAreaElement | null = this.root.querySelector<HTMLTextAreaElement>('.newrun-task');
       const task: string = taskEl?.value ?? '';
+      if (task.trim() === '') return null;
       return { body: { repo, task, mode: 'freeform' }, ticketId: 'freeform', title: task };
     }
 
     const ticketEl: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-ticket');
     const titleEl: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-title');
     const ticketId: string = ticketEl?.value ?? '';
+    if (ticketId.trim() === '') return null;
     const title: string = titleEl?.value || ticketId;
     return { body: { ticketId, title, repo, mode: 'ticket' }, ticketId, title };
   }
@@ -260,17 +262,16 @@ export class DashboardView {
     const errorEl: HTMLElement | null = row?.querySelector<HTMLElement>('.config-error') ?? null;
     if (errorEl) errorEl.textContent = '';
     btn.disabled = true;
-    let result: { ok: boolean; error?: string };
     try {
-      result = await setConfig(key, input.value);
+      const result: { ok: boolean; error?: string } = await setConfig(key, input.value);
+      if (!result.ok) {
+        if (errorEl) errorEl.textContent = result.error ?? 'Save failed.';
+        return;
+      }
+      await this.refresh();
     } finally {
       btn.disabled = false;
     }
-    if (!result.ok) {
-      if (errorEl) errorEl.textContent = result.error ?? 'Save failed.';
-      return;
-    }
-    await this.refresh();
   }
 
   private openDrawer(ticketId: string, title: string): void {

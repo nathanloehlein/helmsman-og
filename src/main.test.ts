@@ -245,6 +245,72 @@ describe('DashboardView drawer survives polling', () => {
     expect(FakeEventSource.instances[0].url).toContain('run-99');
   });
 
+  it('does not launch or open the drawer when the ticket ID is blank in ticket mode', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config')) {
+        return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const repoSelect: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.newrun-repo')!;
+    repoSelect.value = response.snapshot.repo;
+    const ticketInput: HTMLInputElement = root.querySelector<HTMLInputElement>('.newrun-ticket')!;
+    ticketInput.value = '';
+
+    root.querySelector<HTMLButtonElement>('.newrun-launch')!.click();
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/agents/launch'))).toBe(
+      false,
+    );
+    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('does not launch or open the drawer when the task is blank in free-form mode', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config')) {
+        return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const freeformRadio: HTMLInputElement = root.querySelector<HTMLInputElement>(
+      'input.newrun-mode[value="freeform"]',
+    )!;
+    freeformRadio.checked = true;
+    freeformRadio.dispatchEvent(new Event('change'));
+
+    const repoSelect: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.newrun-repo')!;
+    repoSelect.value = response.snapshot.repo;
+    const taskInput: HTMLTextAreaElement = root.querySelector<HTMLTextAreaElement>('.newrun-task')!;
+    taskInput.value = '';
+
+    root.querySelector<HTMLButtonElement>('.newrun-launch')!.click();
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/agents/launch'))).toBe(
+      false,
+    );
+    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
   it('opens the drawer and streams logs when a recent-run row is clicked', async () => {
     const response: DashboardResponse = await buildResponse();
     const terminalRun = {
