@@ -15,6 +15,13 @@ interface StreamLine {
   total_cost_usd?: number;
 }
 
+const PR_URL_RE: RegExp = /github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/i;
+
+function parsePrNumber(text: string): number | undefined {
+  const match: RegExpMatchArray | null = text.match(PR_URL_RE);
+  return match ? Number(match[1]) : undefined;
+}
+
 function toolText(block: ContentBlock): string {
   const input: Record<string, unknown> = block.input ?? {};
   const detail: string =
@@ -37,14 +44,18 @@ export function mapStreamLine(line: string): AgentEvent | null {
   }
 
   if (parsed.type === 'result') {
-    return { kind: 'result', text: parsed.result ?? 'done', costUsd: parsed.total_cost_usd };
+    const text: string = parsed.result ?? 'done';
+    return { kind: 'result', text, costUsd: parsed.total_cost_usd, prNumber: parsePrNumber(text) };
   }
 
   if (parsed.type === 'assistant') {
     const blocks: ContentBlock[] = parsed.message?.content ?? [];
     for (const block of blocks) {
       if (block.type === 'tool_use') return { kind: 'tool', text: toolText(block) };
-      if (block.type === 'text' && block.text?.trim()) return { kind: 'log', text: block.text.trim() };
+      if (block.type === 'text' && block.text?.trim()) {
+        const text: string = block.text.trim();
+        return { kind: 'log', text, prNumber: parsePrNumber(text) };
+      }
     }
   }
 

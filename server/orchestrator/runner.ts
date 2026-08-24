@@ -105,7 +105,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     }
 
     let prNumber: number | null = result.prNumber ?? null;
-    if (result.ok && deps.findPrNumber) {
+    if (prNumber == null && result.ok && deps.findPrNumber) {
       try {
         prNumber = await deps.findPrNumber(task.repo, worktree.branch);
       } catch (err) {
