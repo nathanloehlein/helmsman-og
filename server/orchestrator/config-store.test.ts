@@ -40,12 +40,22 @@ describe('ConfigStore', () => {
     db = openDb(':memory:');
     const store: ConfigStore = new ConfigStore({}, db);
     const pub: Record<string, unknown> = publicConfig(store.current());
-    expect(pub).toHaveProperty('agentAdapter');
-    expect(pub).toHaveProperty('maxAttempts');
+    expect(pub).toHaveProperty('AGENT_ADAPTER');
+    expect(pub).toHaveProperty('AGENT_MAX_ATTEMPTS');
     expect(pub).not.toHaveProperty('JIRA_API_TOKEN');
     expect(pub).not.toHaveProperty('GITHUB_TOKEN');
     expect(pub).not.toHaveProperty('JIRA_EMAIL');
     expect(pub).not.toHaveProperty('apiToken');
     expect(pub).not.toHaveProperty('token');
+  });
+
+  it('every key publicConfig renders is an accepted override key (UI vocab == gate vocab)', () => {
+    db = openDb(':memory:');
+    const store: ConfigStore = new ConfigStore({}, db);
+    const keys: string[] = Object.keys(publicConfig(store.current()));
+    for (const key of keys) {
+      expect(() => store.setOverride(key, 'x', () => '2026-08-24T00:00:00.000Z')).not.toThrow();
+    }
+    db.close();
   });
 });

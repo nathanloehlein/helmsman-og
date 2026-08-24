@@ -361,7 +361,7 @@ describe('DashboardView drawer survives polling', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ config: { agentAdapter: 'claude-code' }, overridden: [] }),
+          json: async () => ({ config: { AGENT_ADAPTER: 'claude-code' }, overridden: [] }),
         } as unknown as Response;
       }
       if (url.includes('/api/agents')) {
@@ -375,7 +375,7 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
-    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="agentAdapter"]');
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(row).not.toBeNull();
     const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
     input.value = 'codex';
@@ -395,7 +395,7 @@ describe('DashboardView drawer survives polling', () => {
         String(requestInput).includes('/api/config') && (requestInit as RequestInit | undefined)?.method === 'PUT',
     );
     const putBody: unknown = JSON.parse((putCall![1] as RequestInit).body as string);
-    expect(putBody).toEqual({ key: 'agentAdapter', value: 'codex' });
+    expect(putBody).toEqual({ key: 'AGENT_ADAPTER', value: 'codex' });
   });
 
   it('shows an inline error and skips refresh when a config save fails', async () => {
@@ -415,7 +415,7 @@ describe('DashboardView drawer survives polling', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ config: { agentAdapter: 'claude-code' }, overridden: [] }),
+          json: async () => ({ config: { AGENT_ADAPTER: 'claude-code' }, overridden: [] }),
         } as unknown as Response;
       }
       if (url.includes('/api/agents')) {
@@ -430,7 +430,7 @@ describe('DashboardView drawer survives polling', () => {
     await view.refresh();
     expect(configGetCalls).toBe(1);
 
-    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="agentAdapter"]');
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(row).not.toBeNull();
     const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
     input.value = 'not-a-real-adapter';

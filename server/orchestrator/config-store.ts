@@ -19,17 +19,17 @@ export const SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'GITHUB_TOKEN',
 
 export function publicConfig(cfg: AppConfig): Record<string, unknown> {
   return {
-    agentAdapter: cfg.agentAdapter,
-    agentCmd: cfg.agentCmd,
-    maxAttempts: cfg.maxAttempts,
-    maxCostUsd: cfg.maxCostUsd,
-    autoClaimIntervalMs: cfg.autoClaimIntervalMs,
-    repoProjectMap: cfg.repoProjectMap,
-    jiraProject: cfg.jira?.project ?? null,
-    jiraAssignee: cfg.jira?.assignee ?? null,
-    jiraJql: cfg.jira?.jql ?? null,
-    githubRepo: cfg.github?.repo ?? null,
-    githubAuthor: cfg.github?.author ?? null,
+    AGENT_ADAPTER: cfg.agentAdapter,
+    AGENT_CMD: cfg.agentCmd,
+    AGENT_MAX_ATTEMPTS: cfg.maxAttempts,
+    AGENT_MAX_COST_USD: cfg.maxCostUsd,
+    AUTO_CLAIM_INTERVAL_MS: cfg.autoClaimIntervalMs,
+    REPO_PROJECT_MAP: Object.entries(cfg.repoProjectMap).map(([repo, project]: [string, string]): string => `${repo}=${project}`).join(','),
+    JIRA_PROJECT: cfg.jira?.project ?? null,
+    JIRA_ASSIGNEE: cfg.jira?.assignee ?? null,
+    JIRA_JQL: cfg.jira?.jql ?? null,
+    GITHUB_REPO: cfg.github?.repo ?? null,
+    GITHUB_PR_AUTHOR: cfg.github?.author ?? null,
   };
 }
 

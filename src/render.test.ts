@@ -268,18 +268,18 @@ describe('renderDashboard', () => {
   it('renders a config row per key, marks overridden keys, and never renders a secret', () => {
     const el: HTMLDivElement = root();
     const uiConfig: UiConfig = {
-      config: { agentAdapter: 'claude-code', maxAttempts: 1 },
-      overridden: ['maxAttempts'],
+      config: { AGENT_ADAPTER: 'claude-code', AGENT_MAX_ATTEMPTS: 1 },
+      overridden: ['AGENT_MAX_ATTEMPTS'],
     };
 
     renderDashboard(el, snapshot(), NOW, [], [], null, [], [], { maxAttempts: 1, maxCostUsd: null }, uiConfig);
 
     const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-row');
     expect(rows.length).toBe(2);
-    const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="agentAdapter"]');
+    const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
-    const attemptsRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="maxAttempts"]');
+    const attemptsRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_MAX_ATTEMPTS"]');
     expect(attemptsRow).not.toBeNull();
     expect(attemptsRow!.textContent).toContain('overridden');
     expect(adapterRow!.textContent).not.toContain('overridden');
