@@ -8,13 +8,15 @@ is the view; the **orchestrator** behind it spawns and supervises the agents.
 
 ## Status
 
-- **Built (P0–P5):** the orchestrator, SQLite run store, dashboard API, and a
+- **Built (P0–P6):** the orchestrator, SQLite run store, dashboard API, and a
   Claude Code agent adapter — launch a ticket, run it in an isolated git worktree,
   stream its events to a live log drawer, and record the run (P0–P1); Jira status
   writes with an In-Review gate (P2); a multi-agent running view with per-run stop
-  and live logs (P3); an opt-in per-repo auto-claim scheduler (P4); and a generic-command
+  and live logs (P3); an opt-in per-repo auto-claim scheduler (P4); a generic-command
   adapter plus hardening — crash recovery, orphaned-worktree sweep, and cost/attempt
-  caps (P5). The agent opens a PR and **never merges**.
+  caps (P5); and a full UI control plane — launch any ticket or a free-form task, a
+  recent-runs history, and a live non-secret config editor (P6). The agent opens a PR
+  and **never merges**.
 
 ## Stack
 
@@ -120,6 +122,28 @@ drawer over SSE (`GET /api/agents/:id/log`), records the run in SQLite, and remo
 worktree when it finishes. `POST /api/agents/:id/stop` SIGTERMs a run. One run per repo at
 a time; global concurrency is capped by `AGENT_MAX_CONCURRENCY`. The agent opens a PR and
 never merges — the human review gate is real.
+
+### New run (any ticket / free-form)
+
+The **New run** panel launches beyond the auto-fetched backlog: in **Ticket** mode, type any
+Jira key + pick a repo (the orchestrator fetches the summary for the title, fail-soft); in
+**Free-form** mode, give a task prompt + repo and no Jira ticket is touched (no claim, no
+transition — the run row is labelled `freeform`). Both stream into the same live drawer.
+
+### Recent runs
+
+The **Recent runs** panel lists completed/failed/stopped runs. Click any to re-open its
+stored log (replayed from SQLite), final status, cost, and PR link — the same drawer used
+for live runs.
+
+### Config editor
+
+Non-secret runtime config is editable from the UI (`GET/PUT /api/config`), persisted as
+SQLite overrides layered over `.env` and read live — a new launch or auto-claim tick picks
+up the change without a restart (the auto-claim **interval length** applies on restart).
+Secrets (`JIRA_API_TOKEN`, `GITHUB_TOKEN`, `JIRA_EMAIL`) are never shown or editable.
+Editing `AGENT_ADAPTER`/`AGENT_CMD` from the UI is allowed and powerful — bounded only by
+the `127.0.0.1` bind (the command adapter still builds a no-shell tokenized argv).
 
 ### Auto-claim
 
