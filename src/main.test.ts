@@ -332,6 +332,50 @@ describe('DashboardView drawer survives polling', () => {
     expect(putBody).toEqual({ key: 'agentAdapter', value: 'codex' });
   });
 
+  it('shows an inline error and skips refresh when a config save fails', async () => {
+    const response: DashboardResponse = await buildResponse();
+    let configGetCalls: number = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config') && init?.method === 'PUT') {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: 'invalid adapter' }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/config')) {
+        configGetCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ config: { agentAdapter: 'claude-code' }, overridden: [] }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+    expect(configGetCalls).toBe(1);
+
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="agentAdapter"]');
+    expect(row).not.toBeNull();
+    const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
+    input.value = 'not-a-real-adapter';
+    row!.querySelector<HTMLButtonElement>('.config-save')!.click();
+
+    await vi.waitFor(() => {
+      expect(row!.querySelector<HTMLElement>('.config-error')?.textContent).toBe('invalid adapter');
+    });
+    expect(configGetCalls).toBe(1);
+  });
+
   it('posts to the auto-claim endpoint when the toggle is switched off', async () => {
     const response: DashboardResponse = await buildResponse();
     const scopedResponse: DashboardResponse = { ...response, repos: ['org/alpha'], selectedRepo: 'org/alpha' };

@@ -925,7 +925,18 @@ body::after {
 .config-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.config-error {
+  flex: 1 0 100%;
+  font-size: 11px;
+  color: var(--bad);
+}
+
+.config-error:empty {
+  display: none;
 }
 
 .config-key {

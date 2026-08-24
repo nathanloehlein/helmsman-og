@@ -218,6 +218,7 @@ export function renderDashboard(
         <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}</span>
         <input class="config-input" type="text" value="${esc(String(value ?? ''))}">
         <button class="config-save" data-key="${esc(key)}">Save</button>
+        <span class="config-error" role="alert"></span>
       </div>`;
         })
         .join('')

@@ -257,11 +257,18 @@ export class DashboardView {
     const key: string | undefined = row?.dataset.key;
     const input: HTMLInputElement | null = row?.querySelector<HTMLInputElement>('.config-input') ?? null;
     if (!key || !input) return;
+    const errorEl: HTMLElement | null = row?.querySelector<HTMLElement>('.config-error') ?? null;
+    if (errorEl) errorEl.textContent = '';
     btn.disabled = true;
+    let result: { ok: boolean; error?: string };
     try {
-      await setConfig(key, input.value);
+      result = await setConfig(key, input.value);
     } finally {
       btn.disabled = false;
+    }
+    if (!result.ok) {
+      if (errorEl) errorEl.textContent = result.error ?? 'Save failed.';
+      return;
     }
     await this.refresh();
   }
