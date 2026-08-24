@@ -3,6 +3,7 @@ export interface AgentTask {
   title: string;
   repo: string;
   jiraBaseUrl: string;
+  task?: string;
 }
 
 export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error' | 'run-complete';

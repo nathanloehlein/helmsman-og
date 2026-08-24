@@ -7,7 +7,7 @@ const deps: RouterDeps = {
     listRuns: () => [{ id: 'r1', ticketId: 'T-1', repo: 'o/r', adapter: 'claude-code', status: 'running', attempt: 1, prNumber: null, startedAt: 'x', endedAt: null, costUsd: null, worktreePath: null }],
   } as unknown as RouterDeps['db'],
   canStart: (_repo: string) => ({ ok: true }),
-  launch: (_body: { ticketId: string; title: string; repo: string }) => 'run-0',
+  launch: (_body: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-0',
   stop: (_id: string) => false,
   setAutoClaim: (_repo: string, _enabled: boolean) => {},
   autoClaimRepos: () => ['o/r'],
@@ -90,6 +90,35 @@ describe('agent control routes', () => {
   it('stops a run', async () => {
     const r = await handleApi('POST', '/api/agents/run-9/stop', new URLSearchParams(), null, launchDeps);
     expect(r?.status).toBe(200);
+  });
+
+  it('launches a free-form task and calls launch with only repo and task', async () => {
+    const launch = vi.fn((_b: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-9');
+    const freeformDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'freeform', task: 'x', repo: 'o/r' }, freeformDeps);
+    expect(launch).toHaveBeenCalledWith({ repo: 'o/r', task: 'x' });
+    expect(r?.status).toBe(200);
+    expect((r?.json as { runId: string }).runId).toBe('run-9');
+  });
+
+  it('rejects a free-form launch missing task', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'freeform', repo: 'o/r' }, launchDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'task required' });
+  });
+
+  it('still launches a ticket run when mode is omitted, passing ticketId, title, and repo through', async () => {
+    const launch = vi.fn((_b: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-9');
+    const ticketDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1', repo: 'o/r' }, ticketDeps);
+    expect(launch).toHaveBeenCalledWith({ ticketId: 'T-1', title: undefined, repo: 'o/r' });
+    expect(r?.status).toBe(200);
+  });
+
+  it('rejects a launch missing repo', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1' }, launchDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'repo required' });
   });
 });
 

@@ -69,8 +69,10 @@ if (config.agentAdapter === 'command' && !config.agentCmd) {
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: { ticketId: string; title: string; repo: string }): string {
+function launch(body: { ticketId?: string; title?: string; repo: string; task?: string }): string {
   const runId: string = randomUUID();
+  const ticketId: string = body.ticketId ?? 'freeform';
+  const title: string = body.title ?? ticketId;
   const control: { stopped: boolean; handle: AgentHandle | null } = { stopped: false, handle: null };
   pm.add(runId, body.repo, () => {
     control.stopped = true;
@@ -78,7 +80,7 @@ function launch(body: { ticketId: string; title: string; repo: string }): string
   });
   const jira: JiraActions | null = config.jira ? makeJiraActions(config.jira) : null;
   void startRun(
-    { ticketId: body.ticketId, title: body.title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '' },
+    { ticketId, title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '', task: body.task },
     {
       db,
       bus,

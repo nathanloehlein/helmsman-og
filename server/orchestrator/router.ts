@@ -33,7 +33,7 @@ export interface RouterDeps {
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { ticketId: string; title: string; repo: string }) => string;
+  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
@@ -57,11 +57,17 @@ export async function handleApi(
     return { status: 200, json: { runs: deps.db.listRuns(50).map(toRunSummary), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
-    const b = _body as { ticketId?: string; title?: string; repo?: string } | null;
-    if (!b?.ticketId || !b.repo) return { status: 400, json: { error: 'ticketId and repo required' } };
+    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string } | null;
+    if (!b?.repo) return { status: 400, json: { error: 'repo required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
-    const runId = deps.launch({ ticketId: b.ticketId, title: b.title ?? b.ticketId, repo: b.repo });
+    if (b.mode === 'freeform') {
+      if (!b.task) return { status: 400, json: { error: 'task required' } };
+      const runId = deps.launch({ repo: b.repo, task: b.task });
+      return { status: 200, json: { runId } };
+    }
+    if (!b.ticketId) return { status: 400, json: { error: 'ticketId and repo required' } };
+    const runId = deps.launch({ ticketId: b.ticketId, title: b.title, repo: b.repo });
     return { status: 200, json: { runId } };
   }
   const stopMatch: RegExpMatchArray | null = path.match(/^\/api\/agents\/([^/]+)\/stop$/);

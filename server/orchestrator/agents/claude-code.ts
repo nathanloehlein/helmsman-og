@@ -3,12 +3,20 @@ import { createInterface, type Interface } from 'node:readline';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } from './adapter';
 import { mapStreamLine } from './claude-stream';
 
-function buildPrompt(task: AgentTask): string {
+export function buildPrompt(task: AgentTask): string {
+  const openPr: string =
+    task.task && task.task.length > 0
+      ? `Task: ${task.task}.`
+      : `Work Jira ticket ${task.ticketId}: ${task.title}.`;
+  const pushAndOpenPr: string =
+    task.task && task.task.length > 0
+      ? `Explore, implement the change, run the tests, commit on a new branch, then push it and open a pull request using the gh CLI.`
+      : `Explore, implement the change, run the tests, commit on a new branch, then push it and open a pull request with the ticket id in the title using the gh CLI.`;
   return [
-    `Work Jira ticket ${task.ticketId}: ${task.title}.`,
+    openPr,
     `The repository checkout is your current working directory.`,
     `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
-    `Explore, implement the change, run the tests, commit on a new branch, then push it and open a pull request with the ticket id in the title using the gh CLI.`,
+    pushAndOpenPr,
     `Pushing the branch and opening the PR are required steps, not optional — do them without asking.`,
     `Do NOT merge the PR. Stop only after the PR is open.`,
   ].join(' ');
