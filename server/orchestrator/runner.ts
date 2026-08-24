@@ -76,7 +76,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       deps.bus.publish(runId, e);
     };
 
-    if (deps.jira && deps.botAccountId) {
+    if (deps.jira && deps.botAccountId && !task.task) {
       await claimTicket(deps.jira, task.ticketId, deps.botAccountId, statusInProgress, onEvent);
     }
 
@@ -122,7 +122,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       endedAt: deps.now(),
     });
 
-    if (result.ok && deps.jira && prNumber != null) {
+    if (result.ok && deps.jira && prNumber != null && !task.task) {
       await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
     }
   } catch (err) {

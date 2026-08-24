@@ -2,14 +2,26 @@ export interface LaunchResult {
   runId: string;
 }
 
-export async function launchAgent(ticketId: string, title: string, repo: string): Promise<LaunchResult> {
+export interface LaunchRunBody {
+  ticketId?: string;
+  title?: string;
+  repo: string;
+  task?: string;
+  mode?: 'ticket' | 'freeform';
+}
+
+export async function launchRun(body: LaunchRunBody): Promise<LaunchResult> {
   const res: Response = await fetch('/api/agents/launch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticketId, title, repo }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`launch ${res.status}`);
   return res.json() as Promise<LaunchResult>;
+}
+
+export async function launchAgent(ticketId: string, title: string, repo: string): Promise<LaunchResult> {
+  return launchRun({ ticketId, title, repo, mode: 'ticket' });
 }
 
 export interface RunEvent {

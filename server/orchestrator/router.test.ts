@@ -7,11 +7,13 @@ const deps: RouterDeps = {
     listRuns: () => [{ id: 'r1', ticketId: 'T-1', repo: 'o/r', adapter: 'claude-code', status: 'running', attempt: 1, prNumber: null, startedAt: 'x', endedAt: null, costUsd: null, worktreePath: null }],
   } as unknown as RouterDeps['db'],
   canStart: (_repo: string) => ({ ok: true }),
-  launch: (_body: { ticketId: string; title: string; repo: string }) => 'run-0',
+  launch: (_body: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-0',
   stop: (_id: string) => false,
   setAutoClaim: (_repo: string, _enabled: boolean) => {},
   autoClaimRepos: () => ['o/r'],
   caps: () => ({ maxAttempts: 3, maxCostUsd: 5 }),
+  getConfig: () => ({ config: { agentAdapter: 'claude-code', maxAttempts: 1 }, overridden: ['AGENT_MAX_ATTEMPTS'] }),
+  setConfig: (_key: string, _value: string) => ({ ok: true }),
 };
 
 describe('handleApi', () => {
@@ -89,6 +91,35 @@ describe('agent control routes', () => {
     const r = await handleApi('POST', '/api/agents/run-9/stop', new URLSearchParams(), null, launchDeps);
     expect(r?.status).toBe(200);
   });
+
+  it('launches a free-form task and calls launch with only repo and task', async () => {
+    const launch = vi.fn((_b: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-9');
+    const freeformDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'freeform', task: 'x', repo: 'o/r' }, freeformDeps);
+    expect(launch).toHaveBeenCalledWith({ repo: 'o/r', task: 'x' });
+    expect(r?.status).toBe(200);
+    expect((r?.json as { runId: string }).runId).toBe('run-9');
+  });
+
+  it('rejects a free-form launch missing task', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'freeform', repo: 'o/r' }, launchDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'task required' });
+  });
+
+  it('still launches a ticket run when mode is omitted, passing ticketId, title, and repo through', async () => {
+    const launch = vi.fn((_b: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-9');
+    const ticketDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1', repo: 'o/r' }, ticketDeps);
+    expect(launch).toHaveBeenCalledWith({ ticketId: 'T-1', title: undefined, repo: 'o/r' });
+    expect(r?.status).toBe(200);
+  });
+
+  it('rejects a launch missing repo', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1' }, launchDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'repo required' });
+  });
 });
 
 describe('auto-claim toggle route', () => {
@@ -107,5 +138,43 @@ describe('auto-claim toggle route', () => {
     const r = await handleApi('POST', '/api/repos/owner%2Fname/auto-claim', new URLSearchParams(), { enabled: false }, toggleDeps);
     expect(setAutoClaim).toHaveBeenCalledWith('owner/name', false);
     expect(r?.json).toEqual({ repo: 'owner/name', enabled: false });
+  });
+});
+
+describe('config routes', () => {
+  it('returns config and overridden keys without leaking secret env keys', async () => {
+    const r = await handleApi('GET', '/api/config', new URLSearchParams(), null, deps);
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({
+      config: { agentAdapter: 'claude-code', maxAttempts: 1 },
+      overridden: ['AGENT_MAX_ATTEMPTS'],
+    });
+    const serialized = JSON.stringify(r?.json);
+    expect(serialized).not.toContain('JIRA_API_TOKEN');
+    expect(serialized).not.toContain('GITHUB_TOKEN');
+    expect(serialized).not.toContain('JIRA_EMAIL');
+  });
+
+  it('updates a config value', async () => {
+    const setConfig = vi.fn(() => ({ ok: true as const }));
+    const configDeps = { ...deps, setConfig } as unknown as RouterDeps;
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { key: 'AGENT_MAX_ATTEMPTS', value: '3' }, configDeps);
+    expect(setConfig).toHaveBeenCalledWith('AGENT_MAX_ATTEMPTS', '3');
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({ key: 'AGENT_MAX_ATTEMPTS', value: '3' });
+  });
+
+  it('rejects updates to a non-editable config key', async () => {
+    const setConfig = vi.fn(() => ({ ok: false as const, error: 'not an editable config key: JIRA_API_TOKEN' }));
+    const configDeps = { ...deps, setConfig } as unknown as RouterDeps;
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { key: 'JIRA_API_TOKEN', value: 'x' }, configDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'not an editable config key: JIRA_API_TOKEN' });
+  });
+
+  it('rejects an update missing key', async () => {
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { value: '3' }, deps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'key and value required' });
   });
 });

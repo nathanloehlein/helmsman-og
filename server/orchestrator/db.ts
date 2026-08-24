@@ -32,6 +32,8 @@ export interface Db {
   activeRuns(): RunRow[];
   appendEvent(runId: string, kind: string, text: string, ts: string): RunEventRow;
   listEvents(runId: string): RunEventRow[];
+  getConfigOverrides(): Record<string, string>;
+  setConfigOverride(key: string, value: string, ts: string): void;
   close(): void;
 }
 
@@ -49,6 +51,7 @@ export function openDb(path: string): Db {
       id INTEGER PRIMARY KEY AUTOINCREMENT, runId TEXT, ts TEXT, kind TEXT, text TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(runId, id);
+    CREATE TABLE IF NOT EXISTS config_overrides (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL);
   `);
 
   return {
@@ -76,6 +79,20 @@ export function openDb(path: string): Db {
     },
     listEvents(runId: string): RunEventRow[] {
       return sql.prepare('SELECT * FROM run_events WHERE runId = ? ORDER BY id ASC').all(runId) as RunEventRow[];
+    },
+    getConfigOverrides(): Record<string, string> {
+      const rows: { key: string; value: string }[] = sql.prepare('SELECT key, value FROM config_overrides').all() as { key: string; value: string }[];
+      return rows.reduce((acc: Record<string, string>, row: { key: string; value: string }) => {
+        acc[row.key] = row.value;
+        return acc;
+      }, {});
+    },
+    setConfigOverride(key: string, value: string, ts: string): void {
+      sql
+        .prepare(
+          'INSERT INTO config_overrides (key, value, updatedAt) VALUES (@key,@value,@ts) ON CONFLICT(key) DO UPDATE SET value=@value, updatedAt=@ts',
+        )
+        .run({ key, value, ts });
     },
     close(): void {
       sql.close();

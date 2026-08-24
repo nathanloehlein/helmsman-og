@@ -201,6 +201,247 @@ describe('DashboardView drawer survives polling', () => {
     expect(FakeEventSource.instances[0].closed).toBe(true);
   });
 
+  it('launches a free-form run, posts the expected body, and opens the drawer', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents/launch')) {
+        return { ok: true, status: 200, json: async () => ({ runId: 'run-99' }) } as unknown as Response;
+      }
+      if (url.includes('/api/config')) {
+        return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const freeformRadio: HTMLInputElement | null = root.querySelector<HTMLInputElement>(
+      'input.newrun-mode[value="freeform"]',
+    );
+    expect(freeformRadio).not.toBeNull();
+    freeformRadio!.checked = true;
+    freeformRadio!.dispatchEvent(new Event('change'));
+
+    const repoSelect: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.newrun-repo')!;
+    repoSelect.value = response.snapshot.repo;
+    const taskInput: HTMLTextAreaElement = root.querySelector<HTMLTextAreaElement>('.newrun-task')!;
+    taskInput.value = 'Write a changelog';
+
+    root.querySelector<HTMLButtonElement>('.newrun-launch')!.click();
+
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+
+    const launchCall = fetchMock.mock.calls.find(([requestInput]) => String(requestInput).includes('/api/agents/launch'));
+    expect(launchCall).toBeDefined();
+    const launchBody: unknown = JSON.parse((launchCall![1] as RequestInit).body as string);
+    expect(launchBody).toMatchObject({ repo: response.snapshot.repo, task: 'Write a changelog', mode: 'freeform' });
+
+    const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    expect(drawer.hidden).toBe(false);
+    expect(FakeEventSource.instances[0].url).toContain('run-99');
+  });
+
+  it('does not launch or open the drawer when the ticket ID is blank in ticket mode', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config')) {
+        return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const repoSelect: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.newrun-repo')!;
+    repoSelect.value = response.snapshot.repo;
+    const ticketInput: HTMLInputElement = root.querySelector<HTMLInputElement>('.newrun-ticket')!;
+    ticketInput.value = '';
+
+    root.querySelector<HTMLButtonElement>('.newrun-launch')!.click();
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/agents/launch'))).toBe(
+      false,
+    );
+    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('does not launch or open the drawer when the task is blank in free-form mode', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config')) {
+        return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const freeformRadio: HTMLInputElement = root.querySelector<HTMLInputElement>(
+      'input.newrun-mode[value="freeform"]',
+    )!;
+    freeformRadio.checked = true;
+    freeformRadio.dispatchEvent(new Event('change'));
+
+    const repoSelect: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.newrun-repo')!;
+    repoSelect.value = response.snapshot.repo;
+    const taskInput: HTMLTextAreaElement = root.querySelector<HTMLTextAreaElement>('.newrun-task')!;
+    taskInput.value = '';
+
+    root.querySelector<HTMLButtonElement>('.newrun-launch')!.click();
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/agents/launch'))).toBe(
+      false,
+    );
+    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('opens the drawer and streams logs when a recent-run row is clicked', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const terminalRun = {
+      id: 'run-88',
+      ticketId: 'TICK-88',
+      repo: 'acme/widgets',
+      status: 'succeeded',
+      attempt: 1,
+      prNumber: null,
+      startedAt: new Date().toISOString(),
+      costUsd: 0.4,
+    };
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [terminalRun] }) } as unknown as Response;
+      }
+      if (url.includes('/api/config')) {
+        return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.recent-run');
+    expect(row).not.toBeNull();
+    row!.click();
+
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(FakeEventSource.instances[0].url).toContain('run-88');
+
+    const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    expect(drawer.hidden).toBe(false);
+    expect(drawer.querySelector('.run-drawer-title')?.textContent).toContain('TICK-88');
+  });
+
+  it('saves a config value and refreshes', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config') && init?.method === 'PUT') {
+        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      }
+      if (url.includes('/api/config')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ config: { AGENT_ADAPTER: 'claude-code' }, overridden: [] }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
+    expect(row).not.toBeNull();
+    const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
+    input.value = 'codex';
+    row!.querySelector<HTMLButtonElement>('.config-save')!.click();
+
+    await vi.waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([requestInput, requestInit]) =>
+            String(requestInput).includes('/api/config') && (requestInit as RequestInit | undefined)?.method === 'PUT',
+        ),
+      ).toBe(true);
+    });
+
+    const putCall = fetchMock.mock.calls.find(
+      ([requestInput, requestInit]) =>
+        String(requestInput).includes('/api/config') && (requestInit as RequestInit | undefined)?.method === 'PUT',
+    );
+    const putBody: unknown = JSON.parse((putCall![1] as RequestInit).body as string);
+    expect(putBody).toEqual({ key: 'AGENT_ADAPTER', value: 'codex' });
+  });
+
+  it('shows an inline error and skips refresh when a config save fails', async () => {
+    const response: DashboardResponse = await buildResponse();
+    let configGetCalls: number = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config') && init?.method === 'PUT') {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: 'invalid adapter' }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/config')) {
+        configGetCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ config: { AGENT_ADAPTER: 'claude-code' }, overridden: [] }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+    expect(configGetCalls).toBe(1);
+
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
+    expect(row).not.toBeNull();
+    const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
+    input.value = 'not-a-real-adapter';
+    row!.querySelector<HTMLButtonElement>('.config-save')!.click();
+
+    await vi.waitFor(() => {
+      expect(row!.querySelector<HTMLElement>('.config-error')?.textContent).toBe('invalid adapter');
+    });
+    expect(configGetCalls).toBe(1);
+  });
+
   it('posts to the auto-claim endpoint when the toggle is switched off', async () => {
     const response: DashboardResponse = await buildResponse();
     const scopedResponse: DashboardResponse = { ...response, repos: ['org/alpha'], selectedRepo: 'org/alpha' };

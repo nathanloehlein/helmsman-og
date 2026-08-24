@@ -6,6 +6,7 @@ import type { JiraActions } from './jira-actions';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentTask } from './agents/adapter';
 
 const task: AgentTask = { ticketId: 'LEKA-1', title: 'do it', repo: 'o/r', jiraBaseUrl: 'https://x' };
+const freeformTask: AgentTask = { ticketId: 'freeform', title: '', repo: 'o/r', jiraBaseUrl: '', task: 'do X' };
 
 function fakeAdapter(events: AgentEvent[], ok: boolean, prNumber?: number): AgentAdapter {
   return {
@@ -348,6 +349,22 @@ describe('startRun', () => {
     expect(statusesAtRunComplete).toEqual(['succeeded']);
     expect(statusesAtRunComplete[0]).not.toBe('running');
     expect(db.listEvents(id).filter((e) => e.kind === 'run-complete')).toHaveLength(1);
+    db.close();
+  });
+
+  it('never claims or transitions a free-form run, even when jira and botAccountId are configured', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async () => 42);
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)), jira, botAccountId: 'bot-acc', findPrNumber };
+
+    const id = await startRun(freeformTask, d);
+
+    expect(jira.assignCalls).toEqual([]);
+    expect(jira.transitionCalls).toEqual([]);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    expect(row?.ticketId).toBe('freeform');
     db.close();
   });
 

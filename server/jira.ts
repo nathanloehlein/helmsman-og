@@ -35,6 +35,22 @@ async function fetchChangelog(jira: JiraConfig, key: string): Promise<JiraHistor
   return body.changelog?.histories ?? [];
 }
 
+export async function fetchIssueSummary(jira: JiraConfig, key: string): Promise<string | null> {
+  try {
+    const url: URL = new URL(`/rest/api/3/issue/${encodeURIComponent(key)}`, jira.baseUrl);
+    url.searchParams.set('fields', 'summary');
+    const res: Response = await fetch(url, {
+      headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const body: { fields?: { summary?: string } } = await res.json();
+    return body.fields?.summary ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function fetchQueueIssues(jira: JiraConfig): Promise<JiraIssue[]> {
   return search(jira, buildQueueJql(jira));
 }
