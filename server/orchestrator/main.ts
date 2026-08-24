@@ -4,7 +4,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { buildDashboardResponse } from '../dashboard-endpoint';
-import { loadConfig, type AppConfig } from '../config';
+import type { AppConfig } from '../config';
 import { openDb } from './db';
 import { recoverOrphanedRuns } from './recovery';
 import { handleApi } from './router';
@@ -18,7 +18,7 @@ import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig } from './config-store';
-import { fetchQueueIssues } from '../jira';
+import { fetchQueueIssues, fetchIssueSummary } from '../jira';
 import type { AgentAdapter, AgentEvent, AgentHandle } from './agents/adapter';
 import type { RunEventRow } from './db';
 import type { JiraIssue } from '../types';
@@ -31,8 +31,8 @@ const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.backlog-r
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
-const config: AppConfig = loadConfig(process.env);
 const configStore: ConfigStore = new ConfigStore(process.env, db);
+const startupCfg: AppConfig = configStore.current();
 
 try {
   const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
@@ -42,7 +42,7 @@ try {
 }
 
 try {
-  const repos: string[] = [...Object.keys(config.repoProjectMap), ...(config.github?.repo ? [config.github.repo] : [])];
+  const repos: string[] = [...Object.keys(startupCfg.repoProjectMap), ...(startupCfg.github?.repo ? [startupCfg.github.repo] : [])];
   const configuredDirs: string[] = repos.map((repo: string) => join(AGENTS_ROOT, repoBasename(repo)));
   const discoveredDirs: string[] = await discoverRepoDirs(AGENTS_ROOT);
   const repoDirs: string[] = [...new Set([...configuredDirs, ...discoveredDirs])];
@@ -59,58 +59,63 @@ try {
   process.stderr.write(`worktree sweep failed: ${String(err)}\n`);
 }
 
-const adapter: AgentAdapter =
-  config.agentAdapter === 'command' && config.agentCmd
-    ? commandAdapter(config.agentCmd)
-    : claudeCodeAdapter;
-if (config.agentAdapter === 'command' && !config.agentCmd) {
-  process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n');
-}
-
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
 function launch(body: { ticketId?: string; title?: string; repo: string; task?: string }): string {
   const runId: string = randomUUID();
-  const ticketId: string = body.ticketId ?? 'freeform';
-  const title: string = body.title ?? ticketId;
+  const cfg: AppConfig = configStore.current();
   const control: { stopped: boolean; handle: AgentHandle | null } = { stopped: false, handle: null };
   pm.add(runId, body.repo, () => {
     control.stopped = true;
     control.handle?.stop();
   });
-  const jira: JiraActions | null = config.jira ? makeJiraActions(config.jira) : null;
-  void startRun(
-    { ticketId, title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '', task: body.task },
-    {
-      db,
-      bus,
-      adapter,
-      createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
-      removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
-      now: () => new Date().toISOString(),
-      genId: () => runId,
-      onStart: (handle: AgentHandle) => {
-        control.handle = handle;
-        if (control.stopped) handle.stop();
+  const adapter: AgentAdapter =
+    cfg.agentAdapter === 'command' && cfg.agentCmd ? commandAdapter(cfg.agentCmd) : claudeCodeAdapter;
+  if (cfg.agentAdapter === 'command' && !cfg.agentCmd) {
+    process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n');
+  }
+  const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
+  void (async (): Promise<void> => {
+    const ticketId: string = body.ticketId ?? 'freeform';
+    const fetchedTitle: string | null =
+      !body.title && body.ticketId && cfg.jira
+        ? await fetchIssueSummary(cfg.jira, body.ticketId).catch((): null => null)
+        : null;
+    const title: string = body.title ?? fetchedTitle ?? ticketId;
+    await startRun(
+      { ticketId, title, repo: body.repo, jiraBaseUrl: process.env.JIRA_BASE_URL ?? '', task: body.task },
+      {
+        db,
+        bus,
+        adapter,
+        createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
+        removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
+        now: () => new Date().toISOString(),
+        genId: () => runId,
+        onStart: (handle: AgentHandle) => {
+          control.handle = handle;
+          if (control.stopped) handle.stop();
+        },
+        jira,
+        botAccountId: cfg.botAccountId ?? undefined,
+        statusInProgress: cfg.statusInProgress,
+        statusInReview: cfg.statusInReview,
+        findPrNumber: (repo: string, branch: string) =>
+          cfg.github ? findPrNumberByBranch(cfg.github, repo, branch) : Promise.resolve(null),
+        maxAttempts: cfg.maxAttempts,
+        maxCostUsd: cfg.maxCostUsd,
+        isStopped: () => control.stopped,
       },
-      jira,
-      botAccountId: config.botAccountId ?? undefined,
-      statusInProgress: config.statusInProgress,
-      statusInReview: config.statusInReview,
-      findPrNumber: (repo: string, branch: string) =>
-        config.github ? findPrNumberByBranch(config.github, repo, branch) : Promise.resolve(null),
-      maxAttempts: config.maxAttempts,
-      maxCostUsd: config.maxCostUsd,
-      isStopped: () => control.stopped,
-    },
-  ).finally(() => pm.remove(runId));
+    ).finally(() => pm.remove(runId));
+  })();
   return runId;
 }
 
 function fetchTopBacklog(repo: string): Promise<{ ticketId: string; title: string } | null> {
-  const project: string | undefined = config.repoProjectMap[repo];
-  if (!project || !config.jira) return Promise.resolve(null);
-  return fetchQueueIssues({ ...config.jira, project }).then(
+  const cfg: AppConfig = configStore.current();
+  const project: string | undefined = cfg.repoProjectMap[repo];
+  if (!project || !cfg.jira) return Promise.resolve(null);
+  return fetchQueueIssues({ ...cfg.jira, project }).then(
     (issues: JiraIssue[]): { ticketId: string; title: string } | null =>
       issues[0] ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
   );
@@ -123,7 +128,7 @@ const scheduler: AutoClaimScheduler = new AutoClaimScheduler({
   onLog: (m: string) => process.stderr.write(m + '\n'),
 });
 
-setInterval(() => void scheduler.tick(), config.autoClaimIntervalMs);
+setInterval(() => void scheduler.tick(), startupCfg.autoClaimIntervalMs);
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -156,14 +161,17 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     }
     const body: unknown = req.method === 'POST' ? await readBody(req) : null;
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
-      dashboard: (repo) => buildDashboardResponse(process.env, new Date(), undefined, repo),
+      dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       db,
       canStart: (repo: string) => pm.canStart(repo),
       launch,
       stop: (id: string) => pm.stop(id),
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),
-      caps: () => ({ maxAttempts: config.maxAttempts, maxCostUsd: config.maxCostUsd }),
+      caps: () => {
+        const c: AppConfig = configStore.current();
+        return { maxAttempts: c.maxAttempts, maxCostUsd: c.maxCostUsd };
+      },
       getConfig: () => ({ config: publicConfig(configStore.current()), overridden: Object.keys(configStore.overrides()) }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {
