@@ -17,6 +17,7 @@ import { createWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, r
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch } from '../github';
 import { AutoClaimScheduler } from './scheduler';
+import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues } from '../jira';
 import type { AgentAdapter, AgentEvent, AgentHandle } from './agents/adapter';
 import type { RunEventRow } from './db';
@@ -31,6 +32,7 @@ const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCU
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const config: AppConfig = loadConfig(process.env);
+const configStore: ConfigStore = new ConfigStore(process.env, db);
 
 try {
   const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
@@ -160,6 +162,15 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),
       caps: () => ({ maxAttempts: config.maxAttempts, maxCostUsd: config.maxCostUsd }),
+      getConfig: () => ({ config: publicConfig(configStore.current()), overridden: Object.keys(configStore.overrides()) }),
+      setConfig: (key: string, value: string) => {
+        try {
+          configStore.setOverride(key, value, () => new Date().toISOString());
+          return { ok: true as const };
+        } catch (err: unknown) {
+          return { ok: false as const, error: err instanceof Error ? err.message : 'invalid config key' };
+        }
+      },
     });
     if (api) {
       res.writeHead(api.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
