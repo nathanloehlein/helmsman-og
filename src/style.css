@@ -1218,3 +1218,4 @@ body::after {
 .pr-review-actions { display: flex; gap: 8px; }
 .pr-request-changes:hover { border-color: var(--bad-line); color: var(--bad); }
 .run-drawer-pr { margin-top: 12px; }
+.pr-review-error { color: var(--bad); font-size: 11px; }

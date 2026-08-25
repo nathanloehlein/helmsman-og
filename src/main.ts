@@ -213,7 +213,11 @@ export class DashboardView {
     if ((event === 'REQUEST_CHANGES' || event === 'COMMENT') && body.trim() === '') return;
     const result: { ok: boolean; error?: string } = await submitPrReview(t.repo, t.number, event, body);
     if (!result.ok) {
-      t.panel.setAttribute('data-review-error', result.error ?? 'review failed');
+      const reviewEl: HTMLElement | null = t.panel.querySelector<HTMLElement>('.pr-review');
+      const errEl: HTMLDivElement = document.createElement('div');
+      errEl.className = 'pr-review-error';
+      errEl.textContent = result.error ?? 'Review failed.';
+      reviewEl?.appendChild(errEl);
       return;
     }
     const refreshed: PrStatusView | null = await getPrStatus(t.repo, t.number);

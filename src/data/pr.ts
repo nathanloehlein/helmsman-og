@@ -16,7 +16,7 @@ export async function getPrStatus(repo: string, prNumber: number): Promise<PrSta
     const res: Response = await fetch(`/api/pr?repo=${encodeURIComponent(repo)}&number=${prNumber}`);
     if (!res.ok) return null;
     const data: unknown = await res.json();
-    if (!data || typeof (data as PrStatusView).number !== 'number' || typeof (data as PrStatusView).checks !== 'object') return null;
+    if (!data || typeof (data as PrStatusView).number !== 'number' || !(data as PrStatusView).checks) return null;
     return data as PrStatusView;
   } catch {
     return null;

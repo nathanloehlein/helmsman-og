@@ -688,4 +688,46 @@ describe('DashboardView drawer survives polling', () => {
     });
     expect(root.querySelector('.pr-lookup-result')?.innerHTML).toContain('#99');
   });
+
+  it('surfaces a review-submit failure in the panel instead of failing silently', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/pr/review')) {
+        return { ok: false, status: 403, json: async () => ({ error: 'you cannot approve your own PR' }) } as unknown as Response;
+      }
+      if (url.includes('/api/pr?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            number: 5, repo: 'org/beta', state: 'open', draft: false, merged: false,
+            headRefName: 'b', reviewDecision: 'REVIEW_REQUIRED', comments: 0,
+            checks: { passed: 0, failed: 0, pending: 0 }, url: 'https://github.com/org/beta/pull/5',
+          }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
+    input!.value = 'org/beta#5';
+    root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('.pr-lookup-result .pr-approve')).not.toBeNull();
+    });
+
+    root.querySelector<HTMLButtonElement>('.pr-lookup-result .pr-approve')!.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('.pr-review-error')?.textContent).toContain('you cannot approve your own PR');
+    });
+  });
 });
