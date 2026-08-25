@@ -1,68 +1,60 @@
 # Backlog Runner — Design
 
-Committed visual world: **Tactical HUD** — a mission-control console for an autonomous agent. The old light theme (and the earlier auto-inverted `prefers-color-scheme` dark) are anti-reference, not authority.
+Committed visual world: **Agent Jackfield** — the command center read as a studio patch-bay *normalling schedule*. Every agent run is a numbered lane tied to its ticket/PR by one amber link line; the line's **stroke pattern**, never its colour, carries state. The former **Tactical HUD** (cyan-glow mission-control) and the original light dashboard are anti-reference, not authority. Seed: `operate/direction a04e52f5`, form `operate-b-normalled-jackfield` (user-picked over the rolled mission-control assignment).
 
 ## Use scene → dark
 
-An ops monitor left open on a screen, glanced at from across a room, often in a dim room. Dark is chosen from that scene, not from category habit. Dark is the *only* committed world here — there is no light variant.
+An ops board an operator keeps open on a second monitor, glanced at from across the room and leaned into to launch/stop/review. Black glass is chosen from that scene. Dark is the only committed world.
 
 ## Tokens
 
-All defined on `:root` in `src/style.css` (`color-scheme: dark`).
+Defined on `:root` in `src/style.css` (`color-scheme: dark`).
 
 | Role | Value |
 | --- | --- |
-| Void / page base | `#04060a` / `--bg #05070a` |
-| Surfaces | `--surface #0c1016`, `--surface-2 #11161e`, `--surface-hi #151c26` (hover) |
-| Hairlines | `--line rgba(120,160,178,.14)`, `--line-strong .26` |
-| Text | `--text #eef4f8`, `--text-dim #9fb2bf`, `--text-faint #7f93a0` |
-| Accent (live/agent) | `--accent #29e0c8`, `--accent-bright #5cf3df`, soft/line/glow variants |
-| Status | done `--good #35e08a` · in-progress `--warn #f4b23e` · changes `--bad #ff6b6b` · in-review = accent cyan |
+| Page gutter / base | `--gutter #050507` / `--bg #07070a` (the deck is a bordered max-width slab with dark edge gutters — nothing spans full width) |
+| Panels | `--panel #0b0c10`, `--panel-2 #0f1116`, `--panel-hi #14161d` |
+| Signal amber (the ONE accent) | `--accent #f5a623`, `--accent-bright #ffc65a`, `--accent-dim rgba(245,166,35,.55)`, `--accent-plate #f5a623` |
+| Hairlines | amber-tinted: `--line .16`, `--line-strong .34`, `--line-faint .08` |
+| Text | `--text #f2ead9` (warm off-white), `--text-dim #b39b78`, `--text-faint #7d6c53` |
+| Destructive / fault | `--bad #ff6b57` — reserved for the failed-run crossed ring, the request-changes action, and P1 priority. It is the *only* second hue, and it never marks routine state. |
 
-Secondary text is tinted cool (never flat gray) so it belongs to the surface. Contrast: body/dim text ≥ 4.5:1 on surfaces; faint is reserved for small mono meta and large labels.
+Color strategy: **Restrained** — one saturated amber carrying the surface on near-black, warm-neutral text. No second accent for state.
 
 ## Type
 
-- Body: system sans (`-apple-system, Segoe UI, …`).
-- **JetBrains Mono** carries the identity: every id, timestamp, count, stat, chip label, and the brand wordmark. Mono is earned here — it renders code, data, and measurement, not "technical" costume. Tabular numerics via `font-variant-numeric`.
-- Headline tracking `-0.01em`; balanced wrapping on the working-ticket headline.
+- **JetBrains Mono** (bundled `@font-face`, weights 500/700) carries all data: lane numbers (`01`..`NN`, zero-padded, tabular), ticket ids, counts, chips, costs, timestamps, config keys.
+- **Condensed grotesque** (`--cond`: Arial Narrow / Roboto Condensed → system) sets the brand wordmark, panel titles, and small-cap legend heads — uppercase, tight tracking.
+- Body prose: system sans, warm-neutral.
 
-## Depth
+## Signature — the lane + link rail
 
-Layered surface gradient + hairline border + a **real drop shadow** (offset + blur) is the elevation system. The cyan glow is an **accent signal only** — the live pulse, the active step, the sparkline, the panel-title tick — never a substitute for a shadow.
+Each row (`.lane`) is: `NN` · id · label · **`.lane-rail`** (a flex amber hairline ending in a `.lane-ring` ○) · meta · state chip · action. State is drawn on the rail by stroke, per the jackfield rule *no colour carries state*:
 
-HUD corner ticks: each panel draws a 9px cyan L at top-left and bottom-right via `::before`/`::after`. Panel titles carry a small glowing accent square.
+| Run state | Rail |
+| --- | --- |
+| running | solid line, filled ring (`--live`) |
+| queued | dotted line, hollow dim ring (`--queued`) |
+| stopped | dashed line broken by a `//` gap (`--gap`) |
+| succeeded / selected | doubled line (`--double`) |
+| failed | dashed line, open **crossed** ring in `--bad` (`--ring`) |
 
-## Motion
+Chips are amber small-caps (outline, or knocked-dark-out-of-an-amber-plate for `chip-done`); they label, the rail signals.
 
-One authored moment: a single cyan **scan sweep** on boot (`body::after`, ~1.1s, exponential ease-out), plus the ambient **live pulse** on the status dot (the agent's heartbeat). Both are disabled under `prefers-reduced-motion`. No per-panel entrance animations.
+## Layout
 
-## Icons
+`.deck` = `296px` sticky **legend** + fluid **console**, inside a `1680px` bordered slab (edge gutters). Legend: brand + `BR` plate, FLEET STATUS stats, SCOPE (repo select + auto-claim), THROUGHPUT·7D sparkline, and the load-bearing merge-gate operator note pinned to the bottom. Console: topbar (`● scope · MODE LIVE · stats`), New run, `lanes-grid` (Backlog queue | Agents running), Recent runs, Review a PR, `console-strip` (Recently shipped | Activity feed), Config. The run **drawer** is a fixed right panel (log + PR panel).
 
-Authored inline SVGs at one consistent stroke — check (done step), filled dot (active step), lock (permission note). No emoji or HTML entities standing in for icons.
+Rank by **inversion**: the amber `BR` mark and `chip-done` knock dark out of a solid amber plate; lanes tint amber on hover.
 
-## Components
+## Responsive & motion
 
-- **Chips** (status/priority): mono, uppercase, low-alpha tinted background + matching 1px border + colored text. In-review/accent chips carry a faint glow.
-- **Status colors**: green = merged/done, amber = in progress, red = changes requested, cyan = in review / accent / live.
-- **Sparkline**: cyan stroke with a `drop-shadow` glow; gradient area fill.
-- **Empty states**: centered muted note per panel ("No backlog tickets assigned." / "No recent pull requests." / "No recent activity.").
-- **Degraded banner**: amber-tinted, names which sources fell back to sample data.
-- **Repo selector**: a HUD-styled `<select>` in the **topbar** (it scopes the whole dashboard, so it lives at the top, not inside one panel), listing "All repos" + every repo in `REPO_PROJECT_MAP` and the author's PRs. Choosing one **re-scopes the whole dashboard**: the client re-fetches `/api/dashboard?repo=…`, the server filters GitHub (shipped + PR activity) to that repo and re-queries Jira with the repo's mapped project (`REPO_PROJECT_MAP`), so the queue, working-on, stats, and throughput all follow the selection. The topbar label becomes the repo's short name. Custom cyan chevron, hover + `:focus-visible` glow ring for keyboard users. Selection is held by the client view controller (`DashboardView`) so it survives the 30s poll.
+- `<1080px` the two-column grids stack; `<840px` the legend collapses above the console (row-wrap), keeping the edge gutters.
+- Lane titles truncate (`min-width:0` + ellipsis) so a long ticket title never overflows; the rail always keeps ≥48px.
+- Motion is restrained to one live signal: the `.pulse-dot` by MODE LIVE. Rails and type are static (an ops board at rest until something needs you).
 
-## Responsive
+## Invariants the design must keep
 
-- Grid `300px · 1fr · 260px` → single column at `≤899px`.
-- Topbar wraps at `≤600px`; the mini-stats reflow to a full-width row under a hairline so nothing clips. Body padding tightens to 16px.
-
-## Full-viewport layout (≥981px)
-
-The dashboard fills the whole window — width (no max-width cap; body padding is the gutter) and height (no page scroll). `body`/`#app`/`.wrap` chain to `100vh`; the grid takes the remaining height (`flex: 1; min-height: 0; align-items: stretch`) and long lists scroll inside their panels (backlog queue, working-on body, activity feed). The Today panel is pinned (`flex: none`) so it never shrinks below its content. Recently Shipped is a bottom band capped at `34vh` with its own internal scroll.
-
-`.wrap` is a viewport-height scroll container at **every** size (`body`/`#app`/`.wrap` chain to `100vh`; `.wrap` has `overflow-y: auto`), so the dashboard always fills the browser window — it never grows only to content height and leaves a gap, and it scrolls internally instead of the page when content exceeds the viewport.
-
-On top of that, the polished cockpit shell is gated on `@media (min-width: 900px) and (min-height: 760px)`: when the window is wide and tall enough, the grid takes the remaining height (`flex: 1`) and individual panels scroll independently so nothing scrolls at the page level. Below that (narrow or short window) `.wrap` itself scrolls — still filling the window, never clipping.
-
-## Intentional deviation
-
-The faint two-axis **grid background** (`body::before`) is flagged `advisory` by the Impeccable detector as a generated-UI signature. It is kept deliberately: the committed Tactical HUD brief pins a grid/scanline field, and a pinned world overrides the detector. It is held at very low alpha (`--grid rgba(120,165,185,.045)`) so it never reduces text contrast — it reads as an ambient HUD field, not a decorative texture. Revisit if the world is ever re-briefed away from HUD.
+- The merge-gate operator note is content, not decoration — the agent never merges and there is **no merge control** in the UI.
+- Every behavior selector (`.launch-btn`, `.agent-row`, `.agent-stop`, `.repo-select`, `.auto-claim-toggle`, `.newrun-*`, `.config-*`, `.pr-*`, `.recent-run`, `.run-drawer-*`) is preserved; the redesign is visual only.
+- State is legible without colour (rail pattern), so the board stays readable for colour-blind operators and in a dim room.

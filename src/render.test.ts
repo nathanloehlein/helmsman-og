@@ -64,7 +64,7 @@ describe('renderDashboard', () => {
     renderDashboard(el, scoped, NOW, [], ['org/alpha', 'org/beta'], 'org/alpha');
     const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.repo-select');
     expect(select).not.toBeNull();
-    expect(el.querySelector('.topbar .repo-select')).not.toBeNull();
+    expect(el.querySelector('.legend .repo-select')).not.toBeNull();
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(['', 'org/alpha', 'org/beta']);
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('org/alpha');
     expect(el.querySelectorAll('.pr-card').length).toBe(2);
