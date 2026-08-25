@@ -54,7 +54,7 @@ describe('createWorktreeFromBranch', () => {
       await execFileAsync('git', ['-C', repoDir, 'worktree', 'remove', '--force', first.path]);
 
       await execFileAsync('git', ['-C', sourceDir, 'checkout', '-q', 'fix/x']);
-      await execFileAsync('git', ['-C', sourceDir, 'commit', '-q', '--allow-empty', '-m', 'commit B']);
+      await execFileAsync('git', ['-C', sourceDir, 'commit', '-q', '--allow-empty', '--amend', '-m', 'commit B (divergent, not a descendant of the cached local ref)']);
       const expectedSha: { stdout: string; stderr: string } = await execFileAsync('git', ['-C', sourceDir, 'rev-parse', 'fix/x']);
 
       const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x');

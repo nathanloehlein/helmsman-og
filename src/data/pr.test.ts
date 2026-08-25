@@ -50,6 +50,16 @@ describe('getPrStatus', () => {
 
     expect(result).toBeNull();
   });
+
+  it('returns null when a stubbed 200 response body is not a valid PrStatusView', async () => {
+    globalThis.fetch = vi.fn(async (): Promise<Response> => {
+      return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const result: PrStatusView | null = await getPrStatus('o/r', 12);
+
+    expect(result).toBeNull();
+  });
 });
 
 describe('submitReview', () => {

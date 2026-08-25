@@ -75,6 +75,7 @@ export class DashboardView {
     this.drawerBody = bodyEl;
     this.drawerFooter = footerEl;
     this.drawerPr = prEl;
+    this.drawer.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
   }
 
   async refresh(): Promise<void> {

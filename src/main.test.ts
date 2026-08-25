@@ -730,4 +730,70 @@ describe('DashboardView drawer survives polling', () => {
       expect(root.querySelector('.pr-review-error')?.textContent).toContain('you cannot approve your own PR');
     });
   });
+
+  it('submits an APPROVE review from the drawer PR panel opened via a recent-run row click', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const terminalRunWithPr = {
+      id: 'run-55',
+      ticketId: 'TICK-55',
+      repo: 'org/alpha',
+      status: 'succeeded',
+      attempt: 1,
+      prNumber: 42,
+      startedAt: new Date().toISOString(),
+      costUsd: 0.4,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/pr/review')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
+      }
+      if (url.includes('/api/pr?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            number: 42,
+            repo: 'org/alpha',
+            state: 'open',
+            draft: false,
+            merged: false,
+            headRefName: 'feature-branch',
+            reviewDecision: 'REVIEW_REQUIRED',
+            comments: 0,
+            checks: { passed: 1, failed: 0, pending: 0 },
+            url: 'https://github.com/org/alpha/pull/42',
+          }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [terminalRunWithPr] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const row: HTMLElement | null = root.querySelector<HTMLElement>('.recent-run');
+    expect(row).not.toBeNull();
+    row!.click();
+
+    const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    await vi.waitFor(() => {
+      expect(drawer.querySelector('.run-drawer-pr .pr-approve')).not.toBeNull();
+    });
+
+    drawer.querySelector<HTMLButtonElement>('.run-drawer-pr .pr-approve')!.click();
+
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes('/api/pr/review'))).toBe(true);
+    });
+
+    const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/pr/review'));
+    const reviewBody: unknown = JSON.parse((reviewCall![1] as RequestInit).body as string);
+    expect(reviewBody).toEqual({ repo: 'org/alpha', number: 42, event: 'APPROVE', body: '' });
+  });
 });
