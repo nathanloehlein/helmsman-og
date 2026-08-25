@@ -137,6 +137,26 @@ describe('agent control routes', () => {
     expect(r?.status).toBe(400);
     expect(r?.json).toEqual({ error: 'repo required' });
   });
+
+  it('launches a rerun and calls launch with repo, prNumber, mode, and feedback', async () => {
+    const launch = vi.fn((_b: { repo: string; prNumber?: number; mode?: string; feedback?: string }) => 'run-9');
+    const rerunDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi(
+      'POST',
+      '/api/agents/launch',
+      new URLSearchParams(),
+      { mode: 'rerun', repo: 'o/r', prNumber: 12, feedback: 'fix' },
+      rerunDeps,
+    );
+    expect(launch).toHaveBeenCalledWith({ repo: 'o/r', prNumber: 12, mode: 'rerun', feedback: 'fix' });
+    expect(r?.status).toBe(200);
+    expect((r?.json as { runId: string }).runId).toBe('run-9');
+  });
+
+  it('rejects a rerun launch missing prNumber', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'rerun', repo: 'o/r' }, launchDeps);
+    expect(r?.status).toBe(400);
+  });
 });
 
 describe('auto-claim toggle route', () => {

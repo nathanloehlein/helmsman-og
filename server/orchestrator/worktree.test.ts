@@ -1,8 +1,41 @@
 import { describe, expect, it, vi } from 'vitest';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sweepOrphanedWorktrees, discoverRepoDirs } from './worktree';
+import { createWorktreeFromBranch, sweepOrphanedWorktrees, discoverRepoDirs, type Worktree } from './worktree';
+
+const execFileAsync = promisify(execFile);
+
+describe('createWorktreeFromBranch', () => {
+  it('checks out an existing branch into a run-scoped worktree without creating a new branch', async () => {
+    const agentsRoot: string = await mkdtemp(join(tmpdir(), 'agents-'));
+    try {
+      const sourceDir: string = join(agentsRoot, 'source');
+      await mkdir(sourceDir, { recursive: true });
+      await execFileAsync('git', ['-C', sourceDir, 'init', '-q', '-b', 'main']);
+      await execFileAsync('git', ['-C', sourceDir, 'config', 'user.email', 'test@example.com']);
+      await execFileAsync('git', ['-C', sourceDir, 'config', 'user.name', 'Test']);
+      await execFileAsync('git', ['-C', sourceDir, 'commit', '-q', '--allow-empty', '-m', 'init']);
+      await execFileAsync('git', ['-C', sourceDir, 'branch', 'fix/x']);
+
+      const repoDir: string = join(agentsRoot, 'repo');
+      await execFileAsync('git', ['clone', '-q', sourceDir, repoDir]);
+
+      const result: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-1', 'fix/x');
+
+      expect(result.branch).toBe('fix/x');
+      expect(result.path).toBe(join(repoDir, '.worktrees', 'run-1'));
+      expect(existsSync(result.path)).toBe(true);
+      const head = await execFileAsync('git', ['-C', result.path, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      expect(head.stdout.trim()).toBe('fix/x');
+    } finally {
+      await rm(agentsRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('sweepOrphanedWorktrees', () => {
   it('removes only orphaned worktrees, leaving active runs untouched', async () => {

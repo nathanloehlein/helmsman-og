@@ -4,6 +4,8 @@ export interface AgentTask {
   repo: string;
   jiraBaseUrl: string;
   task?: string;
+  prBranch?: string;
+  prNumber?: number;
 }
 
 export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error' | 'run-complete';

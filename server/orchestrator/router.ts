@@ -34,7 +34,7 @@ export interface RouterDeps {
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string }) => string;
+  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
@@ -65,10 +65,15 @@ export async function handleApi(
     return { status: 200, json: { runs: deps.db.listRuns(50).map(toRunSummary), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
-    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string } | null;
+    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string } | null;
     if (!b?.repo) return { status: 400, json: { error: 'repo required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
+    if (b.mode === 'rerun') {
+      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
+      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'rerun', feedback: b.feedback });
+      return { status: 200, json: { runId } };
+    }
     if (b.mode === 'freeform') {
       if (!b.task) return { status: 400, json: { error: 'task required' } };
       const runId = deps.launch({ repo: b.repo, task: b.task });

@@ -4,6 +4,15 @@ import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } fr
 import { mapStreamLine } from './claude-stream';
 
 export function buildPrompt(task: AgentTask): string {
+  if (task.prBranch && task.prNumber) {
+    return [
+      `You are updating open pull request #${task.prNumber} on the current branch (${task.prBranch}).`,
+      `The repository checkout is your current working directory.`,
+      `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
+      `Address this review feedback: ${task.task}.`,
+      `Run the tests, commit, and push to the same branch, and do NOT open a new pull request and do NOT merge.`,
+    ].join(' ');
+  }
   const openPr: string =
     task.task && task.task.length > 0
       ? `Task: ${task.task}.`
