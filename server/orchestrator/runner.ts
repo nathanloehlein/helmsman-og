@@ -82,7 +82,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       deps.bus.publish(runId, e);
     };
 
-    if (deps.jira && deps.botAccountId && !task.task) {
+    if (deps.jira && deps.botAccountId && !task.task && !task.prBranch) {
       await claimTicket(deps.jira, task.ticketId, deps.botAccountId, statusInProgress, onEvent);
     }
 
@@ -128,7 +128,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       endedAt: deps.now(),
     });
 
-    if (result.ok && deps.jira && prNumber != null && !task.task) {
+    if (result.ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
       await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
     }
   } catch (err) {

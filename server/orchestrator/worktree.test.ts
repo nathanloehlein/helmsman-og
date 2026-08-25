@@ -35,6 +35,36 @@ describe('createWorktreeFromBranch', () => {
       await rm(agentsRoot, { recursive: true, force: true });
     }
   });
+
+  it('force-refreshes the local branch ref so a second rerun sees the latest remote commit, not a stale local ref', async () => {
+    const agentsRoot: string = await mkdtemp(join(tmpdir(), 'agents-'));
+    try {
+      const sourceDir: string = join(agentsRoot, 'source');
+      await mkdir(sourceDir, { recursive: true });
+      await execFileAsync('git', ['-C', sourceDir, 'init', '-q', '-b', 'main']);
+      await execFileAsync('git', ['-C', sourceDir, 'config', 'user.email', 'test@example.com']);
+      await execFileAsync('git', ['-C', sourceDir, 'config', 'user.name', 'Test']);
+      await execFileAsync('git', ['-C', sourceDir, 'commit', '-q', '--allow-empty', '-m', 'init']);
+      await execFileAsync('git', ['-C', sourceDir, 'branch', 'fix/x']);
+
+      const repoDir: string = join(agentsRoot, 'repo');
+      await execFileAsync('git', ['clone', '-q', sourceDir, repoDir]);
+
+      const first: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-1', 'fix/x');
+      await execFileAsync('git', ['-C', repoDir, 'worktree', 'remove', '--force', first.path]);
+
+      await execFileAsync('git', ['-C', sourceDir, 'checkout', '-q', 'fix/x']);
+      await execFileAsync('git', ['-C', sourceDir, 'commit', '-q', '--allow-empty', '-m', 'commit B']);
+      const expectedSha: { stdout: string; stderr: string } = await execFileAsync('git', ['-C', sourceDir, 'rev-parse', 'fix/x']);
+
+      const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x');
+
+      const actualSha = await execFileAsync('git', ['-C', second.path, 'rev-parse', 'HEAD']);
+      expect(actualSha.stdout.trim()).toBe(expectedSha.stdout.trim());
+    } finally {
+      await rm(agentsRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('sweepOrphanedWorktrees', () => {
