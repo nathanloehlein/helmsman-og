@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleApi, type RouterDeps } from './router';
+import type { PrStatus } from '../github';
+
+const samplePrStatus: PrStatus = {
+  number: 5,
+  repo: 'o/r',
+  state: 'open',
+  draft: false,
+  merged: false,
+  headRefName: 'feat/x',
+  headSha: 'abc123',
+  reviewDecision: 'REVIEW_REQUIRED',
+  comments: 0,
+  checks: { passed: 1, failed: 0, pending: 0 },
+  url: 'https://github.com/o/r/pull/5',
+};
 
 const deps: RouterDeps = {
   dashboard: async (repo) => ({ snapshot: { repo: repo ?? 'all' }, degraded: [], repos: ['o/r'], selectedRepo: repo }),
@@ -14,6 +29,8 @@ const deps: RouterDeps = {
   caps: () => ({ maxAttempts: 3, maxCostUsd: 5 }),
   getConfig: () => ({ config: { agentAdapter: 'claude-code', maxAttempts: 1 }, overridden: ['AGENT_MAX_ATTEMPTS'] }),
   setConfig: (_key: string, _value: string) => ({ ok: true }),
+  prStatus: async (_repo: string, _prNumber: number) => samplePrStatus,
+  submitReview: async (_repo: string, _prNumber: number, _event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', _body: string) => ({ ok: true as const }),
 };
 
 describe('handleApi', () => {
@@ -176,5 +193,82 @@ describe('config routes', () => {
     const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { value: '3' }, deps);
     expect(r?.status).toBe(400);
     expect(r?.json).toEqual({ error: 'key and value required' });
+  });
+});
+
+describe('GET /api/pr', () => {
+  it('returns the PR status for a repo and number', async () => {
+    const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=5'), null, deps);
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual(samplePrStatus);
+  });
+
+  it('rejects a request missing number', async () => {
+    const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r'), null, deps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'repo and number required' });
+  });
+
+  it('rejects a request with a non-numeric number', async () => {
+    const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=x'), null, deps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'repo and number required' });
+  });
+
+  it('rejects a request missing repo', async () => {
+    const r = await handleApi('GET', '/api/pr', new URLSearchParams('number=5'), null, deps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'repo and number required' });
+  });
+
+  it('returns 404 when the PR is not found or GitHub is not configured', async () => {
+    const notFoundDeps = { ...deps, prStatus: async (_repo: string, _n: number) => null } as unknown as RouterDeps;
+    const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=5'), null, notFoundDeps);
+    expect(r?.status).toBe(404);
+    expect(r?.json).toEqual({ error: 'PR not found or GitHub not configured' });
+  });
+
+  it('never leaks the GitHub token in the response', async () => {
+    const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=5'), null, deps);
+    expect(JSON.stringify(r?.json)).not.toContain('GITHUB_TOKEN');
+  });
+});
+
+describe('POST /api/pr/review', () => {
+  it('submits an approve review and returns ok', async () => {
+    const submitReview = vi.fn(async (_repo: string, _n: number, _event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', _body: string) => ({ ok: true as const }));
+    const reviewDeps = { ...deps, submitReview } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', number: 5, event: 'APPROVE', body: '' }, reviewDeps);
+    expect(submitReview).toHaveBeenCalledWith('o/r', 5, 'APPROVE', '');
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({ ok: true });
+  });
+
+  it('rejects a COMMENT review with an empty body', async () => {
+    const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', number: 5, event: 'COMMENT', body: '' }, deps);
+    expect(r?.status).toBe(400);
+  });
+
+  it('rejects a REQUEST_CHANGES review with an empty body', async () => {
+    const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', number: 5, event: 'REQUEST_CHANGES', body: '' }, deps);
+    expect(r?.status).toBe(400);
+  });
+
+  it('rejects an invalid event', async () => {
+    const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', number: 5, event: 'BOGUS', body: '' }, deps);
+    expect(r?.status).toBe(400);
+  });
+
+  it('rejects a request missing number', async () => {
+    const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', event: 'APPROVE', body: '' }, deps);
+    expect(r?.status).toBe(400);
+  });
+
+  it('propagates a submitReview failure as a 400 with the error', async () => {
+    const submitReview = async (_repo: string, _n: number, _event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', _body: string) => ({ ok: false as const, error: 'nope' });
+    const reviewDeps = { ...deps, submitReview } as unknown as RouterDeps;
+    const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', number: 5, event: 'APPROVE', body: '' }, reviewDeps);
+    expect(r?.status).toBe(400);
+    expect(r?.json).toEqual({ error: 'nope' });
   });
 });

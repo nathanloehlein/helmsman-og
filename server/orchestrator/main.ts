@@ -15,7 +15,7 @@ import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { createWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
-import { findPrNumberByBranch } from '../github';
+import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, type PrStatus } from '../github';
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
@@ -180,6 +180,19 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         } catch (err: unknown) {
           return { ok: false as const, error: err instanceof Error ? err.message : 'invalid config key' };
         }
+      },
+      prStatus: (repo: string, prNumber: number): Promise<PrStatus | null> => {
+        const g: AppConfig['github'] = configStore.current().github;
+        return g ? fetchPrStatus(g, repo, prNumber) : Promise.resolve(null);
+      },
+      submitReview: (
+        repo: string,
+        prNumber: number,
+        event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+        body: string,
+      ): Promise<{ ok: true } | { ok: false; error: string }> => {
+        const g: AppConfig['github'] = configStore.current().github;
+        return g ? ghSubmitReview(g, repo, prNumber, event, body) : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
       },
     });
     if (api) {
