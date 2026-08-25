@@ -368,6 +368,51 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('reruns on an existing PR branch using createWorktreeFromBranch, skips jira claim/review, and records the PR number', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt', branch: 'fix/x' }));
+    const createWorktree = vi.fn(async () => ({ path: '/tmp/wt', branch: 'agent/x' }));
+    let adapterRan: boolean = false;
+    const adapter: AgentAdapter = {
+      id: 'fake',
+      start(_t: AgentTask, _wd: string, onEvent: (e: AgentEvent) => void): AgentHandle {
+        adapterRan = true;
+        onEvent({ kind: 'result', text: 'done' });
+        return { stop: () => undefined, exit: Promise.resolve({ ok: true, costUsd: 0.1 }) };
+      },
+    };
+    const rerunTask: AgentTask = { ticketId: 'rerun', title: '', repo: 'o/r', jiraBaseUrl: '', task: 'address it', prBranch: 'fix/x', prNumber: 12 };
+    const d: RunnerDeps = { ...deps(db, adapter), createWorktree, createWorktreeFromBranch, jira, botAccountId: 'bot-acc' };
+
+    const id = await startRun(rerunTask, d);
+
+    expect(createWorktreeFromBranch).toHaveBeenCalledWith('o/r', 'run-1', 'fix/x');
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(jira.assignCalls).toEqual([]);
+    expect(jira.transitionCalls).toEqual([]);
+    const row = db.getRun(id);
+    expect(row?.prNumber).toBe(12);
+    expect(adapterRan).toBe(true);
+    db.close();
+  });
+
+  it('never claims or transitions a rerun with empty feedback, even when jira and botAccountId are configured', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt', branch: 'fix/x' }));
+    const emptyFeedbackRerunTask: AgentTask = { ticketId: 'rerun', title: '', repo: 'o/r', jiraBaseUrl: '', task: '', prBranch: 'fix/x', prNumber: 12 };
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)), jira, botAccountId: 'bot-acc', createWorktreeFromBranch };
+
+    const id = await startRun(emptyFeedbackRerunTask, d);
+
+    expect(jira.assignCalls).toEqual([]);
+    expect(jira.transitionCalls).toEqual([]);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('succeeded');
+    db.close();
+  });
+
   it('publishes a single run-complete event with the final status, after the run row is already terminal, on failure', async () => {
     const db: Db = openDb(':memory:');
     const d: RunnerDeps = deps(db, fakeAdapter([{ kind: 'result', text: 'nope' }], false));

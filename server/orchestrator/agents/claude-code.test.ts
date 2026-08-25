@@ -25,4 +25,23 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('Do NOT merge the PR');
     expect(prompt).not.toContain('Jira ticket');
   });
+
+  it('builds a rerun prompt that targets the same PR branch and omits Jira ticket and open-PR language', () => {
+    const task: AgentTask = {
+      ticketId: 'rerun',
+      title: '',
+      repo: 'o/r',
+      jiraBaseUrl: '',
+      task: 'address it',
+      prBranch: 'fix/x',
+      prNumber: 12,
+    };
+    const prompt: string = buildPrompt(task);
+    expect(prompt).toContain('#12');
+    expect(prompt).toContain('fix/x');
+    expect(prompt).toContain('address it');
+    expect(prompt).toContain('push to the same branch');
+    expect(prompt).toContain('do NOT open a new pull request');
+    expect(prompt).not.toContain('Jira ticket');
+  });
 });

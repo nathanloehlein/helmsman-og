@@ -15,7 +15,9 @@ is the view; the **orchestrator** behind it spawns and supervises the agents.
   and live logs (P3); an opt-in per-repo auto-claim scheduler (P4); a generic-command
   adapter plus hardening — crash recovery, orphaned-worktree sweep, and cost/attempt
   caps (P5); and a full UI control plane — launch any ticket or a free-form task, a
-  recent-runs history, and a live non-secret config editor (P6). The agent opens a PR
+  recent-runs history, and a live non-secret config editor (P6); and PR controls —
+  view any PR's status/CI/review decision, approve / request-changes / comment, and
+  re-run the agent on an existing PR branch with feedback (P7). The agent opens a PR
   and **never merges**.
 
 ## Stack
@@ -135,6 +137,18 @@ transition — the run row is labelled `freeform`). Both stream into the same li
 The **Recent runs** panel lists completed/failed/stopped runs. Click any to re-open its
 stored log (replayed from SQLite), final status, cost, and PR link — the same drawer used
 for live runs.
+
+### PR controls
+
+A run with a PR shows a **PR panel** in its drawer (state, CI checks, review decision,
+comments, link); a **Review a PR** panel takes any PR (paste a URL or `owner/repo#number`)
+so you can act on PRs that aren't from a run. From the panel you can **Approve /
+Request changes / Comment** (`POST /api/pr/review`, server-side token) and — when the PR's
+repo is checked out under `AGENTS_ROOT` — **Re-run with feedback**: the agent checks out the
+existing PR branch, addresses the feedback, and pushes the **same** branch so the PR updates
+(no new PR, no Jira claim). GitHub reads/writes go through the orchestrator (`GET /api/pr`,
+`POST /api/pr/review`); the token never reaches the browser. **There is no Merge button** —
+merge stays a deliberate action on GitHub, and the agent never merges.
 
 ### Config editor
 

@@ -13,14 +13,14 @@ import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
-import { createWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
+import { createWorktree, createWorktreeFromBranch, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
-import { findPrNumberByBranch } from '../github';
+import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, type PrStatus } from '../github';
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
-import type { AgentAdapter, AgentEvent, AgentHandle } from './agents/adapter';
-import type { RunEventRow } from './db';
+import type { AgentAdapter, AgentEvent, AgentHandle, AgentTask } from './agents/adapter';
+import type { RunEventRow, RunRow } from './db';
 import type { JiraIssue } from '../types';
 
 process.loadEnvFile('.env');
@@ -61,7 +61,7 @@ try {
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: { ticketId?: string; title?: string; repo: string; task?: string }): string {
+function launch(body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string }): string {
   const runId: string = randomUUID();
   const cfg: AppConfig = configStore.current();
   const control: { stopped: boolean; handle: AgentHandle | null } = { stopped: false, handle: null };
@@ -76,19 +76,46 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
   }
   const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
   void (async (): Promise<void> => {
-    const ticketId: string = body.ticketId ?? 'freeform';
-    const fetchedTitle: string | null =
-      !body.title && body.ticketId && cfg.jira
-        ? await fetchIssueSummary(cfg.jira, body.ticketId).catch((): null => null)
-        : null;
-    const title: string = body.title ?? fetchedTitle ?? ticketId;
-    await startRun(
-      { ticketId, title, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task },
-      {
+    try {
+      let taskObj: AgentTask;
+      if (body.mode === 'rerun') {
+        const pr: PrStatus | null =
+          cfg.github && body.prNumber ? await fetchPrStatus(cfg.github, body.repo, body.prNumber) : null;
+        if (!pr) {
+          const ts: string = new Date().toISOString();
+          const failedRow: RunRow = {
+            id: runId, ticketId: 'rerun', repo: body.repo, adapter: adapter.id,
+            status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
+            endedAt: ts, costUsd: null, worktreePath: null,
+          };
+          db.insertRun(failedRow);
+          const message: string = `could not resolve PR #${body.prNumber ?? '?'} for rerun`;
+          db.appendEvent(runId, 'error', message, ts);
+          db.appendEvent(runId, 'run-complete', 'failed', ts);
+          bus.publish(runId, { kind: 'error', text: message });
+          bus.publish(runId, { kind: 'run-complete', text: 'failed' });
+          return;
+        }
+        taskObj = {
+          ticketId: 'rerun', title: `rerun #${pr.number}`, repo: body.repo,
+          jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.feedback ?? '',
+          prBranch: pr.headRefName, prNumber: pr.number,
+        };
+      } else {
+        const ticketId: string = body.ticketId ?? 'freeform';
+        const fetchedTitle: string | null =
+          !body.title && body.ticketId && cfg.jira
+            ? await fetchIssueSummary(cfg.jira, body.ticketId).catch((): null => null)
+            : null;
+        const title: string = body.title ?? fetchedTitle ?? ticketId;
+        taskObj = { ticketId, title, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
+      }
+      await startRun(taskObj, {
         db,
         bus,
         adapter,
         createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
+        createWorktreeFromBranch: (repo: string, id: string, branch: string) => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch),
         removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
         now: () => new Date().toISOString(),
         genId: () => runId,
@@ -105,8 +132,10 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         maxAttempts: cfg.maxAttempts,
         maxCostUsd: cfg.maxCostUsd,
         isStopped: () => control.stopped,
-      },
-    ).finally(() => pm.remove(runId));
+      });
+    } finally {
+      pm.remove(runId);
+    }
   })();
   return runId;
 }
@@ -180,6 +209,19 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         } catch (err: unknown) {
           return { ok: false as const, error: err instanceof Error ? err.message : 'invalid config key' };
         }
+      },
+      prStatus: (repo: string, prNumber: number): Promise<PrStatus | null> => {
+        const g: AppConfig['github'] = configStore.current().github;
+        return g ? fetchPrStatus(g, repo, prNumber) : Promise.resolve(null);
+      },
+      submitReview: (
+        repo: string,
+        prNumber: number,
+        event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+        body: string,
+      ): Promise<{ ok: true } | { ok: false; error: string }> => {
+        const g: AppConfig['github'] = configStore.current().github;
+        return g ? ghSubmitReview(g, repo, prNumber, event, body) : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
       },
     });
     if (api) {

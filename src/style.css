@@ -1200,3 +1200,22 @@ body::after {
 .run-drawer-footer-pr a:hover {
   text-decoration: underline;
 }
+
+/* PR controls (P7) */
+.pr-lookup-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.pr-lookup-input { flex: 1; background: var(--surface-hi); border: 1px solid var(--line); color: var(--text); border-radius: var(--radius); padding: 6px 10px; font-size: 12px; }
+.pr-lookup-go, .pr-review-actions button, .pr-rerun { background: var(--surface-hi); border: 1px solid var(--line-strong); color: var(--text); border-radius: var(--radius); padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.pr-lookup-go:hover, .pr-review-actions button:hover, .pr-rerun:hover { border-color: var(--accent-line); color: var(--accent-bright); }
+.pr-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+.pr-panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pr-branch, .pr-comments { color: var(--text-dim); font-size: 11px; }
+.pr-link { color: var(--accent); text-decoration: none; }
+.pr-link:hover { color: var(--accent-bright); }
+.pr-ci { color: var(--good); font-size: 11px; }
+.pr-ci-bad { color: var(--bad); }
+.pr-review { display: flex; flex-direction: column; gap: 6px; }
+.pr-review-body, .pr-rerun-feedback { width: 100%; min-height: 48px; background: var(--surface-hi); border: 1px solid var(--line); color: var(--text); border-radius: var(--radius); padding: 6px 10px; font-size: 12px; resize: vertical; }
+.pr-review-actions { display: flex; gap: 8px; }
+.pr-request-changes:hover { border-color: var(--bad-line); color: var(--bad); }
+.run-drawer-pr { margin-top: 12px; }
+.pr-review-error { color: var(--bad); font-size: 11px; }

@@ -23,6 +23,14 @@ export async function createWorktree(agentsRoot: string, repo: string, runId: st
   return { path, branch };
 }
 
+export async function createWorktreeFromBranch(agentsRoot: string, repo: string, runId: string, branch: string): Promise<Worktree> {
+  const repoDir: string = join(agentsRoot, repoBasename(repo));
+  await run('git', ['-C', repoDir, 'fetch', 'origin', `+${branch}:${branch}`], { maxBuffer: 1024 * 1024 * 16 });
+  const path: string = join(repoDir, '.worktrees', runId);
+  await run('git', ['-C', repoDir, 'worktree', 'add', path, branch], { maxBuffer: 1024 * 1024 * 16 });
+  return { path, branch };
+}
+
 export async function removeWorktreeAt(repoDir: string, worktreePath: string): Promise<void> {
   await run('git', ['-C', repoDir, 'worktree', 'remove', '--force', worktreePath]);
 }

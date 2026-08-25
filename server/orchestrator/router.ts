@@ -1,4 +1,5 @@
 import type { Db, RunRow } from './db';
+import type { PrStatus } from '../github';
 
 export interface ApiResult {
   status: number;
@@ -33,13 +34,20 @@ export interface RouterDeps {
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string }) => string;
+  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
   caps: () => { maxAttempts: number; maxCostUsd: number | null };
   getConfig: () => { config: Record<string, unknown>; overridden: string[] };
   setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
+  prStatus: (repo: string, prNumber: number) => Promise<PrStatus | null>;
+  submitReview: (
+    repo: string,
+    prNumber: number,
+    event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+    body: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 export async function handleApi(
@@ -57,10 +65,15 @@ export async function handleApi(
     return { status: 200, json: { runs: deps.db.listRuns(50).map(toRunSummary), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
-    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string } | null;
+    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string } | null;
     if (!b?.repo) return { status: 400, json: { error: 'repo required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
+    if (b.mode === 'rerun') {
+      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
+      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'rerun', feedback: b.feedback });
+      return { status: 200, json: { runId } };
+    }
     if (b.mode === 'freeform') {
       if (!b.task) return { status: 400, json: { error: 'task required' } };
       const runId = deps.launch({ repo: b.repo, task: b.task });
@@ -91,6 +104,41 @@ export async function handleApi(
     }
     const r: { ok: true } | { ok: false; error: string } = deps.setConfig(b.key, b.value);
     return r.ok ? { status: 200, json: { key: b.key, value: b.value } } : { status: 400, json: { error: r.error } };
+  }
+  if (path === '/api/pr' && method === 'GET') {
+    const repo: string | null = query.get('repo');
+    const numRaw: string | null = query.get('number');
+    const n: number = Number(numRaw);
+    if (!repo || !numRaw || !Number.isFinite(n)) {
+      return { status: 400, json: { error: 'repo and number required' } };
+    }
+    const s: PrStatus | null = await deps.prStatus(repo, n);
+    return s ? { status: 200, json: s } : { status: 404, json: { error: 'PR not found or GitHub not configured' } };
+  }
+  if (path === '/api/pr/review' && method === 'POST') {
+    const b: { repo?: string; number?: number; event?: string; body?: string } | null = _body as
+      | { repo?: string; number?: number; event?: string; body?: string }
+      | null;
+    const EVENTS: string[] = ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'];
+    if (
+      typeof b?.repo !== 'string' ||
+      typeof b?.number !== 'number' ||
+      !Number.isFinite(b.number) ||
+      typeof b?.event !== 'string' ||
+      !EVENTS.includes(b.event)
+    ) {
+      return { status: 400, json: { error: 'repo, number, and a valid event are required' } };
+    }
+    if ((b.event === 'REQUEST_CHANGES' || b.event === 'COMMENT') && (typeof b.body !== 'string' || b.body.trim() === '')) {
+      return { status: 400, json: { error: 'body required for this review event' } };
+    }
+    const r: { ok: true } | { ok: false; error: string } = await deps.submitReview(
+      b.repo,
+      b.number,
+      b.event as 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+      b.body ?? '',
+    );
+    return r.ok ? { status: 200, json: { ok: true } } : { status: 400, json: { error: r.error } };
   }
   if (path.startsWith('/api/')) {
     return { status: 404, json: { error: 'not found' } };

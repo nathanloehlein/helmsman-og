@@ -8,6 +8,7 @@ export interface RunnerDeps {
   bus: RunBus;
   adapter: AgentAdapter;
   createWorktree: (repo: string, runId: string) => Promise<{ path: string; branch: string }>;
+  createWorktreeFromBranch?: (repo: string, runId: string, branch: string) => Promise<{ path: string; branch: string }>;
   removeWorktree: (repo: string, path: string) => Promise<void>;
   now: () => string;
   genId: () => string;
@@ -67,7 +68,12 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
   deps.db.insertRun(initial);
   let worktreePath: string | null = null;
   try {
-    const worktree: { path: string; branch: string } = await deps.createWorktree(task.repo, runId);
+    if (task.prBranch && !deps.createWorktreeFromBranch) {
+      throw new Error('rerun requires createWorktreeFromBranch');
+    }
+    const worktree: { path: string; branch: string } = task.prBranch
+      ? await deps.createWorktreeFromBranch!(task.repo, runId, task.prBranch)
+      : await deps.createWorktree(task.repo, runId);
     worktreePath = worktree.path;
     deps.db.updateRun(runId, { worktreePath: worktree.path });
 
@@ -76,7 +82,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       deps.bus.publish(runId, e);
     };
 
-    if (deps.jira && deps.botAccountId && !task.task) {
+    if (deps.jira && deps.botAccountId && !task.task && !task.prBranch) {
       await claimTicket(deps.jira, task.ticketId, deps.botAccountId, statusInProgress, onEvent);
     }
 
@@ -104,7 +110,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       }
     }
 
-    let prNumber: number | null = result.prNumber ?? null;
+    let prNumber: number | null = task.prNumber ?? result.prNumber ?? null;
     if (prNumber == null && result.ok && deps.findPrNumber) {
       try {
         prNumber = await deps.findPrNumber(task.repo, worktree.branch);
@@ -122,7 +128,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       endedAt: deps.now(),
     });
 
-    if (result.ok && deps.jira && prNumber != null && !task.task) {
+    if (result.ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
       await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
     }
   } catch (err) {

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { renderDashboard } from './render';
+import { renderDashboard, renderPrPanel } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
+import type { PrStatusView } from './data/pr';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -285,5 +286,68 @@ describe('renderDashboard', () => {
     expect(adapterRow!.textContent).not.toContain('overridden');
     expect(el.querySelector('.config-row[data-key="JIRA_API_TOKEN"]')).toBeNull();
     expect(el.innerHTML).not.toContain('JIRA_API_TOKEN');
+  });
+
+  it('renders a PR lookup panel for reviewing any PR', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    expect(el.querySelector('.pr-lookup-input')).not.toBeNull();
+    expect(el.querySelector('.pr-lookup-go')).not.toBeNull();
+    expect(el.querySelector('.pr-lookup-result')).not.toBeNull();
+  });
+});
+
+function prFixture(over: Partial<PrStatusView> = {}): PrStatusView {
+  return {
+    number: 42,
+    repo: 'org/alpha',
+    state: 'open',
+    draft: false,
+    merged: false,
+    headRefName: 'feature-branch',
+    reviewDecision: 'REVIEW_REQUIRED',
+    comments: 3,
+    checks: { passed: 2, failed: 0, pending: 1 },
+    url: 'https://github.com/org/alpha/pull/42',
+    ...over,
+  };
+}
+
+describe('renderPrPanel', () => {
+  it('renders the state chip, CI summary, review controls, and PR link for an open PR', () => {
+    const html: string = renderPrPanel(prFixture(), false);
+    expect(html).toContain('Open');
+    expect(html).toContain('2');
+    expect(html).toContain('pr-approve');
+    expect(html).toContain('pr-request-changes');
+    expect(html).toContain('pr-comment');
+    expect(html).toContain('pr-review-body');
+    expect(html).toContain('https://github.com/org/alpha/pull/42');
+    expect(html).toContain('#42');
+  });
+
+  it('omits the rerun control when canRerun is false', () => {
+    const html: string = renderPrPanel(prFixture(), false);
+    expect(html).not.toContain('pr-rerun-feedback');
+    expect(html).not.toContain('class="pr-rerun"');
+  });
+
+  it('includes the rerun control when canRerun is true', () => {
+    const html: string = renderPrPanel(prFixture(), true);
+    expect(html).toContain('pr-rerun-feedback');
+    expect(html).toContain('pr-rerun');
+  });
+
+  it('renders a not-found note when there is no PR', () => {
+    const html: string = renderPrPanel(null, false);
+    expect(html).toContain('empty-note');
+    expect(html.toLowerCase()).toContain('no pr');
+  });
+
+  it('escapes a malicious headRefName and url', () => {
+    const payload: string = '<img src=x onerror=alert(1)>';
+    const html: string = renderPrPanel(prFixture({ headRefName: payload, url: payload }), false);
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
   });
 });

@@ -18,6 +18,38 @@ interface PullRequestItem {
   number: number;
 }
 
+interface PullRequestDetail {
+  state: string;
+  draft?: boolean;
+  merged?: boolean;
+  head: { ref: string; sha: string };
+  comments?: number;
+  html_url: string;
+}
+
+interface CheckRun {
+  status: string;
+  conclusion: string | null;
+}
+
+interface CheckRunsResponse {
+  check_runs: CheckRun[];
+}
+
+export interface PrStatus {
+  number: number;
+  repo: string;
+  state: 'open' | 'closed';
+  draft: boolean;
+  merged: boolean;
+  headRefName: string;
+  headSha: string;
+  reviewDecision: PrReviewDecision;
+  comments: number;
+  checks: { passed: number; failed: number; pending: number };
+  url: string;
+}
+
 const API: string = 'https://api.github.com';
 
 function headers(github: GithubConfig): Record<string, string> {
@@ -110,5 +142,114 @@ export async function findPrNumberByBranch(
     return prs[0]?.number ?? null;
   } catch {
     return null;
+  }
+}
+
+async function fetchCheckTally(
+  github: GithubConfig,
+  repo: string,
+  headSha: string,
+): Promise<{ passed: number; failed: number; pending: number }> {
+  const empty: { passed: number; failed: number; pending: number } = { passed: 0, failed: 0, pending: 0 };
+  try {
+    const res: Response = await fetch(`${API}/repos/${repo}/commits/${headSha}/check-runs`, {
+      headers: headers(github),
+    });
+    if (!res.ok) return empty;
+    const body: CheckRunsResponse = await res.json();
+    const passedConclusions: string[] = ['success', 'neutral', 'skipped'];
+    const failedConclusions: string[] = [
+      'failure',
+      'timed_out',
+      'cancelled',
+      'action_required',
+      'startup_failure',
+    ];
+    return body.check_runs.reduce(
+      (tally, run: CheckRun) => {
+        if (run.status !== 'completed' || run.conclusion === null) {
+          return { ...tally, pending: tally.pending + 1 };
+        }
+        if (passedConclusions.includes(run.conclusion)) {
+          return { ...tally, passed: tally.passed + 1 };
+        }
+        if (failedConclusions.includes(run.conclusion)) {
+          return { ...tally, failed: tally.failed + 1 };
+        }
+        return { ...tally, pending: tally.pending + 1 };
+      },
+      empty,
+    );
+  } catch {
+    return empty;
+  }
+}
+
+/**
+ * Fetches the full status of a PR: open/closed state, CI check tally, and
+ * review decision. Fails soft: sub-fetches (checks, reviews) degrade to
+ * zeros/REVIEW_REQUIRED rather than nulling the whole result, but a throw on
+ * the primary pulls fetch returns null.
+ */
+export async function fetchPrStatus(
+  github: GithubConfig,
+  repo: string,
+  prNumber: number,
+): Promise<PrStatus | null> {
+  try {
+    const res: Response = await fetch(`${API}/repos/${repo}/pulls/${prNumber}`, {
+      headers: headers(github),
+    });
+    if (!res.ok) return null;
+    const body: PullRequestDetail = await res.json();
+
+    const [checks, reviewDecision]: [
+      { passed: number; failed: number; pending: number },
+      PrReviewDecision,
+    ] = await Promise.all([
+      fetchCheckTally(github, repo, body.head.sha),
+      latestReviewDecision(github, repo, prNumber).catch(() => 'REVIEW_REQUIRED' as PrReviewDecision),
+    ]);
+
+    return {
+      number: prNumber,
+      repo,
+      state: body.state === 'closed' ? 'closed' : 'open',
+      draft: body.draft ?? false,
+      merged: body.merged ?? false,
+      headRefName: body.head.ref,
+      headSha: body.head.sha,
+      reviewDecision,
+      comments: body.comments ?? 0,
+      checks,
+      url: body.html_url,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Submits a review on a PR. Fails soft: never throws, surfacing the GitHub
+ * error message (or status code) on failure instead.
+ */
+export async function submitReview(
+  github: GithubConfig,
+  repo: string,
+  prNumber: number,
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+  body: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res: Response = await fetch(`${API}/repos/${repo}/pulls/${prNumber}/reviews`, {
+      method: 'POST',
+      headers: { ...headers(github), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, body }),
+    });
+    if (res.ok) return { ok: true };
+    const errorBody: { message?: string } = await res.json().catch(() => ({}));
+    return { ok: false, error: errorBody.message ?? `GitHub ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: String(err) };
   }
 }

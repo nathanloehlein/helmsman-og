@@ -1,6 +1,6 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, ICON_CLOSE } from './render';
+import { renderDashboard, renderPrPanel, ICON_CLOSE } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import {
   launchAgent,
@@ -18,6 +18,7 @@ import {
   type RunSummary,
 } from './data/agents';
 import { getConfig, setConfig, type UiConfig } from './data/config';
+import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
   if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
@@ -33,6 +34,7 @@ export class DashboardView {
   private readonly drawerTitle: HTMLElement;
   private readonly drawerBody: HTMLElement;
   private readonly drawerFooter: HTMLElement;
+  private readonly drawerPr: HTMLElement;
   private snapshot: DashboardSnapshot | null = null;
   private degraded: string[] = [];
   private repos: string[] = [];
@@ -58,18 +60,22 @@ export class DashboardView {
         <button class="run-drawer-close" aria-label="Close">${ICON_CLOSE}</button>
       </div>
       <div class="run-drawer-body mono"></div>
-      <div class="run-drawer-footer mono"></div>`;
+      <div class="run-drawer-footer mono"></div>
+      <div class="run-drawer-pr"></div>`;
     const titleEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-title');
     const bodyEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-body');
     const footerEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-footer');
+    const prEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-pr');
     const closeBtn: HTMLButtonElement | null = drawer.querySelector<HTMLButtonElement>('.run-drawer-close');
-    if (!titleEl || !bodyEl || !footerEl || !closeBtn) throw new Error('run drawer construction failed');
+    if (!titleEl || !bodyEl || !footerEl || !prEl || !closeBtn) throw new Error('run drawer construction failed');
     closeBtn.addEventListener('click', (): void => this.closeDrawer());
     document.body.appendChild(drawer);
     this.drawer = drawer;
     this.drawerTitle = titleEl;
     this.drawerBody = bodyEl;
     this.drawerFooter = footerEl;
+    this.drawerPr = prEl;
+    this.drawer.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
   }
 
   async refresh(): Promise<void> {
@@ -157,8 +163,99 @@ export class DashboardView {
       return;
     }
 
+    const lookupBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-lookup-go');
+    if (lookupBtn) {
+      void this.handlePrLookup();
+      return;
+    }
+
+    const approveBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-approve');
+    if (approveBtn) {
+      void this.handleReview(approveBtn, 'APPROVE');
+      return;
+    }
+
+    const requestChangesBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-request-changes');
+    if (requestChangesBtn) {
+      void this.handleReview(requestChangesBtn, 'REQUEST_CHANGES');
+      return;
+    }
+
+    const commentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-comment');
+    if (commentBtn) {
+      void this.handleReview(commentBtn, 'COMMENT');
+      return;
+    }
+
+    const rerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-rerun');
+    if (rerunBtn) {
+      void this.handleRerun(rerunBtn);
+      return;
+    }
+
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
+  }
+
+  private prTarget(btn: HTMLElement): { panel: HTMLElement; repo: string; number: number } | null {
+    const panel: HTMLElement | null = btn.closest<HTMLElement>('.pr-panel');
+    const repo: string | undefined = panel?.dataset.prRepo;
+    const numberRaw: string | undefined = panel?.dataset.prNumber;
+    const number: number = Number(numberRaw);
+    if (!panel || !repo || !numberRaw || !Number.isFinite(number)) return null;
+    return { panel, repo, number };
+  }
+
+  private async handleReview(btn: HTMLElement, event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'): Promise<void> {
+    const t: { panel: HTMLElement; repo: string; number: number } | null = this.prTarget(btn);
+    if (!t) return;
+    const bodyEl: HTMLTextAreaElement | null = t.panel.querySelector<HTMLTextAreaElement>('.pr-review-body');
+    const body: string = bodyEl?.value ?? '';
+    if ((event === 'REQUEST_CHANGES' || event === 'COMMENT') && body.trim() === '') return;
+    const result: { ok: boolean; error?: string } = await submitPrReview(t.repo, t.number, event, body);
+    if (!result.ok) {
+      const reviewEl: HTMLElement | null = t.panel.querySelector<HTMLElement>('.pr-review');
+      const errEl: HTMLDivElement = document.createElement('div');
+      errEl.className = 'pr-review-error';
+      errEl.textContent = result.error ?? 'Review failed.';
+      reviewEl?.appendChild(errEl);
+      return;
+    }
+    const refreshed: PrStatusView | null = await getPrStatus(t.repo, t.number);
+    t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo));
+  }
+
+  private async handleRerun(btn: HTMLElement): Promise<void> {
+    const t: { panel: HTMLElement; repo: string; number: number } | null = this.prTarget(btn);
+    if (!t) return;
+    const feedbackEl: HTMLTextAreaElement | null = t.panel.querySelector<HTMLTextAreaElement>('.pr-rerun-feedback');
+    const feedback: string = feedbackEl?.value ?? '';
+    if (feedback.trim() === '') return;
+    this.stopActiveStream();
+    const seq: number = ++this.launchSeq;
+    try {
+      const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback });
+      if (seq !== this.launchSeq) return;
+      this.openRunDrawerAndStream(result.runId, `rerun #${t.number}`, '');
+    } catch (err: unknown) {
+      if (seq !== this.launchSeq) return;
+      const message: string = err instanceof Error ? err.message : 'Re-run failed';
+      this.openDrawer(`rerun #${t.number}`, '');
+      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+    }
+  }
+
+  private async handlePrLookup(): Promise<void> {
+    const input: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.pr-lookup-input');
+    const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
+    if (!input || !result) return;
+    const parsed: { repo: string; number: number } | null = parsePrUrl(input.value);
+    if (!parsed) {
+      result.innerHTML = '<div class="pr-panel empty-note">Enter a PR URL or owner/repo#number.</div>';
+      return;
+    }
+    const pr: PrStatusView | null = await getPrStatus(parsed.repo, parsed.number);
+    result.innerHTML = renderPrPanel(pr, this.repos.includes(parsed.repo));
   }
 
   private async handleStopClick(btn: HTMLButtonElement): Promise<void> {
@@ -183,6 +280,13 @@ export class DashboardView {
     this.activeRunId = runId;
     this.openDrawer(ticketId, title);
     this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
+    const run: RunSummary | undefined = this.runs.find((r: RunSummary): boolean => r.id === runId);
+    if (run && run.prNumber != null) void this.loadDrawerPr(run.repo, run.prNumber);
+  }
+
+  private async loadDrawerPr(repo: string, prNumber: number): Promise<void> {
+    const pr: PrStatusView | null = await getPrStatus(repo, prNumber);
+    this.drawerPr.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {
@@ -278,6 +382,7 @@ export class DashboardView {
     this.drawerTitle.textContent = title ? `${ticketId} — ${title}` : ticketId;
     this.drawerBody.innerHTML = '';
     this.drawerFooter.textContent = '';
+    this.drawerPr.innerHTML = '';
     this.drawer.hidden = false;
   }
 

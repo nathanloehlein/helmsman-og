@@ -7,7 +7,9 @@ export interface LaunchRunBody {
   title?: string;
   repo: string;
   task?: string;
-  mode?: 'ticket' | 'freeform';
+  mode?: 'ticket' | 'freeform' | 'rerun';
+  prNumber?: number;
+  feedback?: string;
 }
 
 export async function launchRun(body: LaunchRunBody): Promise<LaunchResult> {

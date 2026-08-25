@@ -5,6 +5,7 @@ import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority } from './types';
 import type { AgentCaps, RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
+import type { PrStatusView } from './data/pr';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
@@ -334,5 +335,47 @@ export function renderDashboard(
         <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
         <div class="config-list">${configRows}</div>
       </div>
+
+      <div class="panel pr-lookup">
+        <div class="panel-head">
+          <span class="panel-title">Review a PR</span>
+        </div>
+        <div class="pr-lookup-form">
+          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" />
+          <button class="pr-lookup-go">Load PR</button>
+        </div>
+        <div class="pr-lookup-result"></div>
+      </div>
+    </div>`;
+}
+
+export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): string {
+  if (!pr) return '<div class="pr-panel empty-note">No PR found.</div>';
+  const stateLabel: string = pr.merged ? 'Merged' : pr.draft ? 'Draft' : pr.state === 'closed' ? 'Closed' : 'Open';
+  const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
+  const checks: { passed: number; failed: number; pending: number } = pr.checks ?? { passed: 0, failed: 0, pending: 0 };
+  const ciClass: string = checks.failed > 0 ? 'pr-ci mono pr-ci-bad' : 'pr-ci mono';
+  const rerun: string = canRerun
+    ? '<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea><button class="pr-rerun">Re-run with feedback</button>'
+    : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
+  return `
+    <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">
+      <div class="pr-panel-head">
+        <span class="chip ${stateChipClass}">${stateLabel}</span>
+        <span class="${ciClass}">&#10003;${checks.passed} &#10007;${checks.failed} &#8943;${checks.pending}</span>
+        <span class="chip chip-review">${esc(pr.reviewDecision)}</span>
+        <span class="pr-branch mono">${esc(pr.headRefName)}</span>
+        <span class="pr-comments mono">${pr.comments} comments</span>
+        <a class="pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">#${pr.number}</a>
+      </div>
+      <div class="pr-review">
+        <textarea class="pr-review-body" placeholder="Review comment"></textarea>
+        <div class="pr-review-actions">
+          <button class="pr-approve">Approve</button>
+          <button class="pr-request-changes">Request changes</button>
+          <button class="pr-comment">Comment</button>
+        </div>
+      </div>
+      ${rerun}
     </div>`;
 }
