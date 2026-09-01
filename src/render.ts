@@ -6,6 +6,8 @@ import type { PrStatus, Priority } from './types';
 import type { AgentCaps, RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
+import type { CmuxTabView } from './logic/cmuxPanel';
+import { providerOf } from './logic/cmuxPanel';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
@@ -285,6 +287,7 @@ export function renderDashboard(
           <span class="topbar-scope mono">${selectedRepo ? esc(shortRepo(selectedRepo)) : 'ALL REPOS'}</span>
           <div class="topbar-sep"></div>
           <span class="topbar-mode mono">MODE <b>LIVE</b></span>
+          <button class="view-toggle" type="button" data-view="cmux">CMUX &#9658;</button>
           <div class="topbar-fill"></div>
           <div class="topbar-stats">
             <div class="mini-stat"><span class="num mono">${data.stats.completedToday}</span><span class="lbl">Shipped today</span></div>
@@ -410,4 +413,79 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
       </div>
       ${rerun}
     </div>`;
+}
+
+interface CmuxActionSpec {
+  action: string;
+  label: string;
+}
+
+const CMUX_UNIVERSAL_ACTIONS: CmuxActionSpec[] = [
+  { action: 'enter', label: 'Enter' },
+  { action: 'escape', label: 'Esc' },
+  { action: 'interrupt', label: 'Ctrl-C' },
+];
+
+const CMUX_AGENT_ACTIONS: CmuxActionSpec[] = [
+  { action: 'continue', label: 'Continue' },
+  { action: 'stop', label: 'Stop' },
+  { action: 'approve', label: 'Approve' },
+];
+
+function cmuxActionsFor(tab: CmuxTabView): CmuxActionSpec[] {
+  return providerOf(tab) ? [...CMUX_UNIVERSAL_ACTIONS, ...CMUX_AGENT_ACTIONS] : CMUX_UNIVERSAL_ACTIONS;
+}
+
+const CMUX_TOPBAR: string = `
+    <div class="cmux-topbar">
+      <button class="view-toggle" type="button" data-view="dashboard">&#9668; Dashboard</button>
+      <span class="cmux-topbar-title mono">CMUX CONTROL</span>
+    </div>`;
+
+export interface CmuxViewState {
+  connected: boolean;
+  tabs: CmuxTabView[];
+  selectedSurface: string | null;
+  screen: string;
+}
+
+export function renderCmuxView(state: CmuxViewState): string {
+  if (!state.connected) {
+    return `<div class="cmux-view">${CMUX_TOPBAR}<div class="panel empty-note">cmux not connected. Is the cmux app running?</div></div>`;
+  }
+
+  const list: string = state.tabs.length
+    ? state.tabs
+        .map(
+          (t) => `
+      <button class="cmux-tab${t.surfaceRef === state.selectedSurface ? ' is-selected' : ''}" type="button" data-surface="${esc(t.surfaceRef)}">
+        <span class="cmux-tab-title">${esc(t.surfaceTitle)}</span>
+        <span class="cmux-tab-meta mono">${esc(t.workspaceTitle)} &middot; ${esc(t.type)}</span>
+      </button>`,
+        )
+        .join('')
+    : '<div class="empty-note">No cmux tabs.</div>';
+
+  const selected: CmuxTabView | null = state.tabs.find((t) => t.surfaceRef === state.selectedSurface) ?? null;
+
+  const detail: string = selected
+    ? `
+      <pre class="cmux-screen mono">${esc(state.screen)}</pre>
+      <form class="cmux-send">
+        <input class="cmux-input" name="text" placeholder="Send to ${esc(selected.surfaceTitle)}&hellip;" autocomplete="off" />
+        <button type="submit">Send &#9166;</button>
+      </form>
+      <div class="cmux-actions">
+        ${cmuxActionsFor(selected)
+          .map((a) => `<button class="cmux-action" type="button" data-action="${esc(a.action)}">${esc(a.label)}</button>`)
+          .join('')}
+      </div>`
+    : '<div class="empty-note">Select a tab to view its screen.</div>';
+
+  return `<div class="cmux-view">${CMUX_TOPBAR}
+    <div class="cmux-body">
+      <div class="panel cmux-list">${list}</div>
+      <div class="panel cmux-detail">${detail}</div>
+    </div>
+  </div>`;
 }

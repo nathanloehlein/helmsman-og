@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { renderDashboard, renderPrPanel } from './render';
+import { renderCmuxView, renderDashboard, renderPrPanel } from './render';
+import type { CmuxViewState } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
+import type { CmuxTabView } from './logic/cmuxPanel';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -349,5 +351,98 @@ describe('renderPrPanel', () => {
     const html: string = renderPrPanel(prFixture({ headRefName: payload, url: payload }), false);
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;img');
+  });
+});
+
+function cmuxTabFixture(over: Partial<CmuxTabView> = {}): CmuxTabView {
+  return {
+    windowRef: 'win-1',
+    workspaceRef: 'ws-1',
+    workspaceTitle: 'orchestrator',
+    surfaceRef: 'surface-1',
+    surfaceTitle: 'main',
+    type: 'shell',
+    cwd: '/repo',
+    selected: false,
+    ...over,
+  };
+}
+
+function cmuxStateFixture(over: Partial<CmuxViewState> = {}): CmuxViewState {
+  return {
+    connected: true,
+    tabs: [cmuxTabFixture()],
+    selectedSurface: null,
+    screen: '',
+    ...over,
+  };
+}
+
+describe('renderCmuxView', () => {
+  it('renders a not-connected note and no tab list when disconnected', () => {
+    const html: string = renderCmuxView(cmuxStateFixture({ connected: false, tabs: [cmuxTabFixture()] }));
+    expect(html.toLowerCase()).toContain('not connected');
+    expect(html).not.toContain('cmux-tab"');
+  });
+
+  it('renders the tab list with title and workspace/type meta', () => {
+    const html: string = renderCmuxView(cmuxStateFixture());
+    expect(html).toContain('data-surface="surface-1"');
+    expect(html).toContain('main');
+    expect(html).toContain('orchestrator');
+    expect(html).toContain('shell');
+  });
+
+  it('marks the selected tab and shows a prompt to select one when nothing is selected', () => {
+    const html: string = renderCmuxView(cmuxStateFixture());
+    expect(html).toContain('Select a tab');
+    expect(html).not.toContain('is-selected');
+  });
+
+  it('shows the screen, send form, and only universal actions for a non-agent tab when selected', () => {
+    const html: string = renderCmuxView(
+      cmuxStateFixture({ selectedSurface: 'surface-1', screen: 'hello world' }),
+    );
+    expect(html).toContain('is-selected');
+    expect(html).toContain('cmux-screen');
+    expect(html).toContain('hello world');
+    expect(html).toContain('cmux-send');
+    expect(html).toContain('data-action="enter"');
+    expect(html).toContain('data-action="escape"');
+    expect(html).toContain('data-action="interrupt"');
+    expect(html).not.toContain('data-action="continue"');
+    expect(html).not.toContain('data-action="stop"');
+    expect(html).not.toContain('data-action="approve"');
+  });
+
+  it('adds agent actions when the selected tab is an agent-session', () => {
+    const html: string = renderCmuxView(
+      cmuxStateFixture({
+        tabs: [cmuxTabFixture({ surfaceRef: 'agent-1', type: 'agent-session' })],
+        selectedSurface: 'agent-1',
+        screen: '',
+      }),
+    );
+    expect(html).toContain('data-action="continue"');
+    expect(html).toContain('data-action="stop"');
+    expect(html).toContain('data-action="approve"');
+  });
+
+  it('escapes malicious tab titles and screen content', () => {
+    const payload: string = '<img src=x onerror=alert(1)>';
+    const html: string = renderCmuxView(
+      cmuxStateFixture({
+        tabs: [cmuxTabFixture({ surfaceTitle: payload })],
+        selectedSurface: 'surface-1',
+        screen: payload,
+      }),
+    );
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+
+  it('renders a no-tabs note when the tab list is empty', () => {
+    const html: string = renderCmuxView(cmuxStateFixture({ tabs: [] }));
+    expect(html.toLowerCase()).toContain('no cmux tabs');
   });
 });

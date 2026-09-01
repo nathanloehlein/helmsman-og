@@ -1,5 +1,6 @@
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
+import type { CmuxTab } from './cmux/model';
 
 export interface ApiResult {
   status: number;
@@ -48,6 +49,10 @@ export interface RouterDeps {
     event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
     body: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  cmuxListTabs: () => Promise<{ connected: boolean; tabs: CmuxTab[] }>;
+  cmuxReadScreen: (surface: string, lines: number) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  cmuxSend: (surface: string, text: string, enter: boolean) => Promise<{ ok: true } | { ok: false; error: string }>;
+  cmuxAction: (surface: string, provider: string | null, action: string) => Promise<{ ok: true; keys: string[] } | { ok: false; error: string }>;
 }
 
 export async function handleApi(
@@ -139,6 +144,32 @@ export async function handleApi(
       b.body ?? '',
     );
     return r.ok ? { status: 200, json: { ok: true } } : { status: 400, json: { error: r.error } };
+  }
+  if (path === '/api/cmux/tabs' && method === 'GET') {
+    return { status: 200, json: await deps.cmuxListTabs() };
+  }
+  if (path === '/api/cmux/screen' && method === 'GET') {
+    const surface: string | null = query.get('surface');
+    if (!surface) return { status: 400, json: { error: 'surface required' } };
+    const lines: number = Number(query.get('lines') ?? '40');
+    const r = await deps.cmuxReadScreen(surface, Number.isFinite(lines) ? lines : 40);
+    return r.ok ? { status: 200, json: { surface, text: r.text } } : { status: 404, json: { error: r.error } };
+  }
+  if (path === '/api/cmux/send' && method === 'POST') {
+    const b = _body as { surface?: string; text?: string; enter?: boolean } | null;
+    if (typeof b?.surface !== 'string' || typeof b?.text !== 'string') {
+      return { status: 400, json: { error: 'surface and text required' } };
+    }
+    const r = await deps.cmuxSend(b.surface, b.text, b.enter === true);
+    return r.ok ? { status: 200, json: { ok: true } } : { status: 400, json: { error: r.error } };
+  }
+  if (path === '/api/cmux/action' && method === 'POST') {
+    const b = _body as { surface?: string; provider?: string | null; action?: string } | null;
+    if (typeof b?.surface !== 'string' || typeof b?.action !== 'string') {
+      return { status: 400, json: { error: 'surface and action required' } };
+    }
+    const r = await deps.cmuxAction(b.surface, b.provider ?? null, b.action);
+    return r.ok ? { status: 200, json: { ok: true, keys: r.keys } } : { status: 400, json: { error: r.error } };
   }
   if (path.startsWith('/api/')) {
     return { status: 404, json: { error: 'not found' } };
