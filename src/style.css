@@ -142,6 +142,7 @@ html, body {
 .topbar-mode { font-size: 11px; letter-spacing: 0.14em; color: var(--text-faint); text-transform: uppercase; }
 .topbar-mode b { color: var(--text); font-weight: 700; }
 .topbar-sep { width: 1px; height: 16px; background: var(--line-strong); }
+.theme-select { font-size: 11px; text-transform: none; padding: 4px 8px; }
 .topbar-fill { flex: 1; }
 .topbar-stats { display: flex; gap: 22px; }
 .mini-stat { display: flex; flex-direction: column; align-items: flex-end; }

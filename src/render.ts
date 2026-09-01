@@ -8,6 +8,7 @@ import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
 import type { CmuxTabView } from './logic/cmuxPanel';
 import { providerOf } from './logic/cmuxPanel';
+import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
@@ -111,6 +112,7 @@ export function renderDashboard(
   autoClaimRepos: string[] = [],
   caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
   uiConfig: UiConfig = { config: {}, overridden: [] },
+  themeId: string = DEFAULT_THEME_ID,
 ): void {
   const queue = sortByPriority(data.queue);
   const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
@@ -124,6 +126,10 @@ export function renderDashboard(
       ),
     )
     .join('');
+
+  const themeOptions: string = THEMES.map(
+    (theme) => `<option value="${esc(theme.id)}"${theme.id === themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
+  ).join('');
 
   const autoClaimToggle: string = selectedRepo
     ? `<label class="auto-claim"><input type="checkbox" class="auto-claim-toggle"${autoClaimRepos.includes(selectedRepo) ? ' checked' : ''}><span>Auto-claim</span></label>`
@@ -287,6 +293,7 @@ export function renderDashboard(
           <span class="topbar-scope mono">${selectedRepo ? esc(shortRepo(selectedRepo)) : 'ALL REPOS'}</span>
           <div class="topbar-sep"></div>
           <span class="topbar-mode mono">MODE <b>LIVE</b></span>
+          <select class="theme-select" aria-label="Theme">${themeOptions}</select>
           <button class="view-toggle" type="button" data-view="cmux">CMUX &#9658;</button>
           <div class="topbar-fill"></div>
           <div class="topbar-stats">
