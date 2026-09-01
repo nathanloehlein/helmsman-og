@@ -360,6 +360,7 @@ select { text-transform: none; }
 .cmux-send { display: flex; gap: 8px; }
 .cmux-input { flex: 1; }
 .cmux-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cmux-error { color: var(--bad); font-size: 11px; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 840px) {

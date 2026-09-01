@@ -936,4 +936,81 @@ describe('DashboardView drawer survives polling', () => {
 
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
+
+  it('keeps the typed cmux-input value and shows an error when a send fails', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/send')) {
+        return { ok: false, status: 400, json: async () => ({ error: 'send failed' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('.cmux-input')).not.toBeNull());
+
+    const input: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    input.value = 'draft command';
+    root.querySelector<HTMLButtonElement>('.cmux-send button[type="submit"]')!.click();
+
+    await vi.waitFor(() => expect(root.querySelector('.cmux-error')).not.toBeNull());
+    expect(root.querySelector('.cmux-error')?.textContent).toBe('send failed');
+    expect(root.querySelector<HTMLInputElement>('.cmux-input')?.value).toBe('draft command');
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('re-enables the action button and shows an error when a cmux action fails', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/action')) {
+        return { ok: false, status: 400, json: async () => ({ error: 'action failed' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('.cmux-action')).not.toBeNull());
+
+    const actionBtn: HTMLButtonElement = root.querySelector<HTMLButtonElement>('.cmux-action')!;
+    actionBtn.click();
+
+    await vi.waitFor(() => expect(root.querySelector('.cmux-error')).not.toBeNull());
+    expect(root.querySelector('.cmux-error')?.textContent).toBe('action failed');
+    expect(actionBtn.disabled).toBe(false);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
 });

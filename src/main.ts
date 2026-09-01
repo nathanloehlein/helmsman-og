@@ -307,6 +307,22 @@ export class DashboardView {
     this.syncCmuxPolling();
   }
 
+  private showCmuxError(message: string): void {
+    const detail: HTMLElement | null = this.root.querySelector<HTMLElement>('.cmux-detail');
+    if (!detail) return;
+    let errEl: HTMLDivElement | null = detail.querySelector<HTMLDivElement>('.cmux-error');
+    if (!errEl) {
+      errEl = document.createElement('div');
+      errEl.className = 'cmux-error';
+      detail.appendChild(errEl);
+    }
+    errEl.textContent = message;
+  }
+
+  private clearCmuxError(): void {
+    this.root.querySelector<HTMLElement>('.cmux-error')?.remove();
+  }
+
   private async handleCmuxAction(btn: HTMLButtonElement): Promise<void> {
     const action: string | undefined = btn.dataset.action;
     const surface: string | null = this.cmuxPanelState.selectedSurface;
@@ -315,12 +331,20 @@ export class DashboardView {
     if (!tab) return;
     btn.disabled = true;
     try {
-      await fetch('/api/cmux/action', {
+      const res: Response = await fetch('/api/cmux/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ surface, provider: providerOf(tab), action }),
       });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Action failed.');
+        return;
+      }
+      this.clearCmuxError();
       await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Action failed.');
     } finally {
       btn.disabled = false;
     }
@@ -332,13 +356,23 @@ export class DashboardView {
     if (!surface || !input) return;
     const text: string = input.value;
     if (text.trim() === '') return;
-    input.value = '';
-    await fetch('/api/cmux/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ surface, text, enter: true }),
-    });
-    await this.pollCmuxScreen();
+    try {
+      const res: Response = await fetch('/api/cmux/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, text, enter: true }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Send failed.');
+        return;
+      }
+      this.clearCmuxError();
+      input.value = '';
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Send failed.');
+    }
   }
 
   private handleSubmit(event: SubmitEvent): void {
