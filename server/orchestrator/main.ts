@@ -36,6 +36,14 @@ const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const startupCfg: AppConfig = configStore.current();
 const cmux = createBridge();
+const cmuxClients = new Set<ServerResponse>();
+let cmuxWatchOff: (() => void) | null = null;
+function ensureCmuxWatch(): void {
+  if (cmuxWatchOff) return;
+  cmuxWatchOff = cmux.watchEvents(() => {
+    for (const res of cmuxClients) res.write(`data: ${JSON.stringify({ kind: 'cmux-tabs-changed' })}\n\n`);
+  });
+}
 
 try {
   const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
@@ -189,6 +197,14 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         }
       });
       req.on('close', off);
+      return;
+    }
+    if (url.pathname === '/api/cmux/events' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      res.write(`data: ${JSON.stringify({ kind: 'connected' })}\n\n`);
+      cmuxClients.add(res);
+      ensureCmuxWatch();
+      req.on('close', () => cmuxClients.delete(res));
       return;
     }
     const body: unknown = req.method === 'POST' ? await readBody(req) : null;
