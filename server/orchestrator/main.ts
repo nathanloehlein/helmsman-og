@@ -19,6 +19,8 @@ import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, ty
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
+import { createBridge } from './cmux/bridge';
+import { keysFor } from './cmux/actions';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentTask } from './agents/adapter';
 import type { RunEventRow, RunRow } from './db';
 import type { JiraIssue } from '../types';
@@ -33,6 +35,7 @@ const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const startupCfg: AppConfig = configStore.current();
+const cmux = createBridge();
 
 try {
   const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
@@ -222,6 +225,18 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       ): Promise<{ ok: true } | { ok: false; error: string }> => {
         const g: AppConfig['github'] = configStore.current().github;
         return g ? ghSubmitReview(g, repo, prNumber, event, body) : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
+      },
+      cmuxListTabs: () => cmux.listTabs(),
+      cmuxReadScreen: (surface: string, lines: number) => cmux.readScreen(surface, lines),
+      cmuxSend: (surface: string, text: string, enter: boolean) => cmux.send(surface, text, enter),
+      cmuxAction: async (surface: string, provider: string | null, action: string) => {
+        const keys = keysFor(provider, action as never);
+        if (!keys) return { ok: false as const, error: 'unknown action' };
+        for (const k of keys) {
+          const r = await cmux.sendKey(surface, k);
+          if (!r.ok) return r;
+        }
+        return { ok: true as const, keys };
       },
     });
     if (api) {
