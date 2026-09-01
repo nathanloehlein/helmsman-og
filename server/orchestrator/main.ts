@@ -254,6 +254,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         }
         return { ok: true as const, keys };
       },
+      cmuxKey: (surface: string, key: string) => cmux.sendKey(surface, key),
     });
     if (api) {
       res.writeHead(api.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

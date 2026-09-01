@@ -442,11 +442,26 @@ const CMUX_TOPBAR: string = `
       <span class="cmux-topbar-title mono">CMUX CONTROL</span>
     </div>`;
 
+interface CmuxNavKeySpec {
+  key: string;
+  label: string;
+}
+
+const CMUX_NAV_KEYS: CmuxNavKeySpec[] = [
+  { key: 'up', label: '&#8593;' },
+  { key: 'down', label: '&#8595;' },
+  { key: 'left', label: '&#8592;' },
+  { key: 'right', label: '&#8594;' },
+  { key: 'tab', label: 'Tab' },
+  { key: 'escape', label: 'Esc' },
+];
+
 export interface CmuxViewState {
   connected: boolean;
   tabs: CmuxTabView[];
   selectedSurface: string | null;
   screen: string;
+  isCapturing: boolean;
 }
 
 export function renderCmuxView(state: CmuxViewState): string {
@@ -470,7 +485,14 @@ export function renderCmuxView(state: CmuxViewState): string {
 
   const detail: string = selected
     ? `
-      <pre class="cmux-screen mono">${esc(state.screen)}</pre>
+      <div class="cmux-capture-row">
+        <button class="cmux-capture-toggle${state.isCapturing ? ' is-active' : ''}" type="button" data-cmux-capture aria-pressed="${state.isCapturing ? 'true' : 'false'}">${state.isCapturing ? 'Capturing&hellip;' : 'Capture keyboard'}</button>
+        ${state.isCapturing ? `<span class="cmux-capture-hint">Capturing &mdash; keystrokes sent to ${esc(selected.surfaceTitle)}</span>` : ''}
+      </div>
+      <pre class="cmux-screen mono${state.isCapturing ? ' is-capturing' : ''}" tabindex="0">${esc(state.screen)}</pre>
+      <div class="cmux-keypad">
+        ${CMUX_NAV_KEYS.map((k) => `<button class="cmux-keypad-btn" type="button" data-key="${esc(k.key)}">${k.label}</button>`).join('')}
+      </div>
       <form class="cmux-send">
         <input class="cmux-input" name="text" placeholder="Send to ${esc(selected.surfaceTitle)}&hellip;" autocomplete="off" />
         <button type="submit">Send &#9166;</button>
