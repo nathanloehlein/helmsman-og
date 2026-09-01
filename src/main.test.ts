@@ -1173,4 +1173,47 @@ describe('DashboardView drawer survives polling', () => {
 
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
+
+  it('ignores capture keydown when the send input is focused, leaving normal typing intact', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('[data-cmux-capture]')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('[data-cmux-capture]')!.click();
+    expect(root.querySelector<HTMLElement>('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('true');
+
+    const sendInput: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    sendInput.focus();
+    expect(document.activeElement).toBe(sendInput);
+
+    const callsBefore: number = fetchMock.mock.calls.length;
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true, bubbles: true });
+    sendInput.dispatchEvent(event);
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    expect(event.defaultPrevented).toBe(false);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
 });

@@ -401,6 +401,7 @@ export class DashboardView {
 
   private handleCaptureKeydown(event: KeyboardEvent): void {
     if (this.view !== 'cmux' || !this.cmuxCapturing) return;
+    if (this.isEditableTarget(event.target)) return;
     const surface: string | null = this.cmuxPanelState.selectedSurface;
     if (!surface) return;
     const intent: CmuxKeyIntent = mapKeyEvent(event);
@@ -408,6 +409,11 @@ export class DashboardView {
     event.preventDefault();
     if (intent.kind === 'key') void this.sendCmuxKey(surface, intent.token);
     else void this.sendCmuxText(surface, intent.text);
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
   }
 
   private async handleCmuxKeyPad(btn: HTMLButtonElement): Promise<void> {
