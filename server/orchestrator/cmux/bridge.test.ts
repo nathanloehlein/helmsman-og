@@ -1,9 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createBridge, type RunCmux } from './bridge';
-
-function fakeRun(script: (args: string[]) => { code?: number; stdout?: string; stderr?: string }): RunCmux {
-  return (args) => Promise.resolve({ code: 0, stdout: '', stderr: '', ...script(args) });
-}
 
 describe('bridge.send', () => {
   it('passes user text as a single argv element (no shell)', async () => {
