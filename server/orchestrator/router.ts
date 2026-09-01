@@ -1,6 +1,7 @@
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
 import type { CmuxTab } from './cmux/model';
+import { isAllowedKey } from './cmux/keys';
 
 export interface ApiResult {
   status: number;
@@ -53,6 +54,7 @@ export interface RouterDeps {
   cmuxReadScreen: (surface: string, lines: number) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
   cmuxSend: (surface: string, text: string, enter: boolean) => Promise<{ ok: true } | { ok: false; error: string }>;
   cmuxAction: (surface: string, provider: string | null, action: string) => Promise<{ ok: true; keys: string[] } | { ok: false; error: string }>;
+  cmuxKey: (surface: string, key: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 export async function handleApi(
@@ -170,6 +172,17 @@ export async function handleApi(
     }
     const r = await deps.cmuxAction(b.surface, b.provider ?? null, b.action);
     return r.ok ? { status: 200, json: { ok: true, keys: r.keys } } : { status: 400, json: { error: r.error } };
+  }
+  if (path === '/api/cmux/key' && method === 'POST') {
+    const b = _body as { surface?: string; key?: string } | null;
+    if (typeof b?.surface !== 'string' || typeof b?.key !== 'string') {
+      return { status: 400, json: { error: 'surface and key required' } };
+    }
+    if (!isAllowedKey(b.key)) {
+      return { status: 400, json: { error: 'unsupported key' } };
+    }
+    const r = await deps.cmuxKey(b.surface, b.key);
+    return r.ok ? { status: 200, json: { ok: true } } : { status: 400, json: { error: r.error } };
   }
   if (path.startsWith('/api/')) {
     return { status: 404, json: { error: 'not found' } };

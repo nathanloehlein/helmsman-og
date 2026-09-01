@@ -35,6 +35,7 @@ const deps: RouterDeps = {
   cmuxReadScreen: async (_surface: string, _lines: number) => ({ ok: true as const, text: '' }),
   cmuxSend: async (_surface: string, _text: string, _enter: boolean) => ({ ok: true as const }),
   cmuxAction: async (_surface: string, _provider: string | null, _action: string) => ({ ok: true as const, keys: [] }),
+  cmuxKey: async (_surface: string, _key: string) => ({ ok: true as const }),
 };
 
 describe('handleApi', () => {
@@ -303,6 +304,7 @@ function baseCmuxDeps(over: Partial<RouterDeps>): RouterDeps {
     cmuxReadScreen: () => Promise.resolve({ ok: true, text: 'screen' }),
     cmuxSend: () => Promise.resolve({ ok: true }),
     cmuxAction: () => Promise.resolve({ ok: true, keys: ['Enter'] }),
+    cmuxKey: () => Promise.resolve({ ok: true }),
     ...over,
   } as unknown as RouterDeps;
 }
@@ -337,5 +339,38 @@ describe('cmux endpoints', () => {
     const cmuxDeps = baseCmuxDeps({ cmuxAction: () => Promise.resolve({ ok: false, error: 'unknown action' }) });
     const res = await handleApi('POST', '/api/cmux/action', new URLSearchParams(), { surface: 'surface:1', action: 'nope' }, cmuxDeps);
     expect(res?.status).toBe(400);
+  });
+
+  it('POST /api/cmux/key requires surface and key', async () => {
+    const noSurface = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { key: 'up' }, baseCmuxDeps({}));
+    expect(noSurface?.status).toBe(400);
+    const noKey = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { surface: 'surface:1' }, baseCmuxDeps({}));
+    expect(noKey?.status).toBe(400);
+  });
+
+  it('POST /api/cmux/key rejects a disallowed key without calling cmuxKey', async () => {
+    const calls: unknown[] = [];
+    const cmuxDeps = baseCmuxDeps({
+      cmuxKey: (s, k) => {
+        calls.push([s, k]);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const res = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { surface: 'surface:1', key: 'f1' }, cmuxDeps);
+    expect(res?.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+
+  it('POST /api/cmux/key forwards an allowed key to cmuxKey', async () => {
+    const calls: unknown[] = [];
+    const cmuxDeps = baseCmuxDeps({
+      cmuxKey: (s, k) => {
+        calls.push([s, k]);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const res = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { surface: 'surface:1', key: 'up' }, cmuxDeps);
+    expect(res).toEqual({ status: 200, json: { ok: true } });
+    expect(calls).toEqual([['surface:1', 'up']]);
   });
 });
