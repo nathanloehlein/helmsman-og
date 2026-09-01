@@ -3,6 +3,7 @@ import { DashboardView } from './main';
 import { loadDashboard as loadMockSnapshot } from './data/mock';
 import type { DashboardResponse } from './data/live';
 import type { CmuxTabView } from './logic/cmuxPanel';
+import { DEFAULT_THEME_ID } from './data/themes';
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -48,12 +49,18 @@ describe('DashboardView drawer survives polling', () => {
     FakeEventSource.instances = [];
     (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
     document.body.innerHTML = '<div id="app"></div>';
+    document.documentElement.removeAttribute('style');
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.clear();
   });
 
   afterEach(() => {
     (globalThis as { EventSource: unknown }).EventSource = realEventSource;
     globalThis.fetch = realFetch as typeof globalThis.fetch;
     document.body.innerHTML = '';
+    document.documentElement.removeAttribute('style');
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.clear();
   });
 
   it('keeps the live drawer open and its stream alive across a poll/paint', async () => {
@@ -1215,5 +1222,53 @@ describe('DashboardView drawer survives polling', () => {
     expect(event.defaultPrevented).toBe(false);
 
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('applies the persisted theme to documentElement before the first paint', async () => {
+    localStorage.setItem('cmux.theme', 'dracula');
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => response }) as unknown as Response) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+
+    expect(document.documentElement.dataset.theme).toBe('dracula');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#bd93f9');
+
+    await view.refresh();
+    const select: HTMLSelectElement | null = root.querySelector<HTMLSelectElement>('.theme-select');
+    expect(select!.value).toBe('dracula');
+  });
+
+  it('defaults to the amber theme when nothing is persisted', async () => {
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => response }) as unknown as Response) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    void new DashboardView(root);
+
+    expect(document.documentElement.dataset.theme).toBe(DEFAULT_THEME_ID);
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('');
+  });
+
+  it('applies and persists a new theme on select change without a full data refetch', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => response }) as unknown as Response);
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const select: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.theme-select')!;
+    const callsBefore: number = fetchMock.mock.calls.length;
+
+    select.value = 'nord';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(document.documentElement.dataset.theme).toBe('nord');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#88c0d0');
+    expect(localStorage.getItem('cmux.theme')).toBe('nord');
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
   });
 });
