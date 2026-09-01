@@ -1013,4 +1013,164 @@ describe('DashboardView drawer survives polling', () => {
 
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
+
+  it('sends a mapped key and prevents default when capturing and a surface is selected', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const keyCalls: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/key')) {
+        keyCalls.push(JSON.parse((init?.body as string) ?? '{}'));
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('[data-cmux-capture]')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('[data-cmux-capture]')!.click();
+    expect(root.querySelector<HTMLElement>('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('true');
+
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
+    document.dispatchEvent(event);
+
+    await vi.waitFor(() => expect(keyCalls.length).toBe(1));
+    expect(keyCalls[0]).toEqual({ surface: tabOne.surfaceRef, key: 'up' });
+    expect(event.defaultPrevented).toBe(true);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('sends printable text without enter when capturing', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const sendCalls: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/send')) {
+        sendCalls.push(JSON.parse((init?.body as string) ?? '{}'));
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('[data-cmux-capture]')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('[data-cmux-capture]')!.click();
+
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'a', cancelable: true });
+    document.dispatchEvent(event);
+
+    await vi.waitFor(() => expect(sendCalls.length).toBe(1));
+    expect(sendCalls[0]).toEqual({ surface: tabOne.surfaceRef, text: 'a', enter: false });
+    expect(event.defaultPrevented).toBe(true);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('does nothing on keydown when capture is off', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('[data-cmux-capture]')).not.toBeNull());
+    expect(root.querySelector<HTMLElement>('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('false');
+
+    const callsBefore: number = fetchMock.mock.calls.length;
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
+    document.dispatchEvent(event);
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    expect(event.defaultPrevented).toBe(false);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('sends a key from the nav keypad button click', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const keyCalls: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/key')) {
+        keyCalls.push(JSON.parse((init?.body as string) ?? '{}'));
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('.cmux-keypad-btn')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-keypad-btn[data-key="down"]')!.click();
+
+    await vi.waitFor(() => expect(keyCalls.length).toBe(1));
+    expect(keyCalls[0]).toEqual({ surface: tabOne.surfaceRef, key: 'down' });
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
 });

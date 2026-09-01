@@ -374,6 +374,7 @@ function cmuxStateFixture(over: Partial<CmuxViewState> = {}): CmuxViewState {
     tabs: [cmuxTabFixture()],
     selectedSurface: null,
     screen: '',
+    isCapturing: false,
     ...over,
   };
 }

@@ -20,6 +20,7 @@ import {
 import { getConfig, setConfig, type UiConfig } from './data/config';
 import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
 import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
+import { mapKeyEvent, type CmuxKeyIntent } from './logic/cmuxKeys';
 
 const CMUX_SCREEN_POLL_MS: number = 750;
 const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
@@ -71,6 +72,8 @@ export class DashboardView {
   private cmuxScreen: string = '';
   private cmuxScreenTimer: ReturnType<typeof setInterval> | null = null;
   private cmuxEventSource: EventSource | null = null;
+  private cmuxCapturing: boolean = false;
+  private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -159,6 +162,7 @@ export class DashboardView {
       tabs: this.cmuxTabs,
       selectedSurface: this.cmuxPanelState.selectedSurface,
       screen: this.cmuxScreen,
+      isCapturing: this.cmuxCapturing,
     });
   }
 
@@ -175,6 +179,8 @@ export class DashboardView {
 
   private leaveCmuxView(): void {
     this.stopCmuxScreenPoll();
+    this.stopCapture();
+    this.cmuxCapturing = false;
     this.view = 'dashboard';
     this.paint();
   }
@@ -375,6 +381,80 @@ export class DashboardView {
     }
   }
 
+  private handleCmuxCaptureToggle(): void {
+    this.cmuxCapturing = !this.cmuxCapturing;
+    if (this.cmuxCapturing) this.startCapture();
+    else this.stopCapture();
+    this.paint();
+    if (this.cmuxCapturing) {
+      this.root.querySelector<HTMLElement>('.cmux-screen')?.focus();
+    }
+  }
+
+  private startCapture(): void {
+    document.addEventListener('keydown', this.onCaptureKeydown);
+  }
+
+  private stopCapture(): void {
+    document.removeEventListener('keydown', this.onCaptureKeydown);
+  }
+
+  private handleCaptureKeydown(event: KeyboardEvent): void {
+    if (this.view !== 'cmux' || !this.cmuxCapturing) return;
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!surface) return;
+    const intent: CmuxKeyIntent = mapKeyEvent(event);
+    if (intent.kind === 'ignore') return;
+    event.preventDefault();
+    if (intent.kind === 'key') void this.sendCmuxKey(surface, intent.token);
+    else void this.sendCmuxText(surface, intent.text);
+  }
+
+  private async handleCmuxKeyPad(btn: HTMLButtonElement): Promise<void> {
+    const key: string | undefined = btn.dataset.key;
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!key || !surface) return;
+    await this.sendCmuxKey(surface, key);
+  }
+
+  private async sendCmuxKey(surface: string, key: string): Promise<void> {
+    try {
+      const res: Response = await fetch('/api/cmux/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, key }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Key failed.');
+        return;
+      }
+      this.clearCmuxError();
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Key failed.');
+    }
+  }
+
+  private async sendCmuxText(surface: string, text: string): Promise<void> {
+    try {
+      const res: Response = await fetch('/api/cmux/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, text, enter: false }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Send failed.');
+        return;
+      }
+      this.clearCmuxError();
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Send failed.');
+    }
+  }
+
   private handleSubmit(event: SubmitEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof HTMLFormElement) || !target.classList.contains('cmux-send')) return;
@@ -414,6 +494,18 @@ export class DashboardView {
     const cmuxActionBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-action');
     if (cmuxActionBtn) {
       void this.handleCmuxAction(cmuxActionBtn);
+      return;
+    }
+
+    const cmuxCaptureToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('[data-cmux-capture]');
+    if (cmuxCaptureToggle) {
+      this.handleCmuxCaptureToggle();
+      return;
+    }
+
+    const cmuxKeypadBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-keypad-btn');
+    if (cmuxKeypadBtn) {
+      void this.handleCmuxKeyPad(cmuxKeypadBtn);
       return;
     }
 
