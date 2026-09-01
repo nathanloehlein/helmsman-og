@@ -22,6 +22,7 @@ import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusV
 import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
 
 const CMUX_SCREEN_POLL_MS: number = 750;
+const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
 
 interface CmuxTabsPayload {
   connected?: boolean;
@@ -211,11 +212,42 @@ export class DashboardView {
     this.cmuxEventSource = src;
   }
 
+  private cmuxSnapshotSignature(): string {
+    const tabsPart: string = this.cmuxTabs
+      .map((t) => `${t.surfaceRef}${t.surfaceTitle}${t.workspaceTitle}${t.type}`)
+      .join('');
+    return `${this.cmuxConnected}${tabsPart}`;
+  }
+
   private async handleCmuxTabsChanged(): Promise<void> {
+    const prevSignature: string = this.cmuxSnapshotSignature();
     await this.loadCmuxTabs();
     if (this.view !== 'cmux') return;
-    this.paint();
+    if (this.cmuxSnapshotSignature() !== prevSignature) {
+      this.repaintCmuxPreservingInput();
+    }
     this.syncCmuxPolling();
+  }
+
+  private repaintCmuxPreservingInput(): void {
+    const prevInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.cmux-input');
+    const hadFocus: boolean = document.activeElement === prevInput;
+    const value: string = prevInput?.value ?? '';
+    const selectionStart: number | null = prevInput?.selectionStart ?? null;
+    const selectionEnd: number | null = prevInput?.selectionEnd ?? null;
+
+    this.paint();
+
+    if (!value && !hadFocus) return;
+    const nextInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.cmux-input');
+    if (!nextInput) return;
+    nextInput.value = value;
+    if (hadFocus) {
+      nextInput.focus();
+      if (selectionStart !== null && selectionEnd !== null) {
+        nextInput.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
   }
 
   private syncCmuxPolling(): void {
@@ -243,15 +275,26 @@ export class DashboardView {
     if (!surface || this.view !== 'cmux') return;
     try {
       const res: Response = await fetch(`/api/cmux/screen?surface=${encodeURIComponent(surface)}&lines=40`);
+      if (this.view !== 'cmux' || this.cmuxPanelState.selectedSurface !== surface) return;
+      if (res.status === 404) {
+        if (this.cmuxScreen === CMUX_SCREEN_UNAVAILABLE) return;
+        this.cmuxScreen = CMUX_SCREEN_UNAVAILABLE;
+        this.setCmuxScreenText(this.cmuxScreen);
+        return;
+      }
       if (!res.ok) return;
       const data: CmuxScreenPayload = (await res.json()) as CmuxScreenPayload;
       if (this.view !== 'cmux' || this.cmuxPanelState.selectedSurface !== surface) return;
       this.cmuxScreen = data?.text ?? '';
-      const pre: HTMLElement | null = this.root.querySelector<HTMLElement>('.cmux-screen');
-      if (pre) pre.textContent = this.cmuxScreen;
+      this.setCmuxScreenText(this.cmuxScreen);
     } catch {
       return;
     }
+  }
+
+  private setCmuxScreenText(text: string): void {
+    const pre: HTMLElement | null = this.root.querySelector<HTMLElement>('.cmux-screen');
+    if (pre) pre.textContent = text;
   }
 
   private async handleCmuxTabClick(btn: HTMLButtonElement): Promise<void> {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DashboardView } from './main';
 import { loadDashboard as loadMockSnapshot } from './data/mock';
 import type { DashboardResponse } from './data/live';
+import type { CmuxTabView } from './logic/cmuxPanel';
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -26,6 +27,20 @@ const realFetch: typeof globalThis.fetch | undefined = globalThis.fetch;
 async function buildResponse(): Promise<DashboardResponse> {
   const snapshot = await loadMockSnapshot();
   return { snapshot, degraded: [], repos: [snapshot.repo], selectedRepo: null };
+}
+
+function cmuxTab(over: Partial<CmuxTabView> = {}): CmuxTabView {
+  return {
+    windowRef: 'win-1',
+    workspaceRef: 'ws-1',
+    workspaceTitle: 'orchestrator',
+    surfaceRef: 'surface-1',
+    surfaceTitle: 'main',
+    type: 'shell',
+    cwd: '/repo',
+    selected: false,
+    ...over,
+  };
 }
 
 describe('DashboardView drawer survives polling', () => {
@@ -795,5 +810,130 @@ describe('DashboardView drawer survives polling', () => {
     const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/pr/review'));
     const reviewBody: unknown = JSON.parse((reviewCall![1] as RequestInit).body as string);
     expect(reviewBody).toEqual({ repo: 'org/alpha', number: 42, event: 'APPROVE', body: '' });
+  });
+
+  it('keeps the cmux-input node and its value untouched when an SSE tabs-changed event reports an unchanged tab set', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    let tabsCallCount: number = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        tabsCallCount += 1;
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('.cmux-input')).not.toBeNull());
+
+    const input: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    input.value = 'draft command';
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    const callsBeforeEvent: number = tabsCallCount;
+    FakeEventSource.instances[0].onmessage?.({
+      data: JSON.stringify({ kind: 'cmux-tabs-changed' }),
+    } as MessageEvent<string>);
+    await vi.waitFor(() => expect(tabsCallCount).toBe(callsBeforeEvent + 1));
+
+    const inputAfter: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    expect(inputAfter).toBe(input);
+    expect(inputAfter.value).toBe('draft command');
+    expect(document.activeElement).toBe(inputAfter);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('preserves the typed cmux-input value and focus across a repaint triggered by an actual tab-set change', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const tabTwo: CmuxTabView = cmuxTab({ surfaceRef: 'surface-2', surfaceTitle: 'second' });
+    let tabsCallCount: number = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        tabsCallCount += 1;
+        const tabs: CmuxTabView[] = tabsCallCount <= 1 ? [tabOne] : [tabOne, tabTwo];
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('.cmux-input')).not.toBeNull());
+
+    const input: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    input.value = 'draft command';
+    input.focus();
+
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    FakeEventSource.instances[0].onmessage?.({
+      data: JSON.stringify({ kind: 'cmux-tabs-changed' }),
+    } as MessageEvent<string>);
+
+    await vi.waitFor(() => expect(root.querySelectorAll('.cmux-tab').length).toBe(2));
+
+    const inputAfter: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    expect(inputAfter.value).toBe('draft command');
+    expect(document.activeElement).toBe(inputAfter);
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
+  it('shows a placeholder instead of a stale screen when /api/cmux/screen 404s', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: false, status: 404, json: async () => ({ error: 'internal_error' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('.cmux-screen')?.textContent).toContain('Screen unavailable');
+    });
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
 });
