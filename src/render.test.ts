@@ -6,6 +6,7 @@ import type { RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
 import type { CmuxTabView } from './logic/cmuxPanel';
+import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -70,6 +71,22 @@ describe('renderDashboard', () => {
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(['', 'org/alpha', 'org/beta']);
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('org/alpha');
     expect(el.querySelectorAll('.pr-card').length).toBe(2);
+  });
+
+  it('renders a theme-select with an option per theme and marks the current one selected', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, 'dracula');
+    const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
+    expect(select).not.toBeNull();
+    expect(Array.from(select!.options).map((o) => o.value)).toEqual(THEMES.map((t) => t.id));
+    expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('dracula');
+  });
+
+  it('defaults the theme-select to the default theme id when no themeId is passed', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
+    expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe(DEFAULT_THEME_ID);
   });
 
   it('escapes untrusted ticket titles to prevent XSS', () => {

@@ -21,6 +21,7 @@ import { getConfig, setConfig, type UiConfig } from './data/config';
 import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
 import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
 import { mapKeyEvent, type CmuxKeyIntent } from './logic/cmuxKeys';
+import { applyTheme, loadThemeId, saveThemeId } from './data/themes';
 
 const CMUX_SCREEN_POLL_MS: number = 750;
 const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
@@ -74,9 +75,11 @@ export class DashboardView {
   private cmuxEventSource: EventSource | null = null;
   private cmuxCapturing: boolean = false;
   private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
+  private themeId: string = loadThemeId();
 
   constructor(root: HTMLElement) {
     this.root = root;
+    applyTheme(this.themeId);
     this.root.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
     this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event));
 
@@ -140,6 +143,7 @@ export class DashboardView {
       this.autoClaimRepos,
       this.caps,
       this.uiConfig,
+      this.themeId,
     );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
@@ -153,6 +157,15 @@ export class DashboardView {
       this.root.querySelector<HTMLInputElement>('.auto-claim-toggle');
     if (autoClaimCheckbox) {
       autoClaimCheckbox.addEventListener('change', () => void this.handleAutoClaimChange(autoClaimCheckbox));
+    }
+    const themeSelect: HTMLSelectElement | null =
+      this.root.querySelector<HTMLSelectElement>('.theme-select');
+    if (themeSelect) {
+      themeSelect.addEventListener('change', () => {
+        this.themeId = themeSelect.value;
+        applyTheme(this.themeId);
+        saveThemeId(this.themeId);
+      });
     }
   }
 
