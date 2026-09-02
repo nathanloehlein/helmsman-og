@@ -158,6 +158,37 @@ describe('renderDashboard', () => {
     expect(emptyNote?.textContent).toContain('No agents running.');
   });
 
+  it('scopes running and recent runs to the selected repo', () => {
+    const el: HTMLDivElement = root();
+    const mk = (id: string, ticketId: string, repo: string, status: string): RunSummary => ({
+      id, ticketId, repo, status, attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null,
+    });
+    const runs: RunSummary[] = [
+      mk('r1', 'ALPHA-1', 'org/alpha', 'running'),
+      mk('r2', 'BETA-2', 'org/beta', 'running'),
+      mk('r3', 'ALPHA-3', 'org/alpha', 'succeeded'),
+      mk('r4', 'BETA-4', 'org/beta', 'succeeded'),
+    ];
+
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], 'org/alpha', runs);
+
+    expect(el.querySelectorAll('.agent-row').length).toBe(1);
+    expect(el.querySelectorAll('.recent-run').length).toBe(1);
+    const html: string = el.innerHTML;
+    expect(html).toContain('ALPHA-1');
+    expect(html).toContain('ALPHA-3');
+    expect(html).not.toContain('BETA-2');
+    expect(html).not.toContain('BETA-4');
+  });
+
+  it('lists repo options alphabetically by short name', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/zeta', 'org/alpha', 'other/beta'], null);
+    const labels: string[] = Array.from(el.querySelectorAll<HTMLOptionElement>('.repo-select option'))
+      .map((o) => o.textContent ?? '');
+    expect(labels).toEqual(['All repos', 'alpha', 'beta', 'zeta']);
+  });
+
   it('shows the attempt against maxAttempts when caps are provided', () => {
     const el: HTMLDivElement = root();
     const runs: RunSummary[] = [

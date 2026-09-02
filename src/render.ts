@@ -116,12 +116,16 @@ export function renderDashboard(
   configCollapsed: boolean = false,
 ): void {
   const queue = sortByPriority(data.queue);
-  const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
-  const terminalRuns: RunSummary[] = runs.filter((r) => r.status !== 'running');
+  const scopedRuns: RunSummary[] = selectedRepo
+    ? runs.filter((r) => r.repo === selectedRepo)
+    : runs;
+  const activeRuns: RunSummary[] = scopedRuns.filter((r) => r.status === 'running');
+  const terminalRuns: RunSummary[] = scopedRuns.filter((r) => r.status !== 'running');
 
+  const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
   const repoOptions: string = ['<option value="">All repos</option>']
     .concat(
-      repos.map(
+      sortedRepos.map(
         (repo) =>
           `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
       ),
@@ -209,7 +213,7 @@ export function renderDashboard(
       ? `<div class="degraded-banner">Showing sample data for: ${degraded.join(', ')} — check server credentials.</div>`
       : '';
 
-  const newRunRepoOptions: string = repos
+  const newRunRepoOptions: string = sortedRepos
     .map((repo) => `<option value="${esc(repo)}">${esc(shortRepo(repo))}</option>`)
     .join('');
 
