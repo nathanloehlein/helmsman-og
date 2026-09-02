@@ -101,8 +101,8 @@ export class DashboardView {
 
     const drawer: HTMLDivElement = document.createElement('div');
     drawer.className = 'run-drawer';
-    drawer.hidden = true;
     this.runDrawerEl = drawer;
+    this.renderRunDrawer();
   }
 
   async refresh(): Promise<void> {
@@ -811,7 +811,6 @@ export class DashboardView {
   private rehomeRunDrawer(): void {
     const slot: HTMLElement | null = this.root.querySelector<HTMLElement>('.runs-drawer-slot');
     if (slot && this.runDrawerEl.parentElement !== slot) slot.appendChild(this.runDrawerEl);
-    this.runDrawerEl.hidden = this.runTabs.length === 0;
   }
 
   private renderRunDrawer(): void {
@@ -821,7 +820,6 @@ export class DashboardView {
       complete: t.complete,
     }));
     this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId);
-    this.runDrawerEl.hidden = this.runTabs.length === 0;
     const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
     if (!active) return;
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');

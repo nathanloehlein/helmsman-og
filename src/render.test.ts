@@ -559,6 +559,13 @@ describe('renderRunsDrawer', () => {
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;img');
   });
+
+  it('shows an empty-state placeholder when there are no tabs', () => {
+    const html: string = renderRunsDrawer([], null);
+    expect(html).toContain('run-drawer-empty');
+    expect(html).toContain('run-drawer-title');
+    expect(html).not.toContain('run-tab-close');
+  });
 });
 
 describe('renderDashboard config panel', () => {

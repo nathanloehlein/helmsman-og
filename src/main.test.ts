@@ -160,7 +160,10 @@ describe('DashboardView drawer survives polling', () => {
       expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/run-42/stop'))).toBe(true);
     });
 
-    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    const emptyDrawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    expect(emptyDrawer.hidden).toBe(false);
+    expect(emptyDrawer.querySelectorAll('.run-tab').length).toBe(0);
+    expect(emptyDrawer.querySelector('.run-drawer-empty')).not.toBeNull();
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
@@ -219,7 +222,9 @@ describe('DashboardView drawer survives polling', () => {
     const closeBtn: HTMLButtonElement = drawer.querySelector<HTMLButtonElement>('.run-tab-close')!;
     closeBtn.click();
 
-    expect(drawer.hidden).toBe(true);
+    expect(drawer.hidden).toBe(false);
+    expect(drawer.querySelectorAll('.run-tab').length).toBe(0);
+    expect(drawer.querySelector('.run-drawer-empty')).not.toBeNull();
     expect(FakeEventSource.instances[0].closed).toBe(true);
   });
 
@@ -293,7 +298,10 @@ describe('DashboardView drawer survives polling', () => {
     expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/agents/launch'))).toBe(
       false,
     );
-    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    const emptyDrawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    expect(emptyDrawer.hidden).toBe(false);
+    expect(emptyDrawer.querySelectorAll('.run-tab').length).toBe(0);
+    expect(emptyDrawer.querySelector('.run-drawer-empty')).not.toBeNull();
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
@@ -329,7 +337,10 @@ describe('DashboardView drawer survives polling', () => {
     expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/agents/launch'))).toBe(
       false,
     );
-    expect(document.body.querySelector<HTMLElement>('.run-drawer')!.hidden).toBe(true);
+    const emptyDrawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    expect(emptyDrawer.hidden).toBe(false);
+    expect(emptyDrawer.querySelectorAll('.run-tab').length).toBe(0);
+    expect(emptyDrawer.querySelector('.run-drawer-empty')).not.toBeNull();
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
@@ -663,9 +674,9 @@ describe('DashboardView drawer survives polling', () => {
     expect(launchBody).toEqual({ mode: 'rerun', repo: 'o/r', prNumber: 7, feedback: 'please fix the lint error' });
 
     await vi.waitFor(() => {
-      expect(document.querySelector('.run-drawer')?.hasAttribute('hidden')).toBe(false);
+      expect(FakeEventSource.instances.length).toBeGreaterThan(0);
     });
-    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
+    expect(document.querySelector('.run-drawer .run-tab')).not.toBeNull();
   });
 
   it('launches a code review with the agent and opens the drawer from the PR lookup panel', async () => {
@@ -724,9 +735,9 @@ describe('DashboardView drawer survives polling', () => {
     expect(launchBody).toEqual({ mode: 'review', repo: 'o/r', prNumber: 7 });
 
     await vi.waitFor(() => {
-      expect(document.querySelector('.run-drawer')?.hasAttribute('hidden')).toBe(false);
+      expect(FakeEventSource.instances.length).toBeGreaterThan(0);
     });
-    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
+    expect(document.querySelector('.run-drawer .run-tab')).not.toBeNull();
   });
 
   it('fetches and renders a PR panel when a URL is pasted into the lookup and Go is clicked', async () => {
@@ -1429,7 +1440,9 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-A');
 
     drawer.querySelector<HTMLButtonElement>('.run-tab[data-tabid="run-a"] .run-tab-close')!.click();
-    expect(drawer.hidden).toBe(true);
+    expect(drawer.hidden).toBe(false);
+    expect(drawer.querySelectorAll('.run-tab').length).toBe(0);
+    expect(drawer.querySelector('.run-drawer-empty')).not.toBeNull();
     expect(FakeEventSource.instances.every((s) => s.closed)).toBe(true);
   });
 

@@ -431,9 +431,15 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null): s
       </div>`,
     )
     .join('');
+  const emptyBody: string =
+    tabs.length === 0
+      ? '<div class="run-drawer-empty empty-note">No runs open. Click a running agent or a recent run to open it here.</div>'
+      : '';
+  const header: string =
+    tabs.length === 0 ? '<span class="run-drawer-title mono">AGENT RUNS</span>' : '';
   return `
-    <div class="run-tabs" role="tablist">${strip}</div>
-    <div class="run-drawer-body mono"></div>
+    <div class="run-tabs" role="tablist">${header}${strip}</div>
+    <div class="run-drawer-body mono">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
 }
