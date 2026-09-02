@@ -21,6 +21,8 @@ export interface RunnerDeps {
   maxAttempts?: number;
   maxCostUsd?: number | null;
   isStopped?: () => boolean;
+  readReview?: (worktreePath: string) => Promise<string | null>;
+  postReview?: (repo: string, prNumber: number, body: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 async function claimTicket(
@@ -130,6 +132,20 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
     if (result.ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
       await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
+    }
+
+    if (task.review && result.ok && prNumber != null && deps.readReview && deps.postReview) {
+      const body: string | null = await deps.readReview(worktree.path);
+      if (body && body.trim()) {
+        const r: { ok: true } | { ok: false; error: string } = await deps.postReview(task.repo, prNumber, body);
+        if (r.ok) {
+          onEvent({ kind: 'log', text: `posted code-review comment on PR #${prNumber}` });
+        } else {
+          onEvent({ kind: 'log', text: `posting code-review comment failed (non-fatal): ${r.error}` });
+        }
+      } else {
+        onEvent({ kind: 'log', text: 'agent produced no .agent-review.md; nothing posted' });
+      }
     }
   } catch (err) {
     const text: string = err instanceof Error ? err.message : String(err);

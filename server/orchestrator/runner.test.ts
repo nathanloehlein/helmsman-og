@@ -413,6 +413,103 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('reads .agent-review.md from the worktree and posts it as a PR comment before the worktree is removed', async () => {
+    const db: Db = openDb(':memory:');
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
+    const removeWorktree = vi.fn(async () => undefined);
+    const readReview = vi.fn(async (_worktreePath: string) => '## Review\nlooks fine');
+    const postReview = vi.fn(async (_repo: string, _prNumber: number, _body: string) => ({ ok: true as const }));
+    const reviewTask: AgentTask = { ticketId: 'review', title: '', repo: 'o/r', jiraBaseUrl: '', prBranch: 'fix/x', prNumber: 12, review: true };
+    const d: RunnerDeps = {
+      ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)),
+      createWorktreeFromBranch,
+      removeWorktree,
+      readReview,
+      postReview,
+    };
+
+    const events: AgentEvent[] = [];
+    d.bus.subscribe('run-1', (e: AgentEvent): void => events.push(e));
+
+    await startRun(reviewTask, d);
+
+    expect(readReview).toHaveBeenCalledWith('/tmp/wt-review');
+    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nlooks fine');
+    expect(readReview.mock.invocationCallOrder[0]).toBeLessThan(removeWorktree.mock.invocationCallOrder[0]);
+    expect(events.some((e) => e.kind === 'log' && e.text.includes('posted code-review comment on PR #12'))).toBe(true);
+    db.close();
+  });
+
+  it('logs a non-fatal message and posts nothing when the agent produced no .agent-review.md', async () => {
+    const db: Db = openDb(':memory:');
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
+    const readReview = vi.fn(async (_worktreePath: string) => null);
+    const postReview = vi.fn(async (_repo: string, _prNumber: number, _body: string) => ({ ok: true as const }));
+    const reviewTask: AgentTask = { ticketId: 'review', title: '', repo: 'o/r', jiraBaseUrl: '', prBranch: 'fix/x', prNumber: 12, review: true };
+    const d: RunnerDeps = {
+      ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)),
+      createWorktreeFromBranch,
+      readReview,
+      postReview,
+    };
+
+    const events: AgentEvent[] = [];
+    d.bus.subscribe('run-1', (e: AgentEvent): void => events.push(e));
+
+    const id = await startRun(reviewTask, d);
+
+    expect(postReview).not.toHaveBeenCalled();
+    expect(events.some((e) => e.kind === 'log' && e.text.includes('agent produced no .agent-review.md; nothing posted'))).toBe(true);
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    db.close();
+  });
+
+  it('logs a non-fatal error and still succeeds when postReview fails', async () => {
+    const db: Db = openDb(':memory:');
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
+    const readReview = vi.fn(async (_worktreePath: string) => 'body');
+    const postReview = vi.fn(async (_repo: string, _prNumber: number, _body: string) => ({ ok: false as const, error: 'boom' }));
+    const reviewTask: AgentTask = { ticketId: 'review', title: '', repo: 'o/r', jiraBaseUrl: '', prBranch: 'fix/x', prNumber: 12, review: true };
+    const d: RunnerDeps = {
+      ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)),
+      createWorktreeFromBranch,
+      readReview,
+      postReview,
+    };
+
+    const events: AgentEvent[] = [];
+    d.bus.subscribe('run-1', (e: AgentEvent): void => events.push(e));
+
+    const id = await startRun(reviewTask, d);
+
+    expect(events.some((e) => e.kind === 'log' && e.text.includes('boom'))).toBe(true);
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    db.close();
+  });
+
+  it('never claims Jira, transitions Jira, or calls findPrNumber for a review run', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async (_repo: string, _branch: string) => 999);
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
+    const reviewTask: AgentTask = { ticketId: 'review', title: '', repo: 'o/r', jiraBaseUrl: '', prBranch: 'fix/x', prNumber: 12, review: true };
+    const d: RunnerDeps = {
+      ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)),
+      createWorktreeFromBranch,
+      jira,
+      botAccountId: 'bot-acc',
+      findPrNumber,
+    };
+
+    const id = await startRun(reviewTask, d);
+
+    expect(jira.assignCalls).toEqual([]);
+    expect(jira.transitionCalls).toEqual([]);
+    expect(findPrNumber).not.toHaveBeenCalled();
+    expect(db.getRun(id)?.prNumber).toBe(12);
+    db.close();
+  });
+
   it('publishes a single run-complete event with the final status, after the run row is already terminal, on failure', async () => {
     const db: Db = openDb(':memory:');
     const d: RunnerDeps = deps(db, fakeAdapter([{ kind: 'result', text: 'nope' }], false));
