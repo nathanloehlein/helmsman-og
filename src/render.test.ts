@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { renderCmuxView, renderDashboard, renderPrPanel } from './render';
-import type { CmuxViewState } from './render';
+import { renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer } from './render';
+import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
@@ -469,5 +469,67 @@ describe('renderCmuxView', () => {
   it('renders a no-tabs note when the tab list is empty', () => {
     const html: string = renderCmuxView(cmuxStateFixture({ tabs: [] }));
     expect(html.toLowerCase()).toContain('no cmux tabs');
+  });
+});
+
+describe('renderRunsDrawer', () => {
+  const tab = (over: Partial<RunTabView> = {}): RunTabView => ({
+    id: 'run-1',
+    label: 'TICK-1 — thing',
+    complete: false,
+    ...over,
+  });
+
+  it('renders a tab per run with select and close controls', () => {
+    const html: string = renderRunsDrawer([tab({ id: 'a', label: 'A' }), tab({ id: 'b', label: 'B' })], 'a');
+    expect(html).toContain('data-tabid="a"');
+    expect(html).toContain('data-tabid="b"');
+    expect((html.match(/run-tab-close/g) ?? []).length).toBe(2);
+    expect((html.match(/run-tab-select/g) ?? []).length).toBe(2);
+  });
+
+  it('marks the active tab', () => {
+    const html: string = renderRunsDrawer([tab({ id: 'a' }), tab({ id: 'b' })], 'b');
+    const bTab: string = html.slice(html.indexOf('data-tabid="b"') - 40, html.indexOf('data-tabid="b"'));
+    expect(bTab).toContain('is-active');
+  });
+
+  it('flags completed tabs', () => {
+    const html: string = renderRunsDrawer([tab({ complete: true })], 'run-1');
+    expect(html).toContain('run-tab-dot is-complete');
+  });
+
+  it('provides body, footer, and pr shells', () => {
+    const html: string = renderRunsDrawer([tab()], 'run-1');
+    expect(html).toContain('run-drawer-body');
+    expect(html).toContain('run-drawer-footer');
+    expect(html).toContain('run-drawer-pr');
+  });
+
+  it('escapes malicious labels', () => {
+    const html: string = renderRunsDrawer([tab({ label: '<img src=x onerror=alert(1)>' })], 'run-1');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+});
+
+describe('renderDashboard config panel', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('includes a runs-drawer slot and a config toggle', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
+    expect(el.querySelector('.config-toggle')).not.toBeNull();
+    expect(el.querySelector('.config-panel.is-collapsed')).toBeNull();
+  });
+
+  it('marks the config panel collapsed when requested', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, true);
+    expect(el.querySelector('.config-panel.is-collapsed')).not.toBeNull();
+    expect(el.querySelector('.config-toggle')?.getAttribute('aria-expanded')).toBe('false');
   });
 });

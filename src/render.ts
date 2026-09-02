@@ -113,6 +113,7 @@ export function renderDashboard(
   caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
   uiConfig: UiConfig = { config: {}, overridden: [] },
   themeId: string = DEFAULT_THEME_ID,
+  configCollapsed: boolean = false,
 ): void {
   const queue = sortByPriority(data.queue);
   const activeRuns: RunSummary[] = runs.filter((r) => r.status === 'running');
@@ -380,15 +381,46 @@ export function renderDashboard(
           </div>
         </div>
 
-        <div class="panel">
+        <div class="runs-drawer-slot"></div>
+
+        <div class="panel config-panel${configCollapsed ? ' is-collapsed' : ''}">
           <div class="panel-head">
             <span class="panel-title">Config</span>
+            <button class="config-toggle" type="button" aria-expanded="${configCollapsed ? 'false' : 'true'}" aria-label="Toggle config">${configCollapsed ? '&#9656;' : '&#9662;'}</button>
           </div>
-          <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
-          <div class="config-list">${configRows}</div>
+          <div class="config-collapse">
+            <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
+            <div class="config-list">${configRows}</div>
+          </div>
         </div>
       </main>
     </div>`;
+}
+
+export interface RunTabView {
+  id: string;
+  label: string;
+  complete: boolean;
+}
+
+export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null): string {
+  const strip: string = tabs
+    .map(
+      (t) => `
+      <div class="run-tab${t.id === activeId ? ' is-active' : ''}" data-tabid="${esc(t.id)}">
+        <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}">
+          <span class="run-tab-dot${t.complete ? ' is-complete' : ''}" aria-hidden="true"></span>
+          <span class="run-tab-label">${esc(t.label)}</span>
+        </button>
+        <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}">${ICON_CLOSE}</button>
+      </div>`,
+    )
+    .join('');
+  return `
+    <div class="run-tabs" role="tablist">${strip}</div>
+    <div class="run-drawer-body mono"></div>
+    <div class="run-drawer-footer mono"></div>
+    <div class="run-drawer-pr"></div>`;
 }
 
 export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): string {
