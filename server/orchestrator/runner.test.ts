@@ -429,7 +429,7 @@ describe('startRun', () => {
     };
 
     const events: AgentEvent[] = [];
-    d.bus.subscribe('run-1', (e: AgentEvent): void => events.push(e));
+    d.bus.subscribe('run-1', (e: AgentEvent): void => { events.push(e); });
 
     await startRun(reviewTask, d);
 
@@ -454,7 +454,7 @@ describe('startRun', () => {
     };
 
     const events: AgentEvent[] = [];
-    d.bus.subscribe('run-1', (e: AgentEvent): void => events.push(e));
+    d.bus.subscribe('run-1', (e: AgentEvent): void => { events.push(e); });
 
     const id = await startRun(reviewTask, d);
 
@@ -478,7 +478,7 @@ describe('startRun', () => {
     };
 
     const events: AgentEvent[] = [];
-    d.bus.subscribe('run-1', (e: AgentEvent): void => events.push(e));
+    d.bus.subscribe('run-1', (e: AgentEvent): void => { events.push(e); });
 
     const id = await startRun(reviewTask, d);
 
