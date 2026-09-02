@@ -29,3 +29,6 @@ dist-ssr
 .backlog-runner.sqlite-wal
 orchestrator.log
 dev.log
+
+# Playwright MCP session artifacts
+.playwright-mcp/
