@@ -12,6 +12,20 @@ import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
+export const CONFIG_HELP: Record<string, string> = {
+  AGENT_ADAPTER: "Which agent runs tasks: 'claude-code' (default) or 'command' (runs your custom AGENT_CMD).",
+  AGENT_CMD: 'Shell command for the "command" adapter. Receives the task prompt and can run arbitrary commands — change with care.',
+  AGENT_MAX_ATTEMPTS: 'Maximum times a single run retries before it is abandoned.',
+  AGENT_MAX_COST_USD: 'Per-run spend ceiling in USD; the run stops once exceeded. Blank means no cap.',
+  AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart.',
+  REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in.',
+  JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry.',
+  JIRA_ASSIGNEE: 'Jira account that claimed tickets are assigned to (e.g. currentUser()).',
+  JIRA_JQL: 'Optional JQL filter that narrows which tickets appear in the backlog queue.',
+  GITHUB_REPO: 'Default owner/repo used for GitHub PR lookups when none is otherwise provided.',
+  GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Recently shipped and Activity panels.',
+};
+
 const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'in-review': { label: 'In review', chipClass: 'chip-review' },
   merged: { label: 'Merged', chipClass: 'chip-done' },
@@ -268,9 +282,13 @@ export function renderDashboard(
     ? configEntries
         .map(([key, value]) => {
           const isOverridden: boolean = (uiConfig.overridden ?? []).includes(key);
+          const help: string = CONFIG_HELP[key] ?? '';
+          const hint: string = help
+            ? ` <span class="config-hint" tabindex="0" role="img" aria-label="${esc(help)}" title="${esc(help)}">&#9432;</span>`
+            : '';
           return `
-      <div class="config-row" data-key="${esc(key)}">
-        <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}</span>
+      <div class="config-row" data-key="${esc(key)}"${help ? ` title="${esc(help)}"` : ''}>
+        <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}${hint}</span>
         <input class="config-input" type="text" value="${esc(String(value ?? ''))}">
         <button class="config-save" data-key="${esc(key)}">Save</button>
         <span class="config-error" role="alert"></span>

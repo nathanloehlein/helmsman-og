@@ -270,6 +270,8 @@ select { text-transform: none; }
 .config-row { display: grid; grid-template-columns: minmax(180px, 1fr) 2fr auto; gap: 10px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line-faint); }
 .config-key { font-size: 11px; color: var(--text-dim); }
 .config-overridden { color: var(--accent); font-size: 10px; }
+.config-hint { color: var(--text-faint); cursor: help; font-size: 11px; }
+.config-hint:hover, .config-hint:focus { color: var(--accent); outline: none; }
 .config-error { grid-column: 2 / 3; color: var(--bad); font-size: 11px; }
 
 /* ---------- shipped + feed ---------- */

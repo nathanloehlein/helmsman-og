@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer } from './render';
+import { CONFIG_HELP, renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer } from './render';
+import { EDITABLE_KEYS } from '../server/orchestrator/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
@@ -218,6 +219,22 @@ describe('renderDashboard', () => {
     expect(text).toContain(`updated ${__BUILD_DATE__}`);
     expect(text).toContain('2 repos tracked');
     expect(text).toContain('1 running');
+  });
+
+  it('adds a help tooltip to each config key', () => {
+    const el: HTMLDivElement = root();
+    const uiConfig: UiConfig = { config: { AGENT_ADAPTER: 'claude-code' }, overridden: [] };
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, uiConfig);
+    const hint: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"] .config-hint');
+    expect(hint).not.toBeNull();
+    expect(hint?.getAttribute('title')).toContain('claude-code');
+    expect(hint?.getAttribute('aria-label')).toBe(hint?.getAttribute('title'));
+  });
+
+  it('has help text for every editable config key', () => {
+    for (const key of EDITABLE_KEYS) {
+      expect(CONFIG_HELP[key]?.length ?? 0, `missing tooltip for ${key}`).toBeGreaterThan(0);
+    }
   });
 
   it('lists repo options alphabetically by short name', () => {
