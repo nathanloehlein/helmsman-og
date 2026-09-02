@@ -181,6 +181,23 @@ describe('renderDashboard', () => {
     expect(html).not.toContain('BETA-4');
   });
 
+  it('renders a footer with attribution, version, updated date, and live stats', () => {
+    const el: HTMLDivElement = root();
+    const running: RunSummary = {
+      id: 'r1', ticketId: 'A-1', repo: 'org/alpha', status: 'running',
+      attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null,
+    };
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], null, [running]);
+    const footer: HTMLElement = el.querySelector<HTMLElement>('.app-footer')!;
+    expect(footer).not.toBeNull();
+    const text: string = footer.textContent ?? '';
+    expect(text).toContain('nloehlein@godaddy.com');
+    expect(text).toContain(`GoMaestro v${__APP_VERSION__}`);
+    expect(text).toContain(`updated ${__BUILD_DATE__}`);
+    expect(text).toContain('2 repos tracked');
+    expect(text).toContain('1 running');
+  });
+
   it('lists repo options alphabetically by short name', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW, [], ['org/zeta', 'org/alpha', 'other/beta'], null);

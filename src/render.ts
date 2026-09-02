@@ -398,7 +398,18 @@ export function renderDashboard(
           </div>
         </div>
       </main>
-    </div>`;
+    </div>
+    <footer class="app-footer mono">
+      <span class="footer-attr">nloehlein@godaddy.com</span>
+      <span class="footer-dot" aria-hidden="true">&bull;</span>
+      <span>GoMaestro v${esc(__APP_VERSION__)}</span>
+      <span class="footer-dot" aria-hidden="true">&bull;</span>
+      <span>updated ${esc(__BUILD_DATE__)}</span>
+      <span class="footer-dot" aria-hidden="true">&bull;</span>
+      <span>${repos.length} repo${repos.length === 1 ? '' : 's'} tracked</span>
+      <span class="footer-dot" aria-hidden="true">&bull;</span>
+      <span>${activeRuns.length} running</span>
+    </footer>`;
 }
 
 export interface RunTabView {
