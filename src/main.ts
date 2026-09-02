@@ -71,6 +71,7 @@ export class DashboardView {
   private runTabs: RunTab[] = [];
   private activeTabId: string | null = null;
   private tabSeq: number = 0;
+  private stickToBottom: boolean = true;
   private snapshot: DashboardSnapshot | null = null;
   private degraded: string[] = [];
   private repos: string[] = [];
@@ -126,6 +127,9 @@ export class DashboardView {
       return;
     }
     if (!this.snapshot) return;
+    const preBody: HTMLElement | null =
+      this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    const savedScrollTop: number = preBody ? preBody.scrollTop : 0;
     renderDashboard(
       this.root,
       this.snapshot,
@@ -164,6 +168,11 @@ export class DashboardView {
       });
     }
     this.rehomeRunDrawer();
+    const postBody: HTMLElement | null =
+      this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (postBody) {
+      postBody.scrollTop = this.stickToBottom ? postBody.scrollHeight : savedScrollTop;
+    }
   }
 
   private paintCmux(): void {
@@ -817,7 +826,9 @@ export class DashboardView {
     if (!active) return;
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
     if (body) {
+      body.addEventListener('scroll', () => this.updateStick(body));
       for (const event of active.lines) body.appendChild(this.lineEl(event));
+      this.stickToBottom = true;
       body.scrollTop = body.scrollHeight;
     }
     this.renderFooterDom(active);
@@ -835,7 +846,11 @@ export class DashboardView {
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
     if (!body) return;
     body.appendChild(this.lineEl(event));
-    body.scrollTop = body.scrollHeight;
+    if (this.stickToBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  private updateStick(body: HTMLElement): void {
+    this.stickToBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
   }
 
   private renderFooterDom(tab: RunTab): void {

@@ -1515,4 +1515,45 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     await view2.refresh();
     expect(fetchMock.mock.calls.some(([i]) => String(i).includes('/api/dashboard?repo=acme%2Fother'))).toBe(true);
   });
+
+  it('keeps the log pinned to the bottom across repaints, but honors a user scroll-back', async () => {
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [runningRun('run-a', 'TICK-A')] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+    root.querySelector<HTMLElement>('.agent-row')!.click();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+
+    const body: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer-body')!;
+    let top: number = 0;
+    Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => top, set: (v: number) => { top = v; } });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => 1000 });
+    Object.defineProperty(body, 'clientHeight', { configurable: true, get: () => 100 });
+
+    const emit = (text: string): void => FakeEventSource.instances[0].onmessage?.({
+      data: JSON.stringify({ id: top, runId: 'run-a', ts: new Date().toISOString(), kind: 'stdout', text }),
+    } as MessageEvent<string>);
+
+    emit('line 1');
+    expect(top).toBe(1000);
+
+    top = 200;
+    body.dispatchEvent(new Event('scroll'));
+    emit('line 2');
+    expect(top).toBe(200);
+
+    await view.refresh();
+    expect(top).toBe(200);
+
+    top = 1000;
+    body.dispatchEvent(new Event('scroll'));
+    await view.refresh();
+    expect(top).toBe(1000);
+  });
 });
