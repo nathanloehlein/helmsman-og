@@ -7,7 +7,7 @@ export interface LaunchRunBody {
   title?: string;
   repo: string;
   task?: string;
-  mode?: 'ticket' | 'freeform' | 'rerun';
+  mode?: 'ticket' | 'freeform' | 'rerun' | 'review';
   prNumber?: number;
   feedback?: string;
 }

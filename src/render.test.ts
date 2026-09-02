@@ -349,12 +349,19 @@ describe('renderPrPanel', () => {
     const html: string = renderPrPanel(prFixture(), false);
     expect(html).not.toContain('pr-rerun-feedback');
     expect(html).not.toContain('class="pr-rerun"');
+    expect(html).not.toContain('pr-review-agent');
   });
 
   it('includes the rerun control when canRerun is true', () => {
     const html: string = renderPrPanel(prFixture(), true);
     expect(html).toContain('pr-rerun-feedback');
     expect(html).toContain('pr-rerun');
+  });
+
+  it('includes the code-review-with-agent button when canRerun is true', () => {
+    const html: string = renderPrPanel(prFixture(), true);
+    expect(html).toContain('pr-review-agent');
+    expect(html).toContain('Code-review with agent');
   });
 
   it('renders a not-found note when there is no PR', () => {

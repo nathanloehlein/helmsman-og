@@ -582,6 +582,12 @@ export class DashboardView {
       return;
     }
 
+    const reviewAgentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-review-agent');
+    if (reviewAgentBtn) {
+      void this.handleReviewAgent(reviewAgentBtn);
+      return;
+    }
+
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
   }
@@ -630,6 +636,23 @@ export class DashboardView {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Re-run failed';
       this.openDrawer(`rerun #${t.number}`, '');
+      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+    }
+  }
+
+  private async handleReviewAgent(btn: HTMLElement): Promise<void> {
+    const t: { panel: HTMLElement; repo: string; number: number } | null = this.prTarget(btn);
+    if (!t) return;
+    this.stopActiveStream();
+    const seq: number = ++this.launchSeq;
+    try {
+      const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number });
+      if (seq !== this.launchSeq) return;
+      this.openRunDrawerAndStream(result.runId, `review #${t.number}`, '');
+    } catch (err: unknown) {
+      if (seq !== this.launchSeq) return;
+      const message: string = err instanceof Error ? err.message : 'Code review failed';
+      this.openDrawer(`review #${t.number}`, '');
       this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
     }
   }
