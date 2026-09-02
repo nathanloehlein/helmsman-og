@@ -162,6 +162,26 @@ describe('agent control routes', () => {
     const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'rerun', repo: 'o/r' }, launchDeps);
     expect(r?.status).toBe(400);
   });
+
+  it('launches a review and calls launch with repo, prNumber, and mode', async () => {
+    const launch = vi.fn((_b: { repo: string; prNumber?: number; mode?: string }) => 'run-11');
+    const reviewDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi(
+      'POST',
+      '/api/agents/launch',
+      new URLSearchParams(),
+      { mode: 'review', repo: 'o/r', prNumber: 12 },
+      reviewDeps,
+    );
+    expect(launch).toHaveBeenCalledWith({ repo: 'o/r', prNumber: 12, mode: 'review' });
+    expect(r?.status).toBe(200);
+    expect((r?.json as { runId: string }).runId).toBe('run-11');
+  });
+
+  it('rejects a review launch missing prNumber', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'review', repo: 'o/r' }, launchDeps);
+    expect(r?.status).toBe(400);
+  });
 });
 
 describe('auto-claim toggle route', () => {
