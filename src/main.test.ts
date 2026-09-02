@@ -1456,6 +1456,35 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(localStorage.getItem('runner.configCollapsed')).toBe('0');
   });
 
+  it('fires a drawer PR action exactly once (no double-handling now the drawer lives in root)', async () => {
+    const response: DashboardResponse = await buildResponse();
+    let reviewLaunches: number = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents/launch')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { mode?: string };
+        if (body.mode === 'review') reviewLaunches += 1;
+        return { ok: true, status: 200, json: async () => ({ runId: 'run-x' }) } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [runningRun('run-a', 'TICK-A')] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+    root.querySelector<HTMLElement>('.agent-row')!.click();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+
+    const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    const prEl: HTMLElement = drawer.querySelector<HTMLElement>('.run-drawer-pr')!;
+    prEl.innerHTML = '<div class="pr-panel" data-pr-repo="acme/widgets" data-pr-number="7"><button class="pr-review-agent">Code-review with agent</button></div>';
+    drawer.querySelector<HTMLButtonElement>('.pr-review-agent')!.click();
+
+    await vi.waitFor(() => expect(reviewLaunches).toBe(1));
+    expect(reviewLaunches).toBe(1);
+  });
+
   it('persists repo scope and re-requests it on a fresh view', async () => {
     const response: DashboardResponse = await buildResponse();
     const scoped: string[] = ['acme/widgets', 'acme/other'];

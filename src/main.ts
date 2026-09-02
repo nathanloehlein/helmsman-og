@@ -101,7 +101,6 @@ export class DashboardView {
     const drawer: HTMLDivElement = document.createElement('div');
     drawer.className = 'run-drawer';
     drawer.hidden = true;
-    drawer.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
     this.runDrawerEl = drawer;
   }
 
