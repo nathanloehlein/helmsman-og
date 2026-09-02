@@ -24,8 +24,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.backlog-runner.sqlite
-.backlog-runner.sqlite-shm
-.backlog-runner.sqlite-wal
+.gomaestro.sqlite
+.gomaestro.sqlite-shm
+.gomaestro.sqlite-wal
 orchestrator.log
 dev.log
+
+# Playwright MCP session artifacts
+.playwright-mcp/

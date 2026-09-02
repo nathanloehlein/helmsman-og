@@ -19,6 +19,8 @@ import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, ty
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
+import { createBridge } from './cmux/bridge';
+import { keysFor } from './cmux/actions';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentTask } from './agents/adapter';
 import type { RunEventRow, RunRow } from './db';
 import type { JiraIssue } from '../types';
@@ -27,12 +29,21 @@ process.loadEnvFile('.env');
 
 const PORT: number = Number(process.env.ORCHESTRATOR_PORT ?? '8787');
 const DIST: string = join(process.cwd(), 'dist');
-const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.backlog-runner.sqlite'));
+const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.gomaestro.sqlite'));
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const startupCfg: AppConfig = configStore.current();
+const cmux = createBridge();
+const cmuxClients = new Set<ServerResponse>();
+let cmuxWatchOff: (() => void) | null = null;
+function ensureCmuxWatch(): void {
+  if (cmuxWatchOff) return;
+  cmuxWatchOff = cmux.watchEvents(() => {
+    for (const res of cmuxClients) res.write(`data: ${JSON.stringify({ kind: 'cmux-tabs-changed' })}\n\n`);
+  });
+}
 
 try {
   const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
@@ -101,6 +112,29 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.feedback ?? '',
           prBranch: pr.headRefName, prNumber: pr.number,
         };
+      } else if (body.mode === 'review') {
+        const pr: PrStatus | null =
+          cfg.github && body.prNumber ? await fetchPrStatus(cfg.github, body.repo, body.prNumber) : null;
+        if (!pr) {
+          const ts: string = new Date().toISOString();
+          const failedRow: RunRow = {
+            id: runId, ticketId: 'review', repo: body.repo, adapter: adapter.id,
+            status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
+            endedAt: ts, costUsd: null, worktreePath: null,
+          };
+          db.insertRun(failedRow);
+          const message: string = `could not resolve PR #${body.prNumber ?? '?'} for review`;
+          db.appendEvent(runId, 'error', message, ts);
+          db.appendEvent(runId, 'run-complete', 'failed', ts);
+          bus.publish(runId, { kind: 'error', text: message });
+          bus.publish(runId, { kind: 'run-complete', text: 'failed' });
+          return;
+        }
+        taskObj = {
+          ticketId: 'review', title: `review #${pr.number}`, repo: body.repo,
+          jiraBaseUrl: cfg.jira?.baseUrl ?? '',
+          prBranch: pr.headRefName, prNumber: pr.number, review: true,
+        };
       } else {
         const ticketId: string = body.ticketId ?? 'freeform';
         const fetchedTitle: string | null =
@@ -132,6 +166,14 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         maxAttempts: cfg.maxAttempts,
         maxCostUsd: cfg.maxCostUsd,
         isStopped: () => control.stopped,
+        readReview: (worktreePath: string) =>
+          readFile(join(worktreePath, '.agent-review.md'), 'utf8').catch((): null => null),
+        postReview: (repo: string, prNumber: number, reviewBody: string) => {
+          const g: AppConfig['github'] = configStore.current().github;
+          return g
+            ? ghSubmitReview(g, repo, prNumber, 'COMMENT', reviewBody)
+            : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
+        },
       });
     } finally {
       pm.remove(runId);
@@ -188,6 +230,14 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       req.on('close', off);
       return;
     }
+    if (url.pathname === '/api/cmux/events' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      res.write(`data: ${JSON.stringify({ kind: 'connected' })}\n\n`);
+      cmuxClients.add(res);
+      ensureCmuxWatch();
+      req.on('close', () => cmuxClients.delete(res));
+      return;
+    }
     const body: unknown = req.method === 'POST' ? await readBody(req) : null;
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
       dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
@@ -223,6 +273,19 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         const g: AppConfig['github'] = configStore.current().github;
         return g ? ghSubmitReview(g, repo, prNumber, event, body) : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
       },
+      cmuxListTabs: () => cmux.listTabs(),
+      cmuxReadScreen: (surface: string, lines: number) => cmux.readScreen(surface, lines),
+      cmuxSend: (surface: string, text: string, enter: boolean) => cmux.send(surface, text, enter),
+      cmuxAction: async (surface: string, provider: string | null, action: string) => {
+        const keys = keysFor(provider, action as never);
+        if (!keys) return { ok: false as const, error: 'unknown action' };
+        for (const k of keys) {
+          const r = await cmux.sendKey(surface, k);
+          if (!r.ok) return r;
+        }
+        return { ok: true as const, keys };
+      },
+      cmuxKey: (surface: string, key: string) => cmux.sendKey(surface, key),
     });
     if (api) {
       res.writeHead(api.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

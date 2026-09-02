@@ -1,6 +1,7 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, ICON_CLOSE } from './render';
+import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer } from './render';
+import type { RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import {
   launchAgent,
@@ -19,6 +20,42 @@ import {
 } from './data/agents';
 import { getConfig, setConfig, type UiConfig } from './data/config';
 import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
+import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
+import { mapKeyEvent, type CmuxKeyIntent } from './logic/cmuxKeys';
+import { applyTheme, loadThemeId, saveThemeId } from './data/themes';
+import {
+  loadRepoScope,
+  saveRepoScope,
+  loadConfigCollapsed,
+  saveConfigCollapsed,
+} from './logic/prefs';
+
+const CMUX_SCREEN_POLL_MS: number = 750;
+const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
+
+interface CmuxTabsPayload {
+  connected?: boolean;
+  tabs?: CmuxTabView[];
+}
+
+interface CmuxScreenPayload {
+  surface?: string;
+  text?: string;
+}
+
+interface CmuxEventPayload {
+  kind?: string;
+}
+
+interface RunTab {
+  runId: string;
+  label: string;
+  lines: RunEvent[];
+  footer: RunStatusSummary | null;
+  pr: { repo: string; number: number } | null;
+  unsub: (() => void) | null;
+  complete: boolean;
+}
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
   if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
@@ -30,52 +67,42 @@ function deriveTicketStatus(summary: RunStatusSummary): string {
 
 export class DashboardView {
   private readonly root: HTMLElement;
-  private readonly drawer: HTMLElement;
-  private readonly drawerTitle: HTMLElement;
-  private readonly drawerBody: HTMLElement;
-  private readonly drawerFooter: HTMLElement;
-  private readonly drawerPr: HTMLElement;
+  private readonly runDrawerEl: HTMLElement;
+  private runTabs: RunTab[] = [];
+  private activeTabId: string | null = null;
+  private tabSeq: number = 0;
+  private stickToBottom: boolean = true;
   private snapshot: DashboardSnapshot | null = null;
   private degraded: string[] = [];
   private repos: string[] = [];
-  private selectedRepo: string | null = null;
+  private selectedRepo: string | null = loadRepoScope();
   private runs: RunSummary[] = [];
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private uiConfig: UiConfig = { config: {}, overridden: [] };
-  private activeStreamUnsubscribe: (() => void) | null = null;
-  private activeRunId: string | null = null;
+  private configCollapsed: boolean = loadConfigCollapsed();
   private launchSeq: number = 0;
+  private view: 'dashboard' | 'cmux' = 'dashboard';
+  private cmuxConnected: boolean = false;
+  private cmuxTabs: CmuxTabView[] = [];
+  private cmuxPanelState: PanelState = { selectedSurface: null };
+  private cmuxScreen: string = '';
+  private cmuxScreenTimer: ReturnType<typeof setInterval> | null = null;
+  private cmuxEventSource: EventSource | null = null;
+  private cmuxCapturing: boolean = false;
+  private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
+  private themeId: string = loadThemeId();
 
   constructor(root: HTMLElement) {
     this.root = root;
+    applyTheme(this.themeId);
     this.root.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
+    this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event));
 
     const drawer: HTMLDivElement = document.createElement('div');
     drawer.className = 'run-drawer';
     drawer.hidden = true;
-    drawer.innerHTML = `
-      <div class="run-drawer-head">
-        <span class="run-drawer-title mono"></span>
-        <button class="run-drawer-close" aria-label="Close">${ICON_CLOSE}</button>
-      </div>
-      <div class="run-drawer-body mono"></div>
-      <div class="run-drawer-footer mono"></div>
-      <div class="run-drawer-pr"></div>`;
-    const titleEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-title');
-    const bodyEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-body');
-    const footerEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-footer');
-    const prEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-pr');
-    const closeBtn: HTMLButtonElement | null = drawer.querySelector<HTMLButtonElement>('.run-drawer-close');
-    if (!titleEl || !bodyEl || !footerEl || !prEl || !closeBtn) throw new Error('run drawer construction failed');
-    closeBtn.addEventListener('click', (): void => this.closeDrawer());
-    document.body.appendChild(drawer);
-    this.drawer = drawer;
-    this.drawerTitle = titleEl;
-    this.drawerBody = bodyEl;
-    this.drawerFooter = footerEl;
-    this.drawerPr = prEl;
-    this.drawer.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
+    this.runDrawerEl = drawer;
   }
 
   async refresh(): Promise<void> {
@@ -91,11 +118,18 @@ export class DashboardView {
     this.autoClaimRepos = agents.autoClaim;
     this.caps = agents.caps;
     this.uiConfig = await getConfig();
-    this.paint();
+    if (this.view === 'dashboard') this.paint();
   }
 
   private paint(): void {
+    if (this.view === 'cmux') {
+      this.paintCmux();
+      return;
+    }
     if (!this.snapshot) return;
+    const preBody: HTMLElement | null =
+      this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    const savedScrollTop: number = preBody ? preBody.scrollTop : 0;
     renderDashboard(
       this.root,
       this.snapshot,
@@ -107,12 +141,15 @@ export class DashboardView {
       this.autoClaimRepos,
       this.caps,
       this.uiConfig,
+      this.themeId,
+      this.configCollapsed,
     );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
     if (select) {
       select.addEventListener('change', () => {
         this.selectedRepo = select.value || null;
+        saveRepoScope(this.selectedRepo);
         void this.refresh();
       });
     }
@@ -121,6 +158,333 @@ export class DashboardView {
     if (autoClaimCheckbox) {
       autoClaimCheckbox.addEventListener('change', () => void this.handleAutoClaimChange(autoClaimCheckbox));
     }
+    const themeSelect: HTMLSelectElement | null =
+      this.root.querySelector<HTMLSelectElement>('.theme-select');
+    if (themeSelect) {
+      themeSelect.addEventListener('change', () => {
+        this.themeId = themeSelect.value;
+        applyTheme(this.themeId);
+        saveThemeId(this.themeId);
+      });
+    }
+    this.rehomeRunDrawer();
+    const postBody: HTMLElement | null =
+      this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (postBody) {
+      postBody.scrollTop = this.stickToBottom ? postBody.scrollHeight : savedScrollTop;
+    }
+  }
+
+  private paintCmux(): void {
+    this.root.innerHTML = renderCmuxView({
+      connected: this.cmuxConnected,
+      tabs: this.cmuxTabs,
+      selectedSurface: this.cmuxPanelState.selectedSurface,
+      screen: this.cmuxScreen,
+      isCapturing: this.cmuxCapturing,
+    });
+  }
+
+  private async enterCmuxView(): Promise<void> {
+    this.view = 'cmux';
+    await this.loadCmuxTabs();
+    this.ensureCmuxEvents();
+    this.paint();
+    if (isPolling(this.cmuxPanelState)) {
+      await this.pollCmuxScreen();
+      this.syncCmuxPolling();
+    }
+  }
+
+  private leaveCmuxView(): void {
+    this.stopCmuxScreenPoll();
+    this.stopCapture();
+    this.cmuxCapturing = false;
+    this.view = 'dashboard';
+    this.paint();
+  }
+
+  private async loadCmuxTabs(): Promise<void> {
+    try {
+      const res: Response = await fetch('/api/cmux/tabs');
+      const data: CmuxTabsPayload = res.ok ? ((await res.json()) as CmuxTabsPayload) : {};
+      this.cmuxConnected = data?.connected ?? false;
+      this.cmuxTabs = data?.tabs ?? [];
+    } catch {
+      this.cmuxConnected = false;
+      this.cmuxTabs = [];
+    }
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    const stillExists: boolean = surface !== null && this.cmuxTabs.some((t) => t.surfaceRef === surface);
+    if (surface !== null && !stillExists) {
+      this.cmuxPanelState = { selectedSurface: null };
+      this.cmuxScreen = '';
+    }
+  }
+
+  private ensureCmuxEvents(): void {
+    if (this.cmuxEventSource) return;
+    const src: EventSource = new EventSource('/api/cmux/events');
+    src.onmessage = (m: MessageEvent<string>): void => {
+      let msg: CmuxEventPayload = {};
+      try {
+        msg = JSON.parse(m.data) as CmuxEventPayload;
+      } catch {
+        return;
+      }
+      if (msg.kind === 'cmux-tabs-changed') void this.handleCmuxTabsChanged();
+    };
+    this.cmuxEventSource = src;
+  }
+
+  private cmuxSnapshotSignature(): string {
+    const tabsPart: string = this.cmuxTabs
+      .map((t) => `${t.surfaceRef}${t.surfaceTitle}${t.workspaceTitle}${t.type}`)
+      .join('');
+    return `${this.cmuxConnected}${tabsPart}`;
+  }
+
+  private async handleCmuxTabsChanged(): Promise<void> {
+    const prevSignature: string = this.cmuxSnapshotSignature();
+    await this.loadCmuxTabs();
+    if (this.view !== 'cmux') return;
+    if (this.cmuxSnapshotSignature() !== prevSignature) {
+      this.repaintCmuxPreservingInput();
+    }
+    this.syncCmuxPolling();
+  }
+
+  private repaintCmuxPreservingInput(): void {
+    const prevInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.cmux-input');
+    const hadFocus: boolean = document.activeElement === prevInput;
+    const value: string = prevInput?.value ?? '';
+    const selectionStart: number | null = prevInput?.selectionStart ?? null;
+    const selectionEnd: number | null = prevInput?.selectionEnd ?? null;
+
+    this.paint();
+
+    if (!value && !hadFocus) return;
+    const nextInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.cmux-input');
+    if (!nextInput) return;
+    nextInput.value = value;
+    if (hadFocus) {
+      nextInput.focus();
+      if (selectionStart !== null && selectionEnd !== null) {
+        nextInput.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
+
+  private syncCmuxPolling(): void {
+    if (this.view === 'cmux' && this.cmuxConnected && isPolling(this.cmuxPanelState)) {
+      this.restartCmuxScreenPoll();
+    } else {
+      this.stopCmuxScreenPoll();
+    }
+  }
+
+  private restartCmuxScreenPoll(): void {
+    this.stopCmuxScreenPoll();
+    this.cmuxScreenTimer = setInterval(() => void this.pollCmuxScreen(), CMUX_SCREEN_POLL_MS);
+  }
+
+  private stopCmuxScreenPoll(): void {
+    if (this.cmuxScreenTimer !== null) {
+      clearInterval(this.cmuxScreenTimer);
+      this.cmuxScreenTimer = null;
+    }
+  }
+
+  private async pollCmuxScreen(): Promise<void> {
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!surface || this.view !== 'cmux') return;
+    try {
+      const res: Response = await fetch(`/api/cmux/screen?surface=${encodeURIComponent(surface)}&lines=40`);
+      if (this.view !== 'cmux' || this.cmuxPanelState.selectedSurface !== surface) return;
+      if (res.status === 404) {
+        if (this.cmuxScreen === CMUX_SCREEN_UNAVAILABLE) return;
+        this.cmuxScreen = CMUX_SCREEN_UNAVAILABLE;
+        this.setCmuxScreenText(this.cmuxScreen);
+        return;
+      }
+      if (!res.ok) return;
+      const data: CmuxScreenPayload = (await res.json()) as CmuxScreenPayload;
+      if (this.view !== 'cmux' || this.cmuxPanelState.selectedSurface !== surface) return;
+      this.cmuxScreen = data?.text ?? '';
+      this.setCmuxScreenText(this.cmuxScreen);
+    } catch {
+      return;
+    }
+  }
+
+  private setCmuxScreenText(text: string): void {
+    const pre: HTMLElement | null = this.root.querySelector<HTMLElement>('.cmux-screen');
+    if (pre) pre.textContent = text;
+  }
+
+  private async handleCmuxTabClick(btn: HTMLButtonElement): Promise<void> {
+    const surface: string | undefined = btn.dataset.surface;
+    if (!surface) return;
+    this.cmuxPanelState = selectSurface(this.cmuxPanelState, surface);
+    this.cmuxScreen = '';
+    this.paint();
+    await this.pollCmuxScreen();
+    this.syncCmuxPolling();
+  }
+
+  private showCmuxError(message: string): void {
+    const detail: HTMLElement | null = this.root.querySelector<HTMLElement>('.cmux-detail');
+    if (!detail) return;
+    let errEl: HTMLDivElement | null = detail.querySelector<HTMLDivElement>('.cmux-error');
+    if (!errEl) {
+      errEl = document.createElement('div');
+      errEl.className = 'cmux-error';
+      detail.appendChild(errEl);
+    }
+    errEl.textContent = message;
+  }
+
+  private clearCmuxError(): void {
+    this.root.querySelector<HTMLElement>('.cmux-error')?.remove();
+  }
+
+  private async handleCmuxAction(btn: HTMLButtonElement): Promise<void> {
+    const action: string | undefined = btn.dataset.action;
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!action || !surface) return;
+    const tab: CmuxTabView | undefined = this.cmuxTabs.find((t) => t.surfaceRef === surface);
+    if (!tab) return;
+    btn.disabled = true;
+    try {
+      const res: Response = await fetch('/api/cmux/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, provider: providerOf(tab), action }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Action failed.');
+        return;
+      }
+      this.clearCmuxError();
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Action failed.');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  private async handleCmuxSend(form: HTMLFormElement): Promise<void> {
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    const input: HTMLInputElement | null = form.querySelector<HTMLInputElement>('.cmux-input');
+    if (!surface || !input) return;
+    const text: string = input.value;
+    if (text.trim() === '') return;
+    try {
+      const res: Response = await fetch('/api/cmux/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, text, enter: true }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Send failed.');
+        return;
+      }
+      this.clearCmuxError();
+      input.value = '';
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Send failed.');
+    }
+  }
+
+  private handleCmuxCaptureToggle(): void {
+    this.cmuxCapturing = !this.cmuxCapturing;
+    if (this.cmuxCapturing) this.startCapture();
+    else this.stopCapture();
+    this.paint();
+    if (this.cmuxCapturing) {
+      this.root.querySelector<HTMLElement>('.cmux-screen')?.focus();
+    }
+  }
+
+  private startCapture(): void {
+    document.addEventListener('keydown', this.onCaptureKeydown);
+  }
+
+  private stopCapture(): void {
+    document.removeEventListener('keydown', this.onCaptureKeydown);
+  }
+
+  private handleCaptureKeydown(event: KeyboardEvent): void {
+    if (this.view !== 'cmux' || !this.cmuxCapturing) return;
+    if (this.isEditableTarget(event.target)) return;
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!surface) return;
+    const intent: CmuxKeyIntent = mapKeyEvent(event);
+    if (intent.kind === 'ignore') return;
+    event.preventDefault();
+    if (intent.kind === 'key') void this.sendCmuxKey(surface, intent.token);
+    else void this.sendCmuxText(surface, intent.text);
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+  }
+
+  private async handleCmuxKeyPad(btn: HTMLButtonElement): Promise<void> {
+    const key: string | undefined = btn.dataset.key;
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!key || !surface) return;
+    await this.sendCmuxKey(surface, key);
+  }
+
+  private async sendCmuxKey(surface: string, key: string): Promise<void> {
+    try {
+      const res: Response = await fetch('/api/cmux/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, key }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Key failed.');
+        return;
+      }
+      this.clearCmuxError();
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Key failed.');
+    }
+  }
+
+  private async sendCmuxText(surface: string, text: string): Promise<void> {
+    try {
+      const res: Response = await fetch('/api/cmux/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, text, enter: false }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Send failed.');
+        return;
+      }
+      this.clearCmuxError();
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Send failed.');
+    }
+  }
+
+  private handleSubmit(event: SubmitEvent): void {
+    const target: EventTarget | null = event.target;
+    if (!(target instanceof HTMLFormElement) || !target.classList.contains('cmux-send')) return;
+    event.preventDefault();
+    void this.handleCmuxSend(target);
   }
 
   private async handleAutoClaimChange(checkbox: HTMLInputElement): Promise<void> {
@@ -130,14 +494,40 @@ export class DashboardView {
     await this.refresh();
   }
 
-  private stopActiveStream(): void {
-    this.activeStreamUnsubscribe?.();
-    this.activeStreamUnsubscribe = null;
-  }
-
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+
+    const viewToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.view-toggle');
+    if (viewToggle) {
+      if (viewToggle.dataset.view === 'cmux') void this.enterCmuxView();
+      else this.leaveCmuxView();
+      return;
+    }
+
+    const cmuxTabBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-tab');
+    if (cmuxTabBtn) {
+      void this.handleCmuxTabClick(cmuxTabBtn);
+      return;
+    }
+
+    const cmuxActionBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-action');
+    if (cmuxActionBtn) {
+      void this.handleCmuxAction(cmuxActionBtn);
+      return;
+    }
+
+    const cmuxCaptureToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('[data-cmux-capture]');
+    if (cmuxCaptureToggle) {
+      this.handleCmuxCaptureToggle();
+      return;
+    }
+
+    const cmuxKeypadBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-keypad-btn');
+    if (cmuxKeypadBtn) {
+      void this.handleCmuxKeyPad(cmuxKeypadBtn);
+      return;
+    }
 
     const launchBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.launch-btn');
     if (launchBtn) {
@@ -193,6 +583,32 @@ export class DashboardView {
       return;
     }
 
+    const reviewAgentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-review-agent');
+    if (reviewAgentBtn) {
+      void this.handleReviewAgent(reviewAgentBtn);
+      return;
+    }
+
+    const configToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.config-toggle');
+    if (configToggle) {
+      this.toggleConfig();
+      return;
+    }
+
+    const tabCloseBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.run-tab-close');
+    if (tabCloseBtn) {
+      const id: string | undefined = tabCloseBtn.dataset.tabid;
+      if (id) this.closeRunTab(id);
+      return;
+    }
+
+    const tabSelectBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.run-tab-select');
+    if (tabSelectBtn) {
+      const id: string | undefined = tabSelectBtn.dataset.tabid;
+      if (id) this.setActiveTab(id);
+      return;
+    }
+
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
   }
@@ -231,17 +647,30 @@ export class DashboardView {
     const feedbackEl: HTMLTextAreaElement | null = t.panel.querySelector<HTMLTextAreaElement>('.pr-rerun-feedback');
     const feedback: string = feedbackEl?.value ?? '';
     if (feedback.trim() === '') return;
-    this.stopActiveStream();
     const seq: number = ++this.launchSeq;
     try {
       const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback });
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, `rerun #${t.number}`, '');
+      this.openRunTab(result.runId, `rerun #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Re-run failed';
-      this.openDrawer(`rerun #${t.number}`, '');
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(`rerun #${t.number}`, message);
+    }
+  }
+
+  private async handleReviewAgent(btn: HTMLElement): Promise<void> {
+    const t: { panel: HTMLElement; repo: string; number: number } | null = this.prTarget(btn);
+    if (!t) return;
+    const seq: number = ++this.launchSeq;
+    try {
+      const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number });
+      if (seq !== this.launchSeq) return;
+      this.openRunTab(result.runId, `review #${t.number}`);
+    } catch (err: unknown) {
+      if (seq !== this.launchSeq) return;
+      const message: string = err instanceof Error ? err.message : 'Code review failed';
+      this.openErrorTab(`review #${t.number}`, message);
     }
   }
 
@@ -270,23 +699,199 @@ export class DashboardView {
     if (!runId) return;
     const ticketEl: HTMLElement | null = row.querySelector<HTMLElement>('.ticket-id');
     const ticketId: string = ticketEl?.textContent ?? runId;
-
-    this.stopActiveStream();
-    ++this.launchSeq;
-    this.openRunDrawerAndStream(runId, ticketId, '');
+    this.openRunTab(runId, ticketId);
   }
 
-  private openRunDrawerAndStream(runId: string, ticketId: string, title: string): void {
-    this.activeRunId = runId;
-    this.openDrawer(ticketId, title);
-    this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
+  private openRunTab(runId: string, label: string): void {
+    const existing: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (existing) {
+      this.setActiveTab(runId);
+      return;
+    }
     const run: RunSummary | undefined = this.runs.find((r: RunSummary): boolean => r.id === runId);
-    if (run && run.prNumber != null) void this.loadDrawerPr(run.repo, run.prNumber);
+    const tab: RunTab = {
+      runId,
+      label,
+      lines: [],
+      footer: null,
+      pr: run && run.prNumber != null ? { repo: run.repo, number: run.prNumber } : null,
+      unsub: null,
+      complete: false,
+    };
+    tab.unsub = openRunStream(runId, (event: RunEvent): void => this.onTabEvent(runId, event));
+    this.runTabs.push(tab);
+    this.activeTabId = runId;
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+    if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number);
   }
 
-  private async loadDrawerPr(repo: string, prNumber: number): Promise<void> {
+  private openErrorTab(label: string, message: string): void {
+    const id: string = `err-${++this.tabSeq}`;
+    const tab: RunTab = {
+      runId: id,
+      label,
+      lines: [{ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message }],
+      footer: null,
+      pr: null,
+      unsub: null,
+      complete: true,
+    };
+    this.runTabs.push(tab);
+    this.activeTabId = id;
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+  }
+
+  private setActiveTab(runId: string): void {
+    if (!this.runTabs.some((t: RunTab): boolean => t.runId === runId)) return;
+    this.activeTabId = runId;
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+  }
+
+  private closeRunTab(runId: string): void {
+    const idx: number = this.runTabs.findIndex((t: RunTab): boolean => t.runId === runId);
+    if (idx < 0) return;
+    this.runTabs[idx].unsub?.();
+    this.runTabs.splice(idx, 1);
+    if (this.activeTabId === runId) {
+      const next: RunTab | undefined = this.runTabs[idx] ?? this.runTabs[idx - 1];
+      this.activeTabId = next ? next.runId : null;
+    }
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+  }
+
+  private onTabEvent(runId: string, event: RunEvent): void {
+    const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (!tab) return;
+    tab.lines.push(event);
+    if (event.kind === 'run-complete') {
+      tab.complete = true;
+      tab.unsub = null;
+    }
+    if (runId === this.activeTabId) {
+      if (event.kind === 'run-complete') this.renderRunDrawer();
+      else this.appendLineDom(event);
+    } else if (event.kind === 'run-complete') {
+      this.markTabComplete(runId);
+    }
+    if (event.kind === 'run-complete') void this.finalizeTab(runId);
+  }
+
+  private markTabComplete(runId: string): void {
+    const dot: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>(
+      `.run-tab[data-tabid="${CSS.escape(runId)}"] .run-tab-dot`,
+    );
+    dot?.classList.add('is-complete');
+  }
+
+  private async finalizeTab(runId: string): Promise<void> {
+    const summary: RunStatusSummary | null = await getRun(runId);
+    const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (!tab) return;
+    tab.footer = summary;
+    if (summary && summary.prNumber != null && !tab.pr) {
+      tab.pr = { repo: summary.repo, number: summary.prNumber };
+    }
+    if (runId === this.activeTabId) {
+      this.renderFooterDom(tab);
+      if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number);
+    }
+  }
+
+  private async loadTabPr(runId: string, repo: string, prNumber: number): Promise<void> {
     const pr: PrStatusView | null = await getPrStatus(repo, prNumber);
-    this.drawerPr.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+    if (runId !== this.activeTabId) return;
+    const prEl: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
+    if (prEl) prEl.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+  }
+
+  private rehomeRunDrawer(): void {
+    const slot: HTMLElement | null = this.root.querySelector<HTMLElement>('.runs-drawer-slot');
+    if (slot && this.runDrawerEl.parentElement !== slot) slot.appendChild(this.runDrawerEl);
+    this.runDrawerEl.hidden = this.runTabs.length === 0;
+  }
+
+  private renderRunDrawer(): void {
+    const tabsView: RunTabView[] = this.runTabs.map((t: RunTab): RunTabView => ({
+      id: t.runId,
+      label: t.label,
+      complete: t.complete,
+    }));
+    this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId);
+    this.runDrawerEl.hidden = this.runTabs.length === 0;
+    const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
+    if (!active) return;
+    const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (body) {
+      body.addEventListener('scroll', () => this.updateStick(body));
+      for (const event of active.lines) body.appendChild(this.lineEl(event));
+      this.stickToBottom = true;
+      body.scrollTop = body.scrollHeight;
+    }
+    this.renderFooterDom(active);
+    if (active.pr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
+  }
+
+  private lineEl(event: RunEvent): HTMLDivElement {
+    const line: HTMLDivElement = document.createElement('div');
+    line.className = `run-line run-line-${event.kind}`;
+    line.textContent = event.text;
+    return line;
+  }
+
+  private appendLineDom(event: RunEvent): void {
+    const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (!body) return;
+    body.appendChild(this.lineEl(event));
+    if (this.stickToBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  private updateStick(body: HTMLElement): void {
+    this.stickToBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  }
+
+  private renderFooterDom(tab: RunTab): void {
+    const footer: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-footer');
+    if (!footer) return;
+    footer.textContent = '';
+    const summary: RunStatusSummary | null = tab.footer;
+    if (!summary) return;
+
+    const statusLine: HTMLDivElement = document.createElement('div');
+    statusLine.className = 'run-drawer-footer-status';
+    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
+    footer.appendChild(statusLine);
+
+    if (summary.prNumber == null) return;
+    const prLine: HTMLDivElement = document.createElement('div');
+    prLine.className = 'run-drawer-footer-pr';
+    const repoParts: string[] = summary.repo.split('/');
+    if (repoParts.length === 2 && repoParts[0] && repoParts[1]) {
+      const link: HTMLAnchorElement = document.createElement('a');
+      link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `PR #${summary.prNumber}`;
+      prLine.appendChild(link);
+    } else {
+      prLine.textContent = `PR #${summary.prNumber}`;
+    }
+    footer.appendChild(prLine);
+  }
+
+  private toggleConfig(): void {
+    this.configCollapsed = !this.configCollapsed;
+    saveConfigCollapsed(this.configCollapsed);
+    const panel: HTMLElement | null = this.root.querySelector<HTMLElement>('.config-panel');
+    panel?.classList.toggle('is-collapsed', this.configCollapsed);
+    const btn: HTMLElement | null = this.root.querySelector<HTMLElement>('.config-toggle');
+    if (btn) {
+      btn.setAttribute('aria-expanded', this.configCollapsed ? 'false' : 'true');
+      btn.innerHTML = this.configCollapsed ? '&#9656;' : '&#9662;';
+    }
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {
@@ -294,19 +899,16 @@ export class DashboardView {
     const title: string | undefined = btn.dataset.title;
     const repo: string | undefined = btn.dataset.repo;
     if (!ticketId || !repo) return;
-    this.stopActiveStream();
-    this.activeRunId = null;
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
       const result: LaunchResult = await launchAgent(ticketId, title ?? ticketId, repo);
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, ticketId, title ?? ticketId);
+      this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Launch failed';
-      this.openDrawer(ticketId, title ?? ticketId);
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(ticketId, message);
     } finally {
       btn.disabled = false;
     }
@@ -340,19 +942,16 @@ export class DashboardView {
     if (!payload) return;
     const { body, ticketId, title } = payload;
 
-    this.stopActiveStream();
-    this.activeRunId = null;
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
       const result: LaunchResult = await launchRun(body);
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, ticketId, title);
+      this.openRunTab(result.runId, ticketId || title);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Launch failed';
-      this.openDrawer(ticketId, title);
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(ticketId || title, message);
     } finally {
       btn.disabled = false;
     }
@@ -378,61 +977,6 @@ export class DashboardView {
     }
   }
 
-  private openDrawer(ticketId: string, title: string): void {
-    this.drawerTitle.textContent = title ? `${ticketId} — ${title}` : ticketId;
-    this.drawerBody.innerHTML = '';
-    this.drawerFooter.textContent = '';
-    this.drawerPr.innerHTML = '';
-    this.drawer.hidden = false;
-  }
-
-  private closeDrawer(): void {
-    this.stopActiveStream();
-    this.activeRunId = null;
-    this.drawer.hidden = true;
-  }
-
-  private appendLine(event: RunEvent): void {
-    const line: HTMLDivElement = document.createElement('div');
-    line.className = `run-line run-line-${event.kind}`;
-    line.textContent = event.text;
-    this.drawerBody.appendChild(line);
-    this.drawerBody.scrollTop = this.drawerBody.scrollHeight;
-    if (event.kind === 'run-complete') void this.renderFooter(this.activeRunId ?? '');
-  }
-
-  private async renderFooter(runId: string): Promise<void> {
-    if (!runId || runId !== this.activeRunId) return;
-    const summary: RunStatusSummary | null = await getRun(runId);
-    if (runId !== this.activeRunId) return;
-    this.paintFooter(summary);
-  }
-
-  private paintFooter(summary: RunStatusSummary | null): void {
-    this.drawerFooter.textContent = '';
-    if (!summary) return;
-
-    const statusLine: HTMLDivElement = document.createElement('div');
-    statusLine.className = 'run-drawer-footer-status';
-    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
-    this.drawerFooter.appendChild(statusLine);
-
-    if (summary.prNumber == null) return;
-    const prLine: HTMLDivElement = document.createElement('div');
-    prLine.className = 'run-drawer-footer-pr';
-    const repoParts: string[] = summary.repo.split('/');
-    if (repoParts.length === 2 && repoParts[0] && repoParts[1]) {
-      const link: HTMLAnchorElement = document.createElement('a');
-      link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = `PR #${summary.prNumber}`;
-      prLine.appendChild(link);
-    } else {
-      prLine.textContent = `PR #${summary.prNumber}`;
-    }
-    this.drawerFooter.appendChild(prLine);
-  }
 }
 
 export function bootstrap(): void {

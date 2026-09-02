@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { renderDashboard, renderPrPanel } from './render';
+import { renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer } from './render';
+import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
+import type { CmuxTabView } from './logic/cmuxPanel';
+import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -36,7 +39,7 @@ describe('renderDashboard', () => {
     const el: HTMLDivElement = root();
     expect(() => renderDashboard(el, snapshot({ steps: [] }), NOW)).not.toThrow();
     expect(el.innerHTML.length).toBeGreaterThan(0);
-    expect(el.innerHTML).toContain('BACKLOG RUNNER');
+    expect(el.innerHTML).toContain('GoMaestro');
   });
 
   it('shows the degraded banner when sources are degraded', () => {
@@ -64,10 +67,26 @@ describe('renderDashboard', () => {
     renderDashboard(el, scoped, NOW, [], ['org/alpha', 'org/beta'], 'org/alpha');
     const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.repo-select');
     expect(select).not.toBeNull();
-    expect(el.querySelector('.topbar .repo-select')).not.toBeNull();
+    expect(el.querySelector('.legend .repo-select')).not.toBeNull();
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(['', 'org/alpha', 'org/beta']);
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('org/alpha');
     expect(el.querySelectorAll('.pr-card').length).toBe(2);
+  });
+
+  it('renders a theme-select with an option per theme and marks the current one selected', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, 'dracula');
+    const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
+    expect(select).not.toBeNull();
+    expect(Array.from(select!.options).map((o) => o.value)).toEqual(THEMES.map((t) => t.id));
+    expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('dracula');
+  });
+
+  it('defaults the theme-select to the default theme id when no themeId is passed', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
+    expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe(DEFAULT_THEME_ID);
   });
 
   it('escapes untrusted ticket titles to prevent XSS', () => {
@@ -137,6 +156,54 @@ describe('renderDashboard', () => {
     const emptyNote: Element | null = el.querySelector('.agent-list .empty-note');
     expect(emptyNote).not.toBeNull();
     expect(emptyNote?.textContent).toContain('No agents running.');
+  });
+
+  it('scopes running and recent runs to the selected repo', () => {
+    const el: HTMLDivElement = root();
+    const mk = (id: string, ticketId: string, repo: string, status: string): RunSummary => ({
+      id, ticketId, repo, status, attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null,
+    });
+    const runs: RunSummary[] = [
+      mk('r1', 'ALPHA-1', 'org/alpha', 'running'),
+      mk('r2', 'BETA-2', 'org/beta', 'running'),
+      mk('r3', 'ALPHA-3', 'org/alpha', 'succeeded'),
+      mk('r4', 'BETA-4', 'org/beta', 'succeeded'),
+    ];
+
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], 'org/alpha', runs);
+
+    expect(el.querySelectorAll('.agent-row').length).toBe(1);
+    expect(el.querySelectorAll('.recent-run').length).toBe(1);
+    const html: string = el.innerHTML;
+    expect(html).toContain('ALPHA-1');
+    expect(html).toContain('ALPHA-3');
+    expect(html).not.toContain('BETA-2');
+    expect(html).not.toContain('BETA-4');
+  });
+
+  it('renders a footer with attribution, version, updated date, and live stats', () => {
+    const el: HTMLDivElement = root();
+    const running: RunSummary = {
+      id: 'r1', ticketId: 'A-1', repo: 'org/alpha', status: 'running',
+      attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null,
+    };
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], null, [running]);
+    const footer: HTMLElement = el.querySelector<HTMLElement>('.app-footer')!;
+    expect(footer).not.toBeNull();
+    const text: string = footer.textContent ?? '';
+    expect(text).toContain('nloehlein@godaddy.com');
+    expect(text).toContain(`GoMaestro v${__APP_VERSION__}`);
+    expect(text).toContain(`updated ${__BUILD_DATE__}`);
+    expect(text).toContain('2 repos tracked');
+    expect(text).toContain('1 running');
+  });
+
+  it('lists repo options alphabetically by short name', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/zeta', 'org/alpha', 'other/beta'], null);
+    const labels: string[] = Array.from(el.querySelectorAll<HTMLOptionElement>('.repo-select option'))
+      .map((o) => o.textContent ?? '');
+    expect(labels).toEqual(['All repos', 'alpha', 'beta', 'zeta']);
   });
 
   it('shows the attempt against maxAttempts when caps are provided', () => {
@@ -330,12 +397,19 @@ describe('renderPrPanel', () => {
     const html: string = renderPrPanel(prFixture(), false);
     expect(html).not.toContain('pr-rerun-feedback');
     expect(html).not.toContain('class="pr-rerun"');
+    expect(html).not.toContain('pr-review-agent');
   });
 
   it('includes the rerun control when canRerun is true', () => {
     const html: string = renderPrPanel(prFixture(), true);
     expect(html).toContain('pr-rerun-feedback');
     expect(html).toContain('pr-rerun');
+  });
+
+  it('includes the code-review-with-agent button when canRerun is true', () => {
+    const html: string = renderPrPanel(prFixture(), true);
+    expect(html).toContain('pr-review-agent');
+    expect(html).toContain('Code-review with agent');
   });
 
   it('renders a not-found note when there is no PR', () => {
@@ -349,5 +423,161 @@ describe('renderPrPanel', () => {
     const html: string = renderPrPanel(prFixture({ headRefName: payload, url: payload }), false);
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;img');
+  });
+});
+
+function cmuxTabFixture(over: Partial<CmuxTabView> = {}): CmuxTabView {
+  return {
+    windowRef: 'win-1',
+    workspaceRef: 'ws-1',
+    workspaceTitle: 'orchestrator',
+    surfaceRef: 'surface-1',
+    surfaceTitle: 'main',
+    type: 'shell',
+    cwd: '/repo',
+    selected: false,
+    ...over,
+  };
+}
+
+function cmuxStateFixture(over: Partial<CmuxViewState> = {}): CmuxViewState {
+  return {
+    connected: true,
+    tabs: [cmuxTabFixture()],
+    selectedSurface: null,
+    screen: '',
+    isCapturing: false,
+    ...over,
+  };
+}
+
+describe('renderCmuxView', () => {
+  it('renders a not-connected note and no tab list when disconnected', () => {
+    const html: string = renderCmuxView(cmuxStateFixture({ connected: false, tabs: [cmuxTabFixture()] }));
+    expect(html.toLowerCase()).toContain('not connected');
+    expect(html).not.toContain('cmux-tab"');
+  });
+
+  it('renders the tab list with title and workspace/type meta', () => {
+    const html: string = renderCmuxView(cmuxStateFixture());
+    expect(html).toContain('data-surface="surface-1"');
+    expect(html).toContain('main');
+    expect(html).toContain('orchestrator');
+    expect(html).toContain('shell');
+  });
+
+  it('marks the selected tab and shows a prompt to select one when nothing is selected', () => {
+    const html: string = renderCmuxView(cmuxStateFixture());
+    expect(html).toContain('Select a tab');
+    expect(html).not.toContain('is-selected');
+  });
+
+  it('shows the screen, send form, and only universal actions for a non-agent tab when selected', () => {
+    const html: string = renderCmuxView(
+      cmuxStateFixture({ selectedSurface: 'surface-1', screen: 'hello world' }),
+    );
+    expect(html).toContain('is-selected');
+    expect(html).toContain('cmux-screen');
+    expect(html).toContain('hello world');
+    expect(html).toContain('cmux-send');
+    expect(html).toContain('data-action="enter"');
+    expect(html).toContain('data-action="escape"');
+    expect(html).toContain('data-action="interrupt"');
+    expect(html).not.toContain('data-action="continue"');
+    expect(html).not.toContain('data-action="stop"');
+    expect(html).not.toContain('data-action="approve"');
+  });
+
+  it('adds agent actions when the selected tab is an agent-session', () => {
+    const html: string = renderCmuxView(
+      cmuxStateFixture({
+        tabs: [cmuxTabFixture({ surfaceRef: 'agent-1', type: 'agent-session' })],
+        selectedSurface: 'agent-1',
+        screen: '',
+      }),
+    );
+    expect(html).toContain('data-action="continue"');
+    expect(html).toContain('data-action="stop"');
+    expect(html).toContain('data-action="approve"');
+  });
+
+  it('escapes malicious tab titles and screen content', () => {
+    const payload: string = '<img src=x onerror=alert(1)>';
+    const html: string = renderCmuxView(
+      cmuxStateFixture({
+        tabs: [cmuxTabFixture({ surfaceTitle: payload })],
+        selectedSurface: 'surface-1',
+        screen: payload,
+      }),
+    );
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+
+  it('renders a no-tabs note when the tab list is empty', () => {
+    const html: string = renderCmuxView(cmuxStateFixture({ tabs: [] }));
+    expect(html.toLowerCase()).toContain('no cmux tabs');
+  });
+});
+
+describe('renderRunsDrawer', () => {
+  const tab = (over: Partial<RunTabView> = {}): RunTabView => ({
+    id: 'run-1',
+    label: 'TICK-1 — thing',
+    complete: false,
+    ...over,
+  });
+
+  it('renders a tab per run with select and close controls', () => {
+    const html: string = renderRunsDrawer([tab({ id: 'a', label: 'A' }), tab({ id: 'b', label: 'B' })], 'a');
+    expect(html).toContain('data-tabid="a"');
+    expect(html).toContain('data-tabid="b"');
+    expect((html.match(/run-tab-close/g) ?? []).length).toBe(2);
+    expect((html.match(/run-tab-select/g) ?? []).length).toBe(2);
+  });
+
+  it('marks the active tab', () => {
+    const html: string = renderRunsDrawer([tab({ id: 'a' }), tab({ id: 'b' })], 'b');
+    const bTab: string = html.slice(html.indexOf('data-tabid="b"') - 40, html.indexOf('data-tabid="b"'));
+    expect(bTab).toContain('is-active');
+  });
+
+  it('flags completed tabs', () => {
+    const html: string = renderRunsDrawer([tab({ complete: true })], 'run-1');
+    expect(html).toContain('run-tab-dot is-complete');
+  });
+
+  it('provides body, footer, and pr shells', () => {
+    const html: string = renderRunsDrawer([tab()], 'run-1');
+    expect(html).toContain('run-drawer-body');
+    expect(html).toContain('run-drawer-footer');
+    expect(html).toContain('run-drawer-pr');
+  });
+
+  it('escapes malicious labels', () => {
+    const html: string = renderRunsDrawer([tab({ label: '<img src=x onerror=alert(1)>' })], 'run-1');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+});
+
+describe('renderDashboard config panel', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('includes a runs-drawer slot and a config toggle', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
+    expect(el.querySelector('.config-toggle')).not.toBeNull();
+    expect(el.querySelector('.config-panel.is-collapsed')).toBeNull();
+  });
+
+  it('marks the config panel collapsed when requested', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, true);
+    expect(el.querySelector('.config-panel.is-collapsed')).not.toBeNull();
+    expect(el.querySelector('.config-toggle')?.getAttribute('aria-expanded')).toBe('false');
   });
 });

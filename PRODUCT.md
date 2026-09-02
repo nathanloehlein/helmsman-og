@@ -1,12 +1,12 @@
-# Backlog Runner — Product
+# GoMaestro — Product
 
 ## What it is
 
-A read-only dashboard that visualizes an **autonomous, Jira-backlog-driven coding agent** working its loop: claim a ticket → explore → implement → run tests → open a PR → transition the ticket to review → pick the next one. It is the UI half of an internal dev-tooling pattern, not a customer-facing product and not a general orchestration framework.
+A **command center** for autonomous, Jira-backlog-driven coding agents. It both *watches* the loop (claim a ticket → explore → implement → run tests → open a PR → transition to review → next) and *drives* it: launch an agent on any ticket or a free-form task, watch it work live, stop it, review its PR (approve / request-changes / comment), re-run it on the PR branch with feedback, and edit runtime config — all from the browser. It is the UI + orchestrator half of an internal dev-tooling pattern, not a customer-facing product and not a general orchestration framework.
 
 ## Who it's for
 
-The engineer/operator watching the agent. The dashboard is **glanceable**: it answers "what is the agent doing right now, what's queued, what shipped, is anything waiting on me?" at a glance, from across a room. It is not a place where work is done — every control that would mutate state lives elsewhere.
+The engineer/operator running the agents. It must be **glanceable** — "what's running, what's queued, what shipped, what's waiting on me?" readable at a glance — *and* **operable**: the operator launches runs, stops them, and acts on PRs here, without dropping to a terminal or cross-checking Jira and GitHub by hand. It is the one screen an operator keeps open to supervise a fleet of unattended agents.
 
 ## Mode
 
@@ -22,11 +22,14 @@ The engineer/operator watching the agent. The dashboard is **glanceable**: it an
 
 | Panel | Answers | Source |
 | --- | --- | --- |
-| Backlog queue | What's next, in priority order | Jira JQL |
-| Working on | The current ticket + its step log | Jira In-Progress issue + changelog |
-| Recently shipped | What the agent opened for review | The author's recent PRs across all repos (GitHub issue-search by author; each card shows its own repo) |
-| Activity feed | What just happened, newest first | Jira changelog transitions + GitHub PR events |
-| Today / throughput | Completed today, awaiting review, avg cycle, 7-day throughput | Jira counts + changelog deltas |
+| Backlog queue | What's next, in priority order; **Launch** any of them | Jira JQL |
+| New run | Launch any ticket by id, or a free-form task (no ticket) | operator input → orchestrator |
+| Agents running | Live runs — ticket, repo, elapsed, attempt, cost; **Stop**; click → live log drawer | orchestrator run store (SSE) |
+| Recent runs | Completed/failed/stopped runs; click → replayed log + PR link | SQLite run store |
+| PR controls | Any PR's state/CI/review-decision; approve / request-changes / comment; re-run on the branch | GitHub REST (server-side token) |
+| Config | Live-editable non-secret runtime config (adapter, caps, repo map, Jira/GitHub scope) | SQLite overrides over `.env` |
+| Recently shipped | What the agents opened for review | author's recent PRs across repos (GitHub issue-search) |
+| Activity feed / throughput | What just happened; completed today, awaiting review, avg cycle, 7-day throughput | Jira changelog + GitHub PR events |
 
 ## Data & runtime
 
@@ -38,7 +41,7 @@ The engineer/operator watching the agent. The dashboard is **glanceable**: it an
 
 ## Product truth to preserve
 
-- Read-only. The dashboard observes; it never writes to Jira or GitHub.
+- The **human merge gate is absolute**: the agent never merges, and there is **no merge control in the UI** — merge is always a deliberate action on GitHub. This is the one hard invariant; every other write (claim/transition a ticket, open/review a PR, re-run) is allowed and operator- or agent-initiated.
 - The topbar/Working-on `repo` label comes from `GITHUB_REPO`, or `@<author>` when unset. Because shipped PRs are now sourced by author across repos, this label is a scope hint (whose activity), not a guarantee that a given ticket lives in that repo.
 - The permission note ("read/write scoped to this branch; merge requires human approval") is a load-bearing statement of the agent's contract, not decoration.
 - Unsourceable metrics are omitted rather than faked (token/cost accounting lives in neither Jira nor GitHub, so it isn't shown).

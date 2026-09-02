@@ -31,6 +31,11 @@ const deps: RouterDeps = {
   setConfig: (_key: string, _value: string) => ({ ok: true }),
   prStatus: async (_repo: string, _prNumber: number) => samplePrStatus,
   submitReview: async (_repo: string, _prNumber: number, _event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', _body: string) => ({ ok: true as const }),
+  cmuxListTabs: async () => ({ connected: true, tabs: [] }),
+  cmuxReadScreen: async (_surface: string, _lines: number) => ({ ok: true as const, text: '' }),
+  cmuxSend: async (_surface: string, _text: string, _enter: boolean) => ({ ok: true as const }),
+  cmuxAction: async (_surface: string, _provider: string | null, _action: string) => ({ ok: true as const, keys: [] }),
+  cmuxKey: async (_surface: string, _key: string) => ({ ok: true as const }),
 };
 
 describe('handleApi', () => {
@@ -155,6 +160,26 @@ describe('agent control routes', () => {
 
   it('rejects a rerun launch missing prNumber', async () => {
     const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'rerun', repo: 'o/r' }, launchDeps);
+    expect(r?.status).toBe(400);
+  });
+
+  it('launches a review and calls launch with repo, prNumber, and mode', async () => {
+    const launch = vi.fn((_b: { repo: string; prNumber?: number; mode?: string }) => 'run-11');
+    const reviewDeps = { ...launchDeps, launch } as unknown as RouterDeps;
+    const r = await handleApi(
+      'POST',
+      '/api/agents/launch',
+      new URLSearchParams(),
+      { mode: 'review', repo: 'o/r', prNumber: 12 },
+      reviewDeps,
+    );
+    expect(launch).toHaveBeenCalledWith({ repo: 'o/r', prNumber: 12, mode: 'review' });
+    expect(r?.status).toBe(200);
+    expect((r?.json as { runId: string }).runId).toBe('run-11');
+  });
+
+  it('rejects a review launch missing prNumber', async () => {
+    const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'review', repo: 'o/r' }, launchDeps);
     expect(r?.status).toBe(400);
   });
 });
@@ -290,5 +315,82 @@ describe('POST /api/pr/review', () => {
     const r = await handleApi('POST', '/api/pr/review', new URLSearchParams(), { repo: 'o/r', number: 5, event: 'APPROVE', body: '' }, reviewDeps);
     expect(r?.status).toBe(400);
     expect(r?.json).toEqual({ error: 'nope' });
+  });
+});
+
+function baseCmuxDeps(over: Partial<RouterDeps>): RouterDeps {
+  return {
+    cmuxListTabs: () => Promise.resolve({ connected: true, tabs: [] }),
+    cmuxReadScreen: () => Promise.resolve({ ok: true, text: 'screen' }),
+    cmuxSend: () => Promise.resolve({ ok: true }),
+    cmuxAction: () => Promise.resolve({ ok: true, keys: ['Enter'] }),
+    cmuxKey: () => Promise.resolve({ ok: true }),
+    ...over,
+  } as unknown as RouterDeps;
+}
+
+describe('cmux endpoints', () => {
+  it('GET /api/cmux/tabs returns the bridge result', async () => {
+    const res = await handleApi('GET', '/api/cmux/tabs', new URLSearchParams(), null, baseCmuxDeps({}));
+    expect(res).toEqual({ status: 200, json: { connected: true, tabs: [] } });
+  });
+
+  it('GET /api/cmux/screen requires a surface', async () => {
+    const res = await handleApi('GET', '/api/cmux/screen', new URLSearchParams(), null, baseCmuxDeps({}));
+    expect(res?.status).toBe(400);
+  });
+
+  it('POST /api/cmux/send forwards text + enter, requires surface and text', async () => {
+    const calls: unknown[] = [];
+    const cmuxDeps = baseCmuxDeps({
+      cmuxSend: (s, t, e) => {
+        calls.push([s, t, e]);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const bad = await handleApi('POST', '/api/cmux/send', new URLSearchParams(), { surface: 'surface:1' }, cmuxDeps);
+    expect(bad?.status).toBe(400);
+    const ok = await handleApi('POST', '/api/cmux/send', new URLSearchParams(), { surface: 'surface:1', text: 'ls', enter: true }, cmuxDeps);
+    expect(ok?.status).toBe(200);
+    expect(calls).toEqual([['surface:1', 'ls', true]]);
+  });
+
+  it('POST /api/cmux/action rejects an unknown action', async () => {
+    const cmuxDeps = baseCmuxDeps({ cmuxAction: () => Promise.resolve({ ok: false, error: 'unknown action' }) });
+    const res = await handleApi('POST', '/api/cmux/action', new URLSearchParams(), { surface: 'surface:1', action: 'nope' }, cmuxDeps);
+    expect(res?.status).toBe(400);
+  });
+
+  it('POST /api/cmux/key requires surface and key', async () => {
+    const noSurface = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { key: 'up' }, baseCmuxDeps({}));
+    expect(noSurface?.status).toBe(400);
+    const noKey = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { surface: 'surface:1' }, baseCmuxDeps({}));
+    expect(noKey?.status).toBe(400);
+  });
+
+  it('POST /api/cmux/key rejects a disallowed key without calling cmuxKey', async () => {
+    const calls: unknown[] = [];
+    const cmuxDeps = baseCmuxDeps({
+      cmuxKey: (s, k) => {
+        calls.push([s, k]);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const res = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { surface: 'surface:1', key: 'f1' }, cmuxDeps);
+    expect(res?.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+
+  it('POST /api/cmux/key forwards an allowed key to cmuxKey', async () => {
+    const calls: unknown[] = [];
+    const cmuxDeps = baseCmuxDeps({
+      cmuxKey: (s, k) => {
+        calls.push([s, k]);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const res = await handleApi('POST', '/api/cmux/key', new URLSearchParams(), { surface: 'surface:1', key: 'up' }, cmuxDeps);
+    expect(res).toEqual({ status: 200, json: { ok: true } });
+    expect(calls).toEqual([['surface:1', 'up']]);
   });
 });

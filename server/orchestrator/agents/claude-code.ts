@@ -4,6 +4,16 @@ import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } fr
 import { mapStreamLine } from './claude-stream';
 
 export function buildPrompt(task: AgentTask): string {
+  if (task.review && task.prBranch && task.prNumber) {
+    return [
+      `You are code-reviewing open pull request #${task.prNumber} on the current branch (${task.prBranch}).`,
+      `The repository checkout is your current working directory.`,
+      `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
+      `Do a thorough code review of this PR (use the code-review skill if available).`,
+      `Write your review as GitHub-flavored markdown to a file named .agent-review.md in the repo root.`,
+      `Do NOT modify code, commit, push, open a pull request, merge, or approve — produce ONLY the review file.`,
+    ].join(' ');
+  }
   if (task.prBranch && task.prNumber) {
     return [
       `You are updating open pull request #${task.prNumber} on the current branch (${task.prBranch}).`,
