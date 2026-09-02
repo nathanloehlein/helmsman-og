@@ -44,4 +44,25 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('do NOT open a new pull request');
     expect(prompt).not.toContain('Jira ticket');
   });
+
+  it('builds a review prompt that targets the PR branch and forbids code changes, push, merge, or approval', () => {
+    const task: AgentTask = {
+      ticketId: 'review',
+      title: '',
+      repo: 'o/r',
+      jiraBaseUrl: '',
+      prBranch: 'fix/x',
+      prNumber: 12,
+      review: true,
+    };
+    const prompt: string = buildPrompt(task);
+    expect(prompt).toContain('code-review');
+    expect(prompt).toContain('#12');
+    expect(prompt).toContain('.agent-review.md');
+    expect(prompt).toContain('Do NOT');
+    expect(prompt).toContain('push');
+    expect(prompt).toContain('merge');
+    expect(prompt).toContain('approve');
+    expect(prompt).not.toContain('Address this review feedback');
+  });
 });

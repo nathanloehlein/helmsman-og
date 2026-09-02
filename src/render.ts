@@ -398,7 +398,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
   const checks: { passed: number; failed: number; pending: number } = pr.checks ?? { passed: 0, failed: 0, pending: 0 };
   const ciClass: string = checks.failed > 0 ? 'pr-ci mono pr-ci-bad' : 'pr-ci mono';
   const rerun: string = canRerun
-    ? '<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea><button class="pr-rerun">Re-run with feedback</button>'
+    ? '<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea><button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>'
     : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
   return `
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">

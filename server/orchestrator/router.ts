@@ -81,6 +81,11 @@ export async function handleApi(
       const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'rerun', feedback: b.feedback });
       return { status: 200, json: { runId } };
     }
+    if (b.mode === 'review') {
+      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
+      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'review' });
+      return { status: 200, json: { runId } };
+    }
     if (b.mode === 'freeform') {
       if (!b.task) return { status: 400, json: { error: 'task required' } };
       const runId = deps.launch({ repo: b.repo, task: b.task });

@@ -112,6 +112,29 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.feedback ?? '',
           prBranch: pr.headRefName, prNumber: pr.number,
         };
+      } else if (body.mode === 'review') {
+        const pr: PrStatus | null =
+          cfg.github && body.prNumber ? await fetchPrStatus(cfg.github, body.repo, body.prNumber) : null;
+        if (!pr) {
+          const ts: string = new Date().toISOString();
+          const failedRow: RunRow = {
+            id: runId, ticketId: 'review', repo: body.repo, adapter: adapter.id,
+            status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
+            endedAt: ts, costUsd: null, worktreePath: null,
+          };
+          db.insertRun(failedRow);
+          const message: string = `could not resolve PR #${body.prNumber ?? '?'} for review`;
+          db.appendEvent(runId, 'error', message, ts);
+          db.appendEvent(runId, 'run-complete', 'failed', ts);
+          bus.publish(runId, { kind: 'error', text: message });
+          bus.publish(runId, { kind: 'run-complete', text: 'failed' });
+          return;
+        }
+        taskObj = {
+          ticketId: 'review', title: `review #${pr.number}`, repo: body.repo,
+          jiraBaseUrl: cfg.jira?.baseUrl ?? '',
+          prBranch: pr.headRefName, prNumber: pr.number, review: true,
+        };
       } else {
         const ticketId: string = body.ticketId ?? 'freeform';
         const fetchedTitle: string | null =
@@ -143,6 +166,14 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         maxAttempts: cfg.maxAttempts,
         maxCostUsd: cfg.maxCostUsd,
         isStopped: () => control.stopped,
+        readReview: (worktreePath: string) =>
+          readFile(join(worktreePath, '.agent-review.md'), 'utf8').catch((): null => null),
+        postReview: (repo: string, prNumber: number, reviewBody: string) => {
+          const g: AppConfig['github'] = configStore.current().github;
+          return g
+            ? ghSubmitReview(g, repo, prNumber, 'COMMENT', reviewBody)
+            : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
+        },
       });
     } finally {
       pm.remove(runId);

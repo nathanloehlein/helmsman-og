@@ -6,6 +6,7 @@ export interface AgentTask {
   task?: string;
   prBranch?: string;
   prNumber?: number;
+  review?: boolean;
 }
 
 export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error' | 'run-complete';

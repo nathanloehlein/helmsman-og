@@ -668,6 +668,67 @@ describe('DashboardView drawer survives polling', () => {
     expect(FakeEventSource.instances.length).toBeGreaterThan(0);
   });
 
+  it('launches a code review with the agent and opens the drawer from the PR lookup panel', async () => {
+    const response: DashboardResponse = await buildResponse();
+    response.repos = [...response.repos, 'o/r'];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents/launch')) {
+        return { ok: true, status: 200, json: async () => ({ runId: 'run-review-1' }) } as unknown as Response;
+      }
+      if (url.includes('/api/pr?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            number: 7,
+            repo: 'o/r',
+            state: 'open',
+            draft: false,
+            merged: false,
+            headRefName: 'feature-branch',
+            reviewDecision: 'REVIEW_REQUIRED',
+            comments: 0,
+            checks: { passed: 1, failed: 0, pending: 0 },
+            url: 'https://github.com/o/r/pull/7',
+          }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
+    input!.value = 'o/r#7';
+    root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('.pr-lookup-result .pr-review-agent')).not.toBeNull();
+    });
+
+    root.querySelector<HTMLButtonElement>('.pr-lookup-result .pr-review-agent')!.click();
+
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes('/api/agents/launch'))).toBe(true);
+    });
+
+    const launchCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/agents/launch'));
+    const launchBody: unknown = JSON.parse((launchCall![1] as RequestInit).body as string);
+    expect(launchBody).toEqual({ mode: 'review', repo: 'o/r', prNumber: 7 });
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('.run-drawer')?.hasAttribute('hidden')).toBe(false);
+    });
+    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
+  });
+
   it('fetches and renders a PR panel when a URL is pasted into the lookup and Go is clicked', async () => {
     const response: DashboardResponse = await buildResponse();
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
