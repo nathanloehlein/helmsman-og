@@ -23,8 +23,24 @@ export async function createWorktree(agentsRoot: string, repo: string, runId: st
   return { path, branch };
 }
 
+async function removeWorktreeForBranch(repoDir: string, branch: string): Promise<void> {
+  const result = await run('git', ['-C', repoDir, 'worktree', 'list', '--porcelain']).catch(() => null);
+  if (!result) return;
+  const target: string = `refs/heads/${branch}`;
+  let currentPath: string | null = null;
+  for (const line of result.stdout.split('\n')) {
+    if (line.startsWith('worktree ')) currentPath = line.slice('worktree '.length).trim();
+    else if (line.startsWith('branch ') && line.slice('branch '.length).trim() === target && currentPath) {
+      await removeWorktreeAt(repoDir, currentPath).catch(() => undefined);
+      currentPath = null;
+    } else if (line === '') currentPath = null;
+  }
+}
+
 export async function createWorktreeFromBranch(agentsRoot: string, repo: string, runId: string, branch: string): Promise<Worktree> {
   const repoDir: string = join(agentsRoot, repoBasename(repo));
+  await run('git', ['-C', repoDir, 'worktree', 'prune']).catch(() => undefined);
+  await removeWorktreeForBranch(repoDir, branch);
   await run('git', ['-C', repoDir, 'fetch', 'origin', `+${branch}:${branch}`], { maxBuffer: 1024 * 1024 * 16 });
   const path: string = join(repoDir, '.worktrees', runId);
   await run('git', ['-C', repoDir, 'worktree', 'add', path, branch], { maxBuffer: 1024 * 1024 * 16 });

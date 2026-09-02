@@ -65,6 +65,30 @@ describe('createWorktreeFromBranch', () => {
       await rm(agentsRoot, { recursive: true, force: true });
     }
   });
+  it('reuses the branch when a prior rerun left its worktree behind (no refusing-to-fetch)', async () => {
+    const agentsRoot: string = await mkdtemp(join(tmpdir(), 'agents-'));
+    try {
+      const sourceDir: string = join(agentsRoot, 'source');
+      await mkdir(sourceDir, { recursive: true });
+      await execFileAsync('git', ['-C', sourceDir, 'init', '-q', '-b', 'main']);
+      await execFileAsync('git', ['-C', sourceDir, 'config', 'user.email', 'test@example.com']);
+      await execFileAsync('git', ['-C', sourceDir, 'config', 'user.name', 'Test']);
+      await execFileAsync('git', ['-C', sourceDir, 'commit', '-q', '--allow-empty', '-m', 'init']);
+      await execFileAsync('git', ['-C', sourceDir, 'branch', 'fix/x']);
+
+      const repoDir: string = join(agentsRoot, 'repo');
+      await execFileAsync('git', ['clone', '-q', sourceDir, repoDir]);
+
+      const first: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-1', 'fix/x');
+      expect(existsSync(first.path)).toBe(true);
+
+      const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x');
+      expect(existsSync(second.path)).toBe(true);
+      expect(existsSync(first.path)).toBe(false);
+    } finally {
+      await rm(agentsRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('sweepOrphanedWorktrees', () => {
