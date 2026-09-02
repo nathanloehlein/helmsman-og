@@ -57,6 +57,28 @@ function shortRepo(repo: string): string {
   return repo.split('/').pop() ?? repo
 }
 
+const TICKET_RE = /\b[A-Z][A-Z0-9]+-\d+\b/;
+const TICKET_RE_G = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+
+function jiraHref(baseUrl: string, id: string): string {
+  return `${esc(baseUrl.replace(/\/+$/, ''))}/browse/${esc(id)}`;
+}
+
+function ticketLabel(id: string, baseUrl: string | null): string {
+  if (baseUrl && TICKET_RE.test(id)) {
+    return `<a class="ticket-link" href="${jiraHref(baseUrl, id)}" target="_blank" rel="noopener">${esc(id)}</a>`;
+  }
+  return esc(id);
+}
+
+function linkifyTickets(html: string, baseUrl: string | null): string {
+  if (!baseUrl) return html;
+  return html.replace(
+    TICKET_RE_G,
+    (id) => `<a class="ticket-link" href="${jiraHref(baseUrl, id)}" target="_blank" rel="noopener">${id}</a>`,
+  );
+}
+
 function laneNo(index: number): string {
   return String(index + 1).padStart(2, '0');
 }
@@ -114,6 +136,7 @@ export function renderDashboard(
   uiConfig: UiConfig = { config: {}, overridden: [] },
   themeId: string = DEFAULT_THEME_ID,
   configCollapsed: boolean = false,
+  jiraBaseUrl: string | null = null,
 ): void {
   const queue = sortByPriority(data.queue);
   const scopedRuns: RunSummary[] = selectedRepo
@@ -146,7 +169,7 @@ export function renderDashboard(
           (ticket, i) => `
       <li class="lane queue-item">
         <span class="lane-no mono">${laneNo(i)}</span>
-        <span class="ticket-id">${esc(ticket.id)}</span>
+        <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
         <span class="queue-title">${esc(ticket.title)}</span>
         ${laneRail('queued')}
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
@@ -162,7 +185,7 @@ export function renderDashboard(
           (run, i) => `
       <li class="lane agent-row" data-runid="${esc(run.id)}">
         <span class="lane-no mono">${laneNo(i)}</span>
-        <span class="ticket-id">${esc(run.ticketId)}</span>
+        <span class="ticket-id">${ticketLabel(run.ticketId, jiraBaseUrl)}</span>
         <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
         ${laneRail('live')}
         <span class="agent-elapsed mono">${formatRelativeTime(run.startedAt, now)}</span>
@@ -180,7 +203,7 @@ export function renderDashboard(
       const status = PR_STATUS[pr.status];
       const repoShort: string = pr.repo ? shortRepo(pr.repo) : '';
       const subParts: string[] = [
-        pr.ticketId !== '—' ? esc(pr.ticketId) : '',
+        pr.ticketId !== '—' ? ticketLabel(pr.ticketId, jiraBaseUrl) : '',
         repoShort ? esc(repoShort) : '',
         `opened ${formatRelativeTime(pr.openedAt, now)}`,
       ].filter((part) => part !== '');
@@ -202,7 +225,7 @@ export function renderDashboard(
           (event) => `
       <div class="feed-line">
         <span class="feed-time mono">${formatRelativeTime(event.time, now)}</span>
-        <span class="feed-text${event.accent ? ' tag-accent' : ''}">${event.text}</span>
+        <span class="feed-text${event.accent ? ' tag-accent' : ''}">${linkifyTickets(event.text, jiraBaseUrl)}</span>
       </div>`,
         )
         .join('')
@@ -229,7 +252,7 @@ export function renderDashboard(
           return `
       <li class="lane recent-run" data-runid="${esc(run.id)}">
         <span class="lane-no mono">${laneNo(i)}</span>
-        <span class="ticket-id">${esc(run.ticketId || 'freeform')}</span>
+        <span class="ticket-id">${ticketLabel(run.ticketId || 'freeform', jiraBaseUrl)}</span>
         <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
         ${laneRail(statusInfo.laneState)}
         <span class="agent-cost mono">${costText}</span>

@@ -27,7 +27,7 @@ const realFetch: typeof globalThis.fetch | undefined = globalThis.fetch;
 
 async function buildResponse(): Promise<DashboardResponse> {
   const snapshot = await loadMockSnapshot();
-  return { snapshot, degraded: [], repos: [snapshot.repo], selectedRepo: null };
+  return { snapshot, degraded: [], repos: [snapshot.repo], selectedRepo: null, jiraBaseUrl: null };
 }
 
 function cmuxTab(over: Partial<CmuxTabView> = {}): CmuxTabView {

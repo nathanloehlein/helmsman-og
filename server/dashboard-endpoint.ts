@@ -12,6 +12,7 @@ export interface DashboardResponse {
   degraded: string[];
   repos: string[];
   selectedRepo: string | null;
+  jiraBaseUrl: string | null;
 }
 
 export interface Deps {
@@ -110,5 +111,5 @@ export async function buildDashboardResponse(
     }
   }
 
-  return { snapshot, degraded, repos, selectedRepo };
+  return { snapshot, degraded, repos, selectedRepo, jiraBaseUrl: config.jira?.baseUrl ?? null };
 }

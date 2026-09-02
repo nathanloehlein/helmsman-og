@@ -92,6 +92,7 @@ export class DashboardView {
   private cmuxCapturing: boolean = false;
   private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
   private themeId: string = loadThemeId();
+  private jiraBaseUrl: string | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -112,6 +113,7 @@ export class DashboardView {
       this.degraded = response.degraded;
       this.repos = response.repos;
       this.selectedRepo = response.selectedRepo;
+      this.jiraBaseUrl = response.jiraBaseUrl;
     }
     const agents: { runs: RunSummary[]; autoClaim: string[]; caps: AgentCaps } = await fetchAgents();
     this.runs = agents.runs;
@@ -143,6 +145,7 @@ export class DashboardView {
       this.uiConfig,
       this.themeId,
       this.configCollapsed,
+      this.jiraBaseUrl,
     );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');

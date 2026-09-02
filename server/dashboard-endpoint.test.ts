@@ -21,6 +21,15 @@ describe('buildDashboardResponse', () => {
     const r = await buildDashboardResponse(FULL_ENV, NOW, OK_DEPS);
     expect(r.degraded).toEqual([]);
     expect(r.snapshot.queue[0].id).toBe('Q-1');
+    expect(r.jiraBaseUrl).toBe('https://x.atlassian.net');
+  });
+
+  it('returns a null jiraBaseUrl when Jira is not configured', async () => {
+    const r = await buildDashboardResponse({}, NOW, {
+      ...OK_DEPS,
+      loadMock: async () => (await import('../src/data/mock')).loadDashboard(),
+    });
+    expect(r.jiraBaseUrl).toBeNull();
   });
 
   it('degrades to mock queue when Jira throws, keeps GitHub', async () => {

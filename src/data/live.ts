@@ -5,6 +5,7 @@ export interface DashboardResponse {
   degraded: string[];
   repos: string[];
   selectedRepo: string | null;
+  jiraBaseUrl: string | null;
 }
 
 export const POLL_MS: number = 30_000;

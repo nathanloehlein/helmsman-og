@@ -54,6 +54,28 @@ describe('renderDashboard', () => {
     expect(el.querySelector('.degraded-banner')).toBeNull();
   });
 
+  it('links ticket IDs to Jira when a base URL is provided', () => {
+    const el: HTMLDivElement = root();
+    const snap: DashboardSnapshot = snapshot({
+      queue: [{ id: 'ABC-12', title: 'thing', priority: 'P1', status: 'in-progress', repo: 'o/r' }],
+      activity: [{ time: NOW.toISOString(), text: '<b>ABC-12</b> &rarr; In Review', accent: true }],
+    });
+    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, false, 'https://jira.example.com/');
+    const links: NodeListOf<HTMLAnchorElement> = el.querySelectorAll<HTMLAnchorElement>('a.ticket-link');
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    links.forEach((a) => expect(a.getAttribute('href')).toBe('https://jira.example.com/browse/ABC-12'));
+  });
+
+  it('leaves ticket IDs as plain text when no Jira base URL is set', () => {
+    const el: HTMLDivElement = root();
+    const snap: DashboardSnapshot = snapshot({
+      queue: [{ id: 'ABC-12', title: 'thing', priority: 'P1', status: 'in-progress', repo: 'o/r' }],
+    });
+    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, false, null);
+    expect(el.querySelector('a.ticket-link')).toBeNull();
+    expect(el.querySelector('.queue-item .ticket-id')?.textContent).toContain('ABC-12');
+  });
+
   it('renders the repo options from the provided list and marks the selected one', () => {
     const el: HTMLDivElement = root();
     const scoped: DashboardSnapshot = snapshot({
