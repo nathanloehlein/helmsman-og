@@ -29,7 +29,7 @@ process.loadEnvFile('.env');
 
 const PORT: number = Number(process.env.ORCHESTRATOR_PORT ?? '8787');
 const DIST: string = join(process.cwd(), 'dist');
-const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.backlog-runner.sqlite'));
+const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.gomaestro.sqlite'));
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();

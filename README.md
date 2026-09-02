@@ -1,4 +1,4 @@
-# Backlog Runner
+# GoMaestro
 
 A control plane for Jira-backlog-driven coding agents. Launch a CLI agent against a
 ticket, watch it work live (explore → implement → test → open a PR), and keep a human

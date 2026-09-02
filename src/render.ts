@@ -260,8 +260,8 @@ export function renderDashboard(
     <div class="deck">
       <aside class="legend">
         <div class="legend-brand">
-          <span class="brand-mark mono">BR</span>
-          <span class="brand">BACKLOG RUNNER</span>
+          <span class="brand-mark mono">GM</span>
+          <span class="brand">GoMaestro</span>
           <span class="brand-sub mono">AGENT JACKFIELD</span>
         </div>
 

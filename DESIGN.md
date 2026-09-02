@@ -1,4 +1,4 @@
-# Backlog Runner — Design
+# GoMaestro — Design
 
 Committed visual world: **Agent Jackfield** — the command center read as a studio patch-bay *normalling schedule*. Every agent run is a numbered lane tied to its ticket/PR by one amber link line; the line's **stroke pattern**, never its colour, carries state. The former **Tactical HUD** (cyan-glow mission-control) and the original light dashboard are anti-reference, not authority. Seed: `operate/direction a04e52f5`, form `operate-b-normalled-jackfield` (user-picked over the rolled mission-control assignment).
 

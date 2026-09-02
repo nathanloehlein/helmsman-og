@@ -71,7 +71,7 @@ export function loadConfig(env: Env): AppConfig {
   const github: GithubConfig | null =
     token && author ? { token, repo: repo ?? '', author } : null;
 
-  const repoLabel: string = repo ?? (github ? `@${github.author}` : 'backlog-runner');
+  const repoLabel: string = repo ?? (github ? `@${github.author}` : 'gomaestro');
   const repoProjectMap: RepoProjectMap = parseRepoProjectMap(req(env, 'REPO_PROJECT_MAP'));
   const botAccountId: string | null = req(env, 'BOT_ACCOUNT_ID');
   const maxAttemptsRaw: string | null = req(env, 'AGENT_MAX_ATTEMPTS');

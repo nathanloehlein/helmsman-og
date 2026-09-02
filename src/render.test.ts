@@ -39,7 +39,7 @@ describe('renderDashboard', () => {
     const el: HTMLDivElement = root();
     expect(() => renderDashboard(el, snapshot({ steps: [] }), NOW)).not.toThrow();
     expect(el.innerHTML.length).toBeGreaterThan(0);
-    expect(el.innerHTML).toContain('BACKLOG RUNNER');
+    expect(el.innerHTML).toContain('GoMaestro');
   });
 
   it('shows the degraded banner when sources are degraded', () => {
