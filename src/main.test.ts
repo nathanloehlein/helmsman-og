@@ -197,7 +197,7 @@ describe('DashboardView drawer survives polling', () => {
 
     const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
     expect(drawer.hidden).toBe(false);
-    expect(drawer.querySelector('.run-drawer-title')?.textContent).toContain('TICK-77');
+    expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-77');
   });
 
   it('closes the drawer and stops the stream when the close button is clicked', async () => {
@@ -216,7 +216,7 @@ describe('DashboardView drawer survives polling', () => {
     await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
 
     const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
-    const closeBtn: HTMLButtonElement = drawer.querySelector<HTMLButtonElement>('.run-drawer-close')!;
+    const closeBtn: HTMLButtonElement = drawer.querySelector<HTMLButtonElement>('.run-tab-close')!;
     closeBtn.click();
 
     expect(drawer.hidden).toBe(true);
@@ -369,7 +369,7 @@ describe('DashboardView drawer survives polling', () => {
 
     const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
     expect(drawer.hidden).toBe(false);
-    expect(drawer.querySelector('.run-drawer-title')?.textContent).toContain('TICK-88');
+    expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-88');
   });
 
   it('saves a config value and refreshes', async () => {
@@ -1331,5 +1331,159 @@ describe('DashboardView drawer survives polling', () => {
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#88c0d0');
     expect(localStorage.getItem('cmux.theme')).toBe('nord');
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
+  });
+});
+
+describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    (globalThis as { EventSource: unknown }).EventSource = FakeEventSource;
+    document.body.innerHTML = '<div id="app"></div>';
+    document.documentElement.removeAttribute('style');
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    (globalThis as { EventSource: unknown }).EventSource = realEventSource;
+    globalThis.fetch = realFetch as typeof globalThis.fetch;
+    document.body.innerHTML = '';
+    localStorage.clear();
+  });
+
+  function runningRun(id: string, ticketId: string) {
+    return {
+      id,
+      ticketId,
+      repo: 'acme/widgets',
+      status: 'running',
+      attempt: 1,
+      prNumber: null,
+      startedAt: new Date().toISOString(),
+      costUsd: null,
+    };
+  }
+
+  it('opens one tab per run with independent live streams and no duplicates', async () => {
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ runs: [runningRun('run-a', 'TICK-A'), runningRun('run-b', 'TICK-B')] }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const rows: NodeListOf<HTMLElement> = root.querySelectorAll<HTMLElement>('.agent-row');
+    expect(rows.length).toBe(2);
+    rows[0].click();
+    rows[1].click();
+
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    expect(FakeEventSource.instances.every((s) => !s.closed)).toBe(true);
+
+    const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    expect(drawer.hidden).toBe(false);
+    expect(drawer.querySelectorAll('.run-tab').length).toBe(2);
+    expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-B');
+
+    rows[0].click();
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-A');
+  });
+
+  it('activates a neighbor when the active tab is closed and hides the drawer when the last closes', async () => {
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ runs: [runningRun('run-a', 'TICK-A'), runningRun('run-b', 'TICK-B')] }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const rows: NodeListOf<HTMLElement> = root.querySelectorAll<HTMLElement>('.agent-row');
+    rows[0].click();
+    rows[1].click();
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+
+    const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
+    drawer.querySelector<HTMLButtonElement>('.run-tab[data-tabid="run-b"] .run-tab-close')!.click();
+    expect(drawer.querySelectorAll('.run-tab').length).toBe(1);
+    expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-A');
+
+    drawer.querySelector<HTMLButtonElement>('.run-tab[data-tabid="run-a"] .run-tab-close')!.click();
+    expect(drawer.hidden).toBe(true);
+    expect(FakeEventSource.instances.every((s) => s.closed)).toBe(true);
+  });
+
+  it('toggles config collapsed and persists it', async () => {
+    const response: DashboardResponse = await buildResponse();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/config')) return { ok: true, status: 200, json: async () => ({ config: { A: '1' }, overridden: [] }) } as unknown as Response;
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const toggle: HTMLButtonElement = root.querySelector<HTMLButtonElement>('.config-toggle')!;
+    expect(root.querySelector('.config-panel.is-collapsed')).toBeNull();
+    toggle.click();
+    expect(root.querySelector('.config-panel.is-collapsed')).not.toBeNull();
+    expect(localStorage.getItem('runner.configCollapsed')).toBe('1');
+    toggle.click();
+    expect(root.querySelector('.config-panel.is-collapsed')).toBeNull();
+    expect(localStorage.getItem('runner.configCollapsed')).toBe('0');
+  });
+
+  it('persists repo scope and re-requests it on a fresh view', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const scoped: string[] = ['acme/widgets', 'acme/other'];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/dashboard')) {
+        const match: RegExpMatchArray | null = url.match(/repo=([^&]+)/);
+        const repo: string | null = match ? decodeURIComponent(match[1]) : null;
+        return { ok: true, status: 200, json: async () => ({ ...response, repos: scoped, selectedRepo: repo }) } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const select: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.repo-select')!;
+    select.value = 'acme/other';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(localStorage.getItem('runner.repoScope')).toBe('acme/other'));
+
+    document.body.innerHTML = '<div id="app"></div>';
+    const root2: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view2: DashboardView = new DashboardView(root2);
+    await view2.refresh();
+    expect(fetchMock.mock.calls.some(([i]) => String(i).includes('/api/dashboard?repo=acme%2Fother'))).toBe(true);
   });
 });

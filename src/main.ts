@@ -1,6 +1,7 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, renderCmuxView, ICON_CLOSE } from './render';
+import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer } from './render';
+import type { RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import {
   launchAgent,
@@ -22,6 +23,12 @@ import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusV
 import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
 import { mapKeyEvent, type CmuxKeyIntent } from './logic/cmuxKeys';
 import { applyTheme, loadThemeId, saveThemeId } from './data/themes';
+import {
+  loadRepoScope,
+  saveRepoScope,
+  loadConfigCollapsed,
+  saveConfigCollapsed,
+} from './logic/prefs';
 
 const CMUX_SCREEN_POLL_MS: number = 750;
 const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
@@ -40,6 +47,16 @@ interface CmuxEventPayload {
   kind?: string;
 }
 
+interface RunTab {
+  runId: string;
+  label: string;
+  lines: RunEvent[];
+  footer: RunStatusSummary | null;
+  pr: { repo: string; number: number } | null;
+  unsub: (() => void) | null;
+  complete: boolean;
+}
+
 function deriveTicketStatus(summary: RunStatusSummary): string {
   if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
   if (summary.status === 'succeeded') return 'Succeeded';
@@ -50,21 +67,19 @@ function deriveTicketStatus(summary: RunStatusSummary): string {
 
 export class DashboardView {
   private readonly root: HTMLElement;
-  private readonly drawer: HTMLElement;
-  private readonly drawerTitle: HTMLElement;
-  private readonly drawerBody: HTMLElement;
-  private readonly drawerFooter: HTMLElement;
-  private readonly drawerPr: HTMLElement;
+  private readonly runDrawerEl: HTMLElement;
+  private runTabs: RunTab[] = [];
+  private activeTabId: string | null = null;
+  private tabSeq: number = 0;
   private snapshot: DashboardSnapshot | null = null;
   private degraded: string[] = [];
   private repos: string[] = [];
-  private selectedRepo: string | null = null;
+  private selectedRepo: string | null = loadRepoScope();
   private runs: RunSummary[] = [];
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private uiConfig: UiConfig = { config: {}, overridden: [] };
-  private activeStreamUnsubscribe: (() => void) | null = null;
-  private activeRunId: string | null = null;
+  private configCollapsed: boolean = loadConfigCollapsed();
   private launchSeq: number = 0;
   private view: 'dashboard' | 'cmux' = 'dashboard';
   private cmuxConnected: boolean = false;
@@ -86,28 +101,8 @@ export class DashboardView {
     const drawer: HTMLDivElement = document.createElement('div');
     drawer.className = 'run-drawer';
     drawer.hidden = true;
-    drawer.innerHTML = `
-      <div class="run-drawer-head">
-        <span class="run-drawer-title mono"></span>
-        <button class="run-drawer-close" aria-label="Close">${ICON_CLOSE}</button>
-      </div>
-      <div class="run-drawer-body mono"></div>
-      <div class="run-drawer-footer mono"></div>
-      <div class="run-drawer-pr"></div>`;
-    const titleEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-title');
-    const bodyEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-body');
-    const footerEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-footer');
-    const prEl: HTMLElement | null = drawer.querySelector<HTMLElement>('.run-drawer-pr');
-    const closeBtn: HTMLButtonElement | null = drawer.querySelector<HTMLButtonElement>('.run-drawer-close');
-    if (!titleEl || !bodyEl || !footerEl || !prEl || !closeBtn) throw new Error('run drawer construction failed');
-    closeBtn.addEventListener('click', (): void => this.closeDrawer());
-    document.body.appendChild(drawer);
-    this.drawer = drawer;
-    this.drawerTitle = titleEl;
-    this.drawerBody = bodyEl;
-    this.drawerFooter = footerEl;
-    this.drawerPr = prEl;
-    this.drawer.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
+    drawer.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
+    this.runDrawerEl = drawer;
   }
 
   async refresh(): Promise<void> {
@@ -144,12 +139,14 @@ export class DashboardView {
       this.caps,
       this.uiConfig,
       this.themeId,
+      this.configCollapsed,
     );
     const select: HTMLSelectElement | null =
       this.root.querySelector<HTMLSelectElement>('.repo-select');
     if (select) {
       select.addEventListener('change', () => {
         this.selectedRepo = select.value || null;
+        saveRepoScope(this.selectedRepo);
         void this.refresh();
       });
     }
@@ -167,6 +164,7 @@ export class DashboardView {
         saveThemeId(this.themeId);
       });
     }
+    this.rehomeRunDrawer();
   }
 
   private paintCmux(): void {
@@ -488,11 +486,6 @@ export class DashboardView {
     await this.refresh();
   }
 
-  private stopActiveStream(): void {
-    this.activeStreamUnsubscribe?.();
-    this.activeStreamUnsubscribe = null;
-  }
-
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
@@ -588,6 +581,26 @@ export class DashboardView {
       return;
     }
 
+    const configToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.config-toggle');
+    if (configToggle) {
+      this.toggleConfig();
+      return;
+    }
+
+    const tabCloseBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.run-tab-close');
+    if (tabCloseBtn) {
+      const id: string | undefined = tabCloseBtn.dataset.tabid;
+      if (id) this.closeRunTab(id);
+      return;
+    }
+
+    const tabSelectBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.run-tab-select');
+    if (tabSelectBtn) {
+      const id: string | undefined = tabSelectBtn.dataset.tabid;
+      if (id) this.setActiveTab(id);
+      return;
+    }
+
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
   }
@@ -626,34 +639,30 @@ export class DashboardView {
     const feedbackEl: HTMLTextAreaElement | null = t.panel.querySelector<HTMLTextAreaElement>('.pr-rerun-feedback');
     const feedback: string = feedbackEl?.value ?? '';
     if (feedback.trim() === '') return;
-    this.stopActiveStream();
     const seq: number = ++this.launchSeq;
     try {
       const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback });
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, `rerun #${t.number}`, '');
+      this.openRunTab(result.runId, `rerun #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Re-run failed';
-      this.openDrawer(`rerun #${t.number}`, '');
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(`rerun #${t.number}`, message);
     }
   }
 
   private async handleReviewAgent(btn: HTMLElement): Promise<void> {
     const t: { panel: HTMLElement; repo: string; number: number } | null = this.prTarget(btn);
     if (!t) return;
-    this.stopActiveStream();
     const seq: number = ++this.launchSeq;
     try {
       const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number });
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, `review #${t.number}`, '');
+      this.openRunTab(result.runId, `review #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Code review failed';
-      this.openDrawer(`review #${t.number}`, '');
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(`review #${t.number}`, message);
     }
   }
 
@@ -682,23 +691,193 @@ export class DashboardView {
     if (!runId) return;
     const ticketEl: HTMLElement | null = row.querySelector<HTMLElement>('.ticket-id');
     const ticketId: string = ticketEl?.textContent ?? runId;
-
-    this.stopActiveStream();
-    ++this.launchSeq;
-    this.openRunDrawerAndStream(runId, ticketId, '');
+    this.openRunTab(runId, ticketId);
   }
 
-  private openRunDrawerAndStream(runId: string, ticketId: string, title: string): void {
-    this.activeRunId = runId;
-    this.openDrawer(ticketId, title);
-    this.activeStreamUnsubscribe = openRunStream(runId, (event: RunEvent): void => this.appendLine(event));
+  private openRunTab(runId: string, label: string): void {
+    const existing: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (existing) {
+      this.setActiveTab(runId);
+      return;
+    }
     const run: RunSummary | undefined = this.runs.find((r: RunSummary): boolean => r.id === runId);
-    if (run && run.prNumber != null) void this.loadDrawerPr(run.repo, run.prNumber);
+    const tab: RunTab = {
+      runId,
+      label,
+      lines: [],
+      footer: null,
+      pr: run && run.prNumber != null ? { repo: run.repo, number: run.prNumber } : null,
+      unsub: null,
+      complete: false,
+    };
+    tab.unsub = openRunStream(runId, (event: RunEvent): void => this.onTabEvent(runId, event));
+    this.runTabs.push(tab);
+    this.activeTabId = runId;
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+    if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number);
   }
 
-  private async loadDrawerPr(repo: string, prNumber: number): Promise<void> {
+  private openErrorTab(label: string, message: string): void {
+    const id: string = `err-${++this.tabSeq}`;
+    const tab: RunTab = {
+      runId: id,
+      label,
+      lines: [{ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message }],
+      footer: null,
+      pr: null,
+      unsub: null,
+      complete: true,
+    };
+    this.runTabs.push(tab);
+    this.activeTabId = id;
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+  }
+
+  private setActiveTab(runId: string): void {
+    if (!this.runTabs.some((t: RunTab): boolean => t.runId === runId)) return;
+    this.activeTabId = runId;
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+  }
+
+  private closeRunTab(runId: string): void {
+    const idx: number = this.runTabs.findIndex((t: RunTab): boolean => t.runId === runId);
+    if (idx < 0) return;
+    this.runTabs[idx].unsub?.();
+    this.runTabs.splice(idx, 1);
+    if (this.activeTabId === runId) {
+      const next: RunTab | undefined = this.runTabs[idx] ?? this.runTabs[idx - 1];
+      this.activeTabId = next ? next.runId : null;
+    }
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+  }
+
+  private onTabEvent(runId: string, event: RunEvent): void {
+    const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (!tab) return;
+    tab.lines.push(event);
+    if (event.kind === 'run-complete') {
+      tab.complete = true;
+      tab.unsub = null;
+    }
+    if (runId === this.activeTabId) {
+      if (event.kind === 'run-complete') this.renderRunDrawer();
+      else this.appendLineDom(event);
+    } else if (event.kind === 'run-complete') {
+      this.markTabComplete(runId);
+    }
+    if (event.kind === 'run-complete') void this.finalizeTab(runId);
+  }
+
+  private markTabComplete(runId: string): void {
+    const dot: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>(
+      `.run-tab[data-tabid="${CSS.escape(runId)}"] .run-tab-dot`,
+    );
+    dot?.classList.add('is-complete');
+  }
+
+  private async finalizeTab(runId: string): Promise<void> {
+    const summary: RunStatusSummary | null = await getRun(runId);
+    const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (!tab) return;
+    tab.footer = summary;
+    if (summary && summary.prNumber != null && !tab.pr) {
+      tab.pr = { repo: summary.repo, number: summary.prNumber };
+    }
+    if (runId === this.activeTabId) {
+      this.renderFooterDom(tab);
+      if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number);
+    }
+  }
+
+  private async loadTabPr(runId: string, repo: string, prNumber: number): Promise<void> {
     const pr: PrStatusView | null = await getPrStatus(repo, prNumber);
-    this.drawerPr.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+    if (runId !== this.activeTabId) return;
+    const prEl: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
+    if (prEl) prEl.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+  }
+
+  private rehomeRunDrawer(): void {
+    const slot: HTMLElement | null = this.root.querySelector<HTMLElement>('.runs-drawer-slot');
+    if (slot && this.runDrawerEl.parentElement !== slot) slot.appendChild(this.runDrawerEl);
+    this.runDrawerEl.hidden = this.runTabs.length === 0;
+  }
+
+  private renderRunDrawer(): void {
+    const tabsView: RunTabView[] = this.runTabs.map((t: RunTab): RunTabView => ({
+      id: t.runId,
+      label: t.label,
+      complete: t.complete,
+    }));
+    this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId);
+    this.runDrawerEl.hidden = this.runTabs.length === 0;
+    const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
+    if (!active) return;
+    const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (body) {
+      for (const event of active.lines) body.appendChild(this.lineEl(event));
+      body.scrollTop = body.scrollHeight;
+    }
+    this.renderFooterDom(active);
+    if (active.pr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
+  }
+
+  private lineEl(event: RunEvent): HTMLDivElement {
+    const line: HTMLDivElement = document.createElement('div');
+    line.className = `run-line run-line-${event.kind}`;
+    line.textContent = event.text;
+    return line;
+  }
+
+  private appendLineDom(event: RunEvent): void {
+    const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (!body) return;
+    body.appendChild(this.lineEl(event));
+    body.scrollTop = body.scrollHeight;
+  }
+
+  private renderFooterDom(tab: RunTab): void {
+    const footer: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-footer');
+    if (!footer) return;
+    footer.textContent = '';
+    const summary: RunStatusSummary | null = tab.footer;
+    if (!summary) return;
+
+    const statusLine: HTMLDivElement = document.createElement('div');
+    statusLine.className = 'run-drawer-footer-status';
+    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
+    footer.appendChild(statusLine);
+
+    if (summary.prNumber == null) return;
+    const prLine: HTMLDivElement = document.createElement('div');
+    prLine.className = 'run-drawer-footer-pr';
+    const repoParts: string[] = summary.repo.split('/');
+    if (repoParts.length === 2 && repoParts[0] && repoParts[1]) {
+      const link: HTMLAnchorElement = document.createElement('a');
+      link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `PR #${summary.prNumber}`;
+      prLine.appendChild(link);
+    } else {
+      prLine.textContent = `PR #${summary.prNumber}`;
+    }
+    footer.appendChild(prLine);
+  }
+
+  private toggleConfig(): void {
+    this.configCollapsed = !this.configCollapsed;
+    saveConfigCollapsed(this.configCollapsed);
+    const panel: HTMLElement | null = this.root.querySelector<HTMLElement>('.config-panel');
+    panel?.classList.toggle('is-collapsed', this.configCollapsed);
+    const btn: HTMLElement | null = this.root.querySelector<HTMLElement>('.config-toggle');
+    if (btn) {
+      btn.setAttribute('aria-expanded', this.configCollapsed ? 'false' : 'true');
+      btn.innerHTML = this.configCollapsed ? '&#9656;' : '&#9662;';
+    }
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {
@@ -706,19 +885,16 @@ export class DashboardView {
     const title: string | undefined = btn.dataset.title;
     const repo: string | undefined = btn.dataset.repo;
     if (!ticketId || !repo) return;
-    this.stopActiveStream();
-    this.activeRunId = null;
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
       const result: LaunchResult = await launchAgent(ticketId, title ?? ticketId, repo);
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, ticketId, title ?? ticketId);
+      this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Launch failed';
-      this.openDrawer(ticketId, title ?? ticketId);
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(ticketId, message);
     } finally {
       btn.disabled = false;
     }
@@ -752,19 +928,16 @@ export class DashboardView {
     if (!payload) return;
     const { body, ticketId, title } = payload;
 
-    this.stopActiveStream();
-    this.activeRunId = null;
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
       const result: LaunchResult = await launchRun(body);
       if (seq !== this.launchSeq) return;
-      this.openRunDrawerAndStream(result.runId, ticketId, title);
+      this.openRunTab(result.runId, ticketId || title);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : 'Launch failed';
-      this.openDrawer(ticketId, title);
-      this.appendLine({ id: 0, runId: '', ts: new Date().toISOString(), kind: 'error', text: message });
+      this.openErrorTab(ticketId || title, message);
     } finally {
       btn.disabled = false;
     }
@@ -790,61 +963,6 @@ export class DashboardView {
     }
   }
 
-  private openDrawer(ticketId: string, title: string): void {
-    this.drawerTitle.textContent = title ? `${ticketId} — ${title}` : ticketId;
-    this.drawerBody.innerHTML = '';
-    this.drawerFooter.textContent = '';
-    this.drawerPr.innerHTML = '';
-    this.drawer.hidden = false;
-  }
-
-  private closeDrawer(): void {
-    this.stopActiveStream();
-    this.activeRunId = null;
-    this.drawer.hidden = true;
-  }
-
-  private appendLine(event: RunEvent): void {
-    const line: HTMLDivElement = document.createElement('div');
-    line.className = `run-line run-line-${event.kind}`;
-    line.textContent = event.text;
-    this.drawerBody.appendChild(line);
-    this.drawerBody.scrollTop = this.drawerBody.scrollHeight;
-    if (event.kind === 'run-complete') void this.renderFooter(this.activeRunId ?? '');
-  }
-
-  private async renderFooter(runId: string): Promise<void> {
-    if (!runId || runId !== this.activeRunId) return;
-    const summary: RunStatusSummary | null = await getRun(runId);
-    if (runId !== this.activeRunId) return;
-    this.paintFooter(summary);
-  }
-
-  private paintFooter(summary: RunStatusSummary | null): void {
-    this.drawerFooter.textContent = '';
-    if (!summary) return;
-
-    const statusLine: HTMLDivElement = document.createElement('div');
-    statusLine.className = 'run-drawer-footer-status';
-    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
-    this.drawerFooter.appendChild(statusLine);
-
-    if (summary.prNumber == null) return;
-    const prLine: HTMLDivElement = document.createElement('div');
-    prLine.className = 'run-drawer-footer-pr';
-    const repoParts: string[] = summary.repo.split('/');
-    if (repoParts.length === 2 && repoParts[0] && repoParts[1]) {
-      const link: HTMLAnchorElement = document.createElement('a');
-      link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = `PR #${summary.prNumber}`;
-      prLine.appendChild(link);
-    } else {
-      prLine.textContent = `PR #${summary.prNumber}`;
-    }
-    this.drawerFooter.appendChild(prLine);
-  }
 }
 
 export function bootstrap(): void {
