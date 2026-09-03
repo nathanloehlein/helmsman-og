@@ -1,5 +1,6 @@
 const REPO_KEY = 'runner.repoScope';
 const CONFIG_COLLAPSED_KEY = 'runner.configCollapsed';
+const RACK_LAYOUT_KEY = 'gomaestro.rackLayout';
 
 function safeGet(key: string): string | null {
   try {
@@ -41,4 +42,12 @@ export function loadConfigCollapsed(): boolean {
 
 export function saveConfigCollapsed(collapsed: boolean): void {
   safeSet(CONFIG_COLLAPSED_KEY, collapsed ? '1' : '0');
+}
+
+export function loadRackLayoutRaw(): string | null {
+  return safeGet(RACK_LAYOUT_KEY);
+}
+
+export function saveRackLayoutRaw(raw: string): void {
+  safeSet(RACK_LAYOUT_KEY, raw);
 }

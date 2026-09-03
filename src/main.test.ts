@@ -1488,7 +1488,7 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(FakeEventSource.instances.every((s) => s.closed)).toBe(true);
   });
 
-  it('toggles config collapsed and persists it', async () => {
+  it('collapses a rack faceplate and persists the layout', async () => {
     const response: DashboardResponse = await buildResponse();
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url: string = String(input);
@@ -1501,14 +1501,13 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
-    const toggle: HTMLButtonElement = root.querySelector<HTMLButtonElement>('.config-toggle')!;
-    expect(root.querySelector('.config-panel.is-collapsed')).toBeNull();
-    toggle.click();
-    expect(root.querySelector('.config-panel.is-collapsed')).not.toBeNull();
-    expect(localStorage.getItem('runner.configCollapsed')).toBe('1');
-    toggle.click();
-    expect(root.querySelector('.config-panel.is-collapsed')).toBeNull();
-    expect(localStorage.getItem('runner.configCollapsed')).toBe('0');
+    const configPlate = (): HTMLElement | null => root.querySelector<HTMLElement>('.faceplate[data-panel="config"]');
+    expect(configPlate()!.classList.contains('is-collapsed')).toBe(false);
+    configPlate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
+    expect(configPlate()!.classList.contains('is-collapsed')).toBe(true);
+    expect(localStorage.getItem('gomaestro.rackLayout')).toContain('"collapsed":true');
+    configPlate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
+    expect(configPlate()!.classList.contains('is-collapsed')).toBe(false);
   });
 
   it('fires a drawer PR action exactly once (no double-handling now the drawer lives in root)', async () => {

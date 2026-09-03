@@ -27,9 +27,19 @@ import { applyTheme, loadThemeId, saveThemeId } from './data/themes';
 import {
   loadRepoScope,
   saveRepoScope,
-  loadConfigCollapsed,
-  saveConfigCollapsed,
+  loadRackLayoutRaw,
+  saveRackLayoutRaw,
 } from './logic/prefs';
+import {
+  deserialize as deserializeRack,
+  movePanel,
+  serialize as serializeRack,
+  setActive as setActivePanel,
+  stackOnto,
+  toggleCollapse,
+  type PanelId,
+  type RackLayout,
+} from './logic/rack';
 
 const CMUX_SCREEN_POLL_MS: number = 750;
 const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
@@ -81,7 +91,7 @@ export class DashboardView {
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private uiConfig: UiConfig = { config: {}, overridden: [] };
-  private configCollapsed: boolean = loadConfigCollapsed();
+  private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private launchSeq: number = 0;
   private view: 'dashboard' | 'cmux' | 'triage' = 'dashboard';
   private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
@@ -152,25 +162,35 @@ export class DashboardView {
       this.caps,
       this.uiConfig,
       this.themeId,
-      this.configCollapsed,
+      this.rackLayout,
       this.jiraBaseUrl,
     );
-    const select: HTMLSelectElement | null =
-      this.root.querySelector<HTMLSelectElement>('.repo-select');
-    if (select) {
-      select.addEventListener('change', () => {
-        this.selectedRepo = select.value || null;
-        saveRepoScope(this.selectedRepo);
-        void this.refresh();
-      });
-    }
+    this.bindHeadControls();
     const autoClaimCheckbox: HTMLInputElement | null =
       this.root.querySelector<HTMLInputElement>('.auto-claim-toggle');
     if (autoClaimCheckbox) {
       autoClaimCheckbox.addEventListener('change', () => void this.handleAutoClaimChange(autoClaimCheckbox));
     }
-    const themeSelect: HTMLSelectElement | null =
-      this.root.querySelector<HTMLSelectElement>('.theme-select');
+    this.bindRackDnD();
+    this.rehomeRunDrawer();
+    const postBody: HTMLElement | null =
+      this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (postBody) {
+      postBody.scrollTop = this.stickToBottom ? postBody.scrollHeight : savedScrollTop;
+    }
+  }
+
+  private bindHeadControls(): void {
+    const repo: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.repo-select');
+    if (repo) {
+      repo.addEventListener('change', () => {
+        this.selectedRepo = repo.value || null;
+        saveRepoScope(this.selectedRepo);
+        if (this.view === 'triage') void this.loadTriage().then(() => this.paint());
+        else void this.refresh();
+      });
+    }
+    const themeSelect: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.theme-select');
     if (themeSelect) {
       themeSelect.addEventListener('change', () => {
         this.themeId = themeSelect.value;
@@ -178,12 +198,51 @@ export class DashboardView {
         saveThemeId(this.themeId);
       });
     }
-    this.rehomeRunDrawer();
-    const postBody: HTMLElement | null =
-      this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
-    if (postBody) {
-      postBody.scrollTop = this.stickToBottom ? postBody.scrollHeight : savedScrollTop;
+  }
+
+  private bindRackDnD(): void {
+    this.root.querySelectorAll<HTMLElement>('.rack-handle').forEach((handle) => {
+      handle.addEventListener('dragstart', (event: DragEvent): void => {
+        const panel: string | undefined = handle.dataset.panel;
+        if (!panel || !event.dataTransfer) return;
+        event.dataTransfer.setData('text/gm-panel', panel);
+        event.dataTransfer.effectAllowed = 'move';
+        handle.closest('.faceplate')?.classList.add('is-dragging');
+      });
+      handle.addEventListener('dragend', (): void => {
+        this.root.querySelectorAll('.faceplate.is-dragging').forEach((el) => el.classList.remove('is-dragging'));
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-drop]').forEach((target) => {
+      target.addEventListener('dragover', (event: DragEvent): void => {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        target.classList.add('is-drop-target');
+      });
+      target.addEventListener('dragleave', (): void => target.classList.remove('is-drop-target'));
+      target.addEventListener('drop', (event: DragEvent): void => {
+        event.preventDefault();
+        target.classList.remove('is-drop-target');
+        this.handleRackDrop(target, event);
+      });
+    });
+  }
+
+  private handleRackDrop(target: HTMLElement, event: DragEvent): void {
+    const panel = (event.dataTransfer?.getData('text/gm-panel') ?? '') as PanelId | '';
+    if (!panel) return;
+    const kind: string | undefined = target.dataset.drop;
+    let next: RackLayout;
+    if (kind === 'head') {
+      next = stackOnto(this.rackLayout, panel, target.dataset.panel as PanelId);
+    } else if (kind === 'end') {
+      next = movePanel(this.rackLayout, panel, Number(target.dataset.col), Number.MAX_SAFE_INTEGER);
+    } else {
+      next = movePanel(this.rackLayout, panel, Number(target.dataset.col), Number(target.dataset.slot));
     }
+    this.rackLayout = next;
+    saveRackLayoutRaw(serializeRack(next));
+    this.paint();
   }
 
   private paintCmux(): void {
@@ -193,7 +252,11 @@ export class DashboardView {
       selectedSurface: this.cmuxPanelState.selectedSurface,
       screen: this.cmuxScreen,
       isCapturing: this.cmuxCapturing,
+      repos: this.repos,
+      selectedRepo: this.selectedRepo,
+      themeId: this.themeId,
     });
+    this.bindHeadControls();
   }
 
   private paintTriage(): void {
@@ -202,15 +265,9 @@ export class DashboardView {
       selectedRepo: this.selectedRepo,
       jiraBaseUrl: this.jiraBaseUrl,
       degraded: this.triageDegraded,
+      themeId: this.themeId,
     });
-    const scope: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.triage-scope');
-    if (scope) {
-      scope.addEventListener('change', () => {
-        this.selectedRepo = scope.value || null;
-        saveRepoScope(this.selectedRepo);
-        void this.loadTriage().then(() => this.paint());
-      });
-    }
+    this.bindHeadControls();
   }
 
   private async loadTriage(): Promise<void> {
@@ -592,9 +649,26 @@ export class DashboardView {
     const viewToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.view-toggle');
     if (viewToggle) {
       const targetView: string | undefined = viewToggle.dataset.view;
+      if (targetView === this.view) return;
       if (targetView === 'cmux') void this.enterCmuxView();
       else if (targetView === 'triage') void this.enterTriageView();
       else this.leaveCmuxView();
+      return;
+    }
+
+    const collapseBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.panel-collapse');
+    if (collapseBtn) {
+      this.rackLayout = toggleCollapse(this.rackLayout, collapseBtn.dataset.panel as PanelId);
+      saveRackLayoutRaw(serializeRack(this.rackLayout));
+      this.paint();
+      return;
+    }
+
+    const slotTab: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.slot-tab');
+    if (slotTab) {
+      this.rackLayout = setActivePanel(this.rackLayout, slotTab.dataset.panelTab as PanelId);
+      saveRackLayoutRaw(serializeRack(this.rackLayout));
+      this.paint();
       return;
     }
 
@@ -679,12 +753,6 @@ export class DashboardView {
     const reviewAgentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-review-agent');
     if (reviewAgentBtn) {
       void this.handleReviewAgent(reviewAgentBtn);
-      return;
-    }
-
-    const configToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.config-toggle');
-    if (configToggle) {
-      this.toggleConfig();
       return;
     }
 
@@ -971,18 +1039,6 @@ export class DashboardView {
       prLine.textContent = `PR #${summary.prNumber}`;
     }
     footer.appendChild(prLine);
-  }
-
-  private toggleConfig(): void {
-    this.configCollapsed = !this.configCollapsed;
-    saveConfigCollapsed(this.configCollapsed);
-    const panel: HTMLElement | null = this.root.querySelector<HTMLElement>('.config-panel');
-    panel?.classList.toggle('is-collapsed', this.configCollapsed);
-    const btn: HTMLElement | null = this.root.querySelector<HTMLElement>('.config-toggle');
-    if (btn) {
-      btn.setAttribute('aria-expanded', this.configCollapsed ? 'false' : 'true');
-      btn.innerHTML = this.configCollapsed ? '&#9656;' : '&#9662;';
-    }
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {

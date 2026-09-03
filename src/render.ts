@@ -4,6 +4,7 @@ import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority, Ticket, TicketStatus } from './types';
 import type { TriageGroupsView } from './data/triage';
+import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import type { AgentCaps, RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
@@ -48,25 +49,48 @@ const ICON_STOP: string =
 export const ICON_CLOSE: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
 
+const ICON_GRIP: string =
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="4" r="1.15"/><circle cx="10.5" cy="4" r="1.15"/><circle cx="5.5" cy="8" r="1.15"/><circle cx="10.5" cy="8" r="1.15"/><circle cx="5.5" cy="12" r="1.15"/><circle cx="10.5" cy="12" r="1.15"/></svg>'
+
+const ICON_COLLAPSE: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>'
+
+const ICON_EXPAND: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>'
+
+const ICON_INFO: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v3.4" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.5" fill="currentColor" stroke="none"/></svg>'
+
+const ICON_CHECK: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>'
+
+const ICON_X_MARK: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
+
+const ICON_DOTS: string =
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>'
+
+const ICON_REQUEST: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.6V8l2.4 1.6"/></svg>'
+
+const ICON_PENCIL: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 3.5l2 2L6 12l-2.6.6L4 10z"/></svg>'
+
+const ICON_KNOB: string =
+  '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.4" fill="currentColor" stroke="none"/><path d="M10 2.8v1.8M10 15.4v1.8M2.8 10h1.8M15.4 10h1.8M4.9 4.9l1.3 1.3M13.8 13.8l1.3 1.3M15.1 4.9l-1.3 1.3M6.2 13.8l-1.3 1.3" stroke-linecap="round"/></svg>'
+
+const ICON_BNC: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>'
+
 const DIRECTION_CONTRACT: string = `<!--
-  IMPECCABLE DIRECTION CONTRACT — seed key operate/direction a04e52f5 (form: normalled jackfield, grounded #6-assignment overridden by user pick).
-  THESIS: an agent fleet read as a studio patch-bay normalling schedule — every run is a numbered lane tied to its ticket/PR by one amber link line whose STROKE PATTERN, not colour, carries state. Refuses the generic dark-SaaS card grid and the sci-fi HUD glow it replaced.
-  OWN-WORLD: black glass ground (#07070a), ONE signal amber (#f5a623). Condensed grotesque + tabular lane numbers 01..N. Fixed left legend strip, console lanes on the right, dark edge gutters (nothing spans full width). Rank by inversion: the focused lane knocks dark out of a solid amber plate. State = link-rail pattern: unbroken live · gap // stopped · doubled selected · open-ring ⊗ failed · faint queued. No colour carries state.
-  STORY: operator scans lanes across the room, reads each run's state from its rail, and acts — launch, stop, review, re-run — without leaving the board. Merge is never here.
-  FIRST VIEWPORT: left legend (brand, fleet status, repo scope, merge-gate note); right console — topbar (scope · MODE LIVE · clock), then numbered lanes for the backlog queue and running agents, rails running to ticket/PR.
-  FORM: normalled jackfield (operate-b-normalled-jackfield); user-picked over assigned mission-control; seed a04e52f5.
+  IMPECCABLE DIRECTION CONTRACT — seed key operate/direction 0bef9ada (form: benchtop instrument rack, grounded #7 assignment, user-picked over challengers + canon).
+  THESIS: GoMaestro is a bench of rack-mounted test instruments — each panel is a rack unit the operator drags to reorder, stacks into a tabbed drawer, and powers down. Refuses the mission-control HUD and the incumbent patch-bay jackfield it replaces.
+  OWN-WORLD: brushed-graphite faceplates seated on black rack rails; silkscreen small-caps labels in self-hosted JetBrains Mono; a phosphor-green oscilloscope graticule carries the live run log; amber seven-segment numerics for counts, cost, elapsed; LED indicator lamps (green live · amber queued · red fault) each with a shape tell so hue is never the sole signal; knurled-knob and BNC-jack accents; blanking panels for empty and powered-down slots.
+  STORY: the operator arranges their bench, reads fleet state at a glance across lit faceplates, and launches/stops/reviews from momentary push-buttons — and there is no merge switch anywhere on the bench.
+  FIRST VIEWPORT: a bench nameplate (brand plate, LIVE lamp, scope rotary, page tabs BENCH · TRIAGE · CMUX) over a two-bay rack of instrument faceplates; the oscilloscope log drawer seats below; the merge-gate note is screened onto a bench strip.
+  FORM: benchtop instrument rack (operate, grounded candidate 7 of 7); seed 0bef9ada.
   FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 -->`
-
-function formatCycle(minutes: number): string {
-  if (minutes <= 0) return '—'
-  if (minutes < 60) return `${minutes}m`
-  if (minutes < 1440) {
-    const hours: number = minutes / 60
-    return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`
-  }
-  return `${(minutes / 1440).toFixed(1)}d`
-};
 
 function shortRepo(repo: string): string {
   return repo.split('/').pop() ?? repo
@@ -138,6 +162,119 @@ function buildSparkline(values: number[]): string {
     </svg>`;
 }
 
+export type PageView = 'dashboard' | 'triage' | 'cmux';
+
+const PAGE_TABS: { view: PageView; label: string }[] = [
+  { view: 'dashboard', label: 'Bench' },
+  { view: 'triage', label: 'Triage' },
+  { view: 'cmux', label: 'cmux' },
+];
+
+const PANEL_TITLE: Record<PanelId, string> = {
+  newrun: 'New run',
+  backlog: 'Backlog queue',
+  running: 'Agents running',
+  recent: 'Recent runs',
+  pr: 'Review a PR',
+  shipped: 'Recently shipped',
+  activity: 'Activity feed',
+  config: 'Config',
+};
+
+interface PanelDef {
+  body: string;
+  count: number | null;
+  lamp: 'live' | 'queued' | 'idle';
+}
+
+export interface BenchHeadOpts {
+  active: PageView;
+  repos: string[];
+  selectedRepo: string | null;
+  themeId: string;
+  readout: { running: number; queued: number; review: number } | null;
+  autoClaim: string;
+}
+
+export function renderBenchHead(opts: BenchHeadOpts): string {
+  const sorted: string[] = [...opts.repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
+  const scopeOptions: string = ['<option value="">All repos</option>']
+    .concat(
+      sorted.map(
+        (repo) => `<option value="${esc(repo)}"${repo === opts.selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
+      ),
+    )
+    .join('');
+  const themeOptions: string = THEMES.map(
+    (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
+  ).join('');
+  const tabs: string = PAGE_TABS.map(
+    (t) =>
+      `<button class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" type="button" data-view="${t.view}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</button>`,
+  ).join('');
+  const readout: string = opts.readout
+    ? `<div class="bench-readout mono" aria-label="Fleet status">
+         <span class="seg"><b class="seg7">${opts.readout.running}</b> run</span>
+         <span class="seg"><b class="seg7">${opts.readout.queued}</b> queue</span>
+         <span class="seg"><b class="seg7">${opts.readout.review}</b> review</span>
+       </div>`
+    : '';
+  return `
+    <header class="bench-head">
+      <div class="nameplate">
+        <span class="nameplate-mark mono" aria-hidden="true">GM</span>
+        <span class="nameplate-name">GoMaestro</span>
+        <span class="nameplate-model mono">MDL·01 FLEET CONSOLE</span>
+        <span class="bench-jacks" aria-hidden="true">${ICON_KNOB}${ICON_BNC}${ICON_BNC}</span>
+      </div>
+      <span class="lamp lamp-live is-pulsing" role="img" aria-label="Live">LIVE</span>
+      ${readout}
+      <div class="bench-controls">
+        <select class="repo-select" aria-label="Scope by repository">${scopeOptions}</select>
+        ${opts.autoClaim}
+        <select class="theme-select" aria-label="Theme">${themeOptions}</select>
+      </div>
+      <nav class="page-tabs" aria-label="Views">${tabs}</nav>
+    </header>`;
+}
+
+function renderRackSlot(slot: RackSlot, defs: Record<PanelId, PanelDef>, c: number, s: number): string {
+  const active: PanelId = slot.active;
+  const def: PanelDef = defs[active];
+  const header: string =
+    slot.panels.length > 1
+      ? `<div class="slot-tabs" role="tablist">${slot.panels
+          .map(
+            (p) =>
+              `<button class="slot-tab${p === active ? ' is-active' : ''}" type="button" role="tab" aria-selected="${p === active}" data-panel-tab="${p}">${esc(PANEL_TITLE[p])}</button>`,
+          )
+          .join('')}</div>`
+      : `<span class="faceplate-title">${esc(PANEL_TITLE[active])}</span>`;
+  const count: string = def.count != null ? `<span class="faceplate-count seg7">${def.count}</span>` : '';
+  return `
+      <section class="faceplate${slot.collapsed ? ' is-collapsed' : ''}" data-col="${c}" data-slot="${s}" data-panel="${active}">
+        <div class="faceplate-head" data-drop="head" data-panel="${active}">
+          <button class="rack-handle" draggable="true" data-panel="${active}" aria-label="Drag to move ${esc(PANEL_TITLE[active])}">${ICON_GRIP}</button>
+          ${header}
+          <span class="faceplate-lamp lamp lamp-${def.lamp}" aria-hidden="true"></span>
+          ${count}
+          <button class="panel-collapse" type="button" data-panel="${active}" aria-expanded="${slot.collapsed ? 'false' : 'true'}" aria-label="${slot.collapsed ? 'Expand' : 'Collapse'} ${esc(PANEL_TITLE[active])}">${slot.collapsed ? ICON_EXPAND : ICON_COLLAPSE}</button>
+        </div>
+        <div class="faceplate-body" data-drop="body" data-col="${c}" data-slot="${s}">${def.body}</div>
+      </section>`;
+}
+
+function renderRack(layout: RackLayout, defs: Record<PanelId, PanelDef>): string {
+  return `<div class="bench-rack" data-rack>${layout
+    .map(
+      (col, c) =>
+        `<div class="rack-col" data-col="${c}">${col
+          .map((slot, s) => renderRackSlot(slot, defs, c, s))
+          .join('')}<div class="rack-endstop" data-drop="end" data-col="${c}" aria-hidden="true"></div></div>`,
+    )
+    .join('')}</div>`;
+}
+
 export function renderDashboard(
   root: HTMLElement,
   data: DashboardSnapshot,
@@ -150,7 +287,7 @@ export function renderDashboard(
   caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
   uiConfig: UiConfig = { config: {}, overridden: [] },
   themeId: string = DEFAULT_THEME_ID,
-  configCollapsed: boolean = false,
+  layout: RackLayout = defaultLayout(),
   jiraBaseUrl: string | null = null,
 ): void {
   const queue = sortByPriority(data.queue);
@@ -161,18 +298,6 @@ export function renderDashboard(
   const terminalRuns: RunSummary[] = scopedRuns.filter((r) => r.status !== 'running');
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
-  const repoOptions: string = ['<option value="">All repos</option>']
-    .concat(
-      sortedRepos.map(
-        (repo) =>
-          `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
-      ),
-    )
-    .join('');
-
-  const themeOptions: string = THEMES.map(
-    (theme) => `<option value="${esc(theme.id)}"${theme.id === themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
-  ).join('');
 
   const autoClaimToggle: string = selectedRepo
     ? `<label class="auto-claim"><input type="checkbox" class="auto-claim-toggle"${autoClaimRepos.includes(selectedRepo) ? ' checked' : ''}><span>Auto-claim</span></label>`
@@ -285,7 +410,7 @@ export function renderDashboard(
           const isOverridden: boolean = (uiConfig.overridden ?? []).includes(key);
           const help: string = CONFIG_HELP[key] ?? '';
           const hint: string = help
-            ? ` <span class="config-hint" tabindex="0" role="img" aria-label="${esc(help)}" title="${esc(help)}">&#9432;</span>`
+            ? ` <span class="config-hint" tabindex="0" role="img" aria-label="${esc(help)}" title="${esc(help)}">${ICON_INFO}</span>`
             : '';
           return `
       <div class="config-row" data-key="${esc(key)}"${help ? ` title="${esc(help)}"` : ''}>
@@ -298,161 +423,109 @@ export function renderDashboard(
         .join('')
     : '<div class="empty-note">No configuration keys.</div>';
 
-  root.innerHTML = `${DIRECTION_CONTRACT}
-    <div class="deck">
-      <aside class="legend">
-        <div class="legend-brand">
-          <span class="brand-mark mono">GM</span>
-          <span class="brand">GoMaestro</span>
-          <span class="brand-sub mono">AGENT JACKFIELD</span>
+  const panelDefs: Record<PanelId, PanelDef> = {
+    newrun: {
+      lamp: 'idle',
+      count: null,
+      body: `
+        <div class="newrun-body">
+          <div class="newrun-mode-toggle">
+            <label class="newrun-mode-label">
+              <input type="radio" class="newrun-mode" name="newrun-mode" value="ticket" checked>
+              <span>Ticket</span>
+            </label>
+            <label class="newrun-mode-label">
+              <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform">
+              <span>Free-form</span>
+            </label>
+          </div>
+          <div class="newrun-fields">
+            <input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
+            <input class="newrun-title" type="text" placeholder="Title (optional)">
+            <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
+            <select class="newrun-repo" aria-label="Repository for new run">${newRunRepoOptions}</select>
+            <button class="newrun-launch">Launch run</button>
+          </div>
+        </div>`,
+    },
+    backlog: {
+      lamp: queue.length ? 'queued' : 'idle',
+      count: queue.length,
+      body: `<ul class="queue-list lane-list">${queueItems}</ul>`,
+    },
+    running: {
+      lamp: activeRuns.length ? 'live' : 'idle',
+      count: activeRuns.length,
+      body: `<ul class="agent-list lane-list">${agentRows}</ul>`,
+    },
+    recent: {
+      lamp: 'idle',
+      count: terminalRuns.length,
+      body: `<ul class="recent-runs-list lane-list">${recentRunItems}</ul>`,
+    },
+    pr: {
+      lamp: 'idle',
+      count: null,
+      body: `
+        <div class="pr-lookup-form">
+          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" />
+          <button class="pr-lookup-go">Load PR</button>
         </div>
-
-        <div class="legend-block">
-          <div class="legend-head mono">FLEET STATUS</div>
-          <div class="legend-stat"><span class="legend-stat-label">Running</span><span class="legend-stat-val mono">${activeRuns.length}</span></div>
-          <div class="legend-stat"><span class="legend-stat-label">Queued</span><span class="legend-stat-val mono">${queue.length}</span></div>
-          <div class="legend-stat"><span class="legend-stat-label">Awaiting review</span><span class="legend-stat-val mono">${data.stats.awaitingReview}</span></div>
-          <div class="legend-stat"><span class="legend-stat-label">Shipped today</span><span class="legend-stat-val mono">${data.stats.completedToday}</span></div>
-          <div class="legend-stat"><span class="legend-stat-label">Avg cycle</span><span class="legend-stat-val mono">${formatCycle(data.stats.avgCycleMinutes)}</span></div>
-        </div>
-
-        <div class="legend-block">
-          <div class="legend-head mono">SCOPE</div>
-          <select class="repo-select" aria-label="Scope dashboard by repository">${repoOptions}</select>
-          ${autoClaimToggle}
-        </div>
-
-        <div class="legend-block">
-          <div class="legend-head mono">THROUGHPUT · 7D</div>
+        <div class="pr-lookup-result"></div>`,
+    },
+    shipped: {
+      lamp: 'idle',
+      count: data.shipped.length,
+      body: `<div class="shipped-grid">${shippedCards}</div>`,
+    },
+    activity: {
+      lamp: 'idle',
+      count: null,
+      body: `
+        <div class="throughput">
+          <span class="throughput-label mono">Throughput · 7d</span>
           <div class="spark-wrap">${buildSparkline(data.throughput7d)}</div>
         </div>
+        <div class="feed">${activityLines}</div>`,
+    },
+    config: {
+      lamp: 'idle',
+      count: null,
+      body: `
+        <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
+        <div class="config-list">${configRows}</div>`,
+    },
+  };
 
-        <div class="operator-note">
-          ${ICON_LOCK}
-          <span>Read/write scoped to this branch only. Merge requires human approval &mdash; the agent never merges to main, and there is no merge control here.</span>
-        </div>
-      </aside>
-
-      <main class="console">
-        ${banner}
-        <div class="topbar">
-          <span class="pulse-dot" aria-hidden="true"></span>
-          <span class="topbar-scope mono">${selectedRepo ? esc(shortRepo(selectedRepo)) : 'ALL REPOS'}</span>
-          <div class="topbar-sep"></div>
-          <span class="topbar-mode mono">MODE <b>LIVE</b></span>
-          <select class="theme-select" aria-label="Theme">${themeOptions}</select>
-          <button class="view-toggle" type="button" data-view="triage">TRIAGE &#9658;</button>
-          <button class="view-toggle" type="button" data-view="cmux">CMUX &#9658;</button>
-          <div class="topbar-fill"></div>
-          <div class="topbar-stats">
-            <div class="mini-stat"><span class="num mono">${data.stats.completedToday}</span><span class="lbl">Shipped today</span></div>
-            <div class="mini-stat"><span class="num mono">${data.stats.awaitingReview}</span><span class="lbl">Awaiting review</span></div>
-            <div class="mini-stat"><span class="num mono">${formatCycle(data.stats.avgCycleMinutes)}</span><span class="lbl">Avg cycle</span></div>
-          </div>
-        </div>
-
-        <div class="panel newrun-panel">
-          <div class="panel-head">
-            <span class="panel-title">New run</span>
-          </div>
-          <div class="newrun-body">
-            <div class="newrun-mode-toggle">
-              <label class="newrun-mode-label">
-                <input type="radio" class="newrun-mode" name="newrun-mode" value="ticket" checked>
-                <span>Ticket</span>
-              </label>
-              <label class="newrun-mode-label">
-                <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform">
-                <span>Free-form</span>
-              </label>
-            </div>
-            <div class="newrun-fields">
-              <input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
-              <input class="newrun-title" type="text" placeholder="Title (optional)">
-              <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
-              <select class="newrun-repo" aria-label="Repository for new run">${newRunRepoOptions}</select>
-              <button class="newrun-launch">Launch run</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="lanes-grid">
-          <div class="panel">
-            <div class="panel-head">
-              <span class="panel-title">Backlog queue</span>
-              <span class="panel-count mono">${queue.length}</span>
-            </div>
-            <ul class="queue-list lane-list">${queueItems}</ul>
-          </div>
-
-          <div class="panel">
-            <div class="panel-head">
-              <span class="panel-title">Agents running</span>
-              <span class="panel-count mono">${activeRuns.length}</span>
-            </div>
-            <ul class="agent-list lane-list">${agentRows}</ul>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <span class="panel-title">Recent runs</span>
-            <span class="panel-count mono">${terminalRuns.length}</span>
-          </div>
-          <ul class="recent-runs-list lane-list">${recentRunItems}</ul>
-        </div>
-
-        <div class="panel pr-lookup">
-          <div class="panel-head">
-            <span class="panel-title">Review a PR</span>
-          </div>
-          <div class="pr-lookup-form">
-            <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" />
-            <button class="pr-lookup-go">Load PR</button>
-          </div>
-          <div class="pr-lookup-result"></div>
-        </div>
-
-        <div class="console-strip">
-          <div class="panel panel-shipped">
-            <div class="panel-head">
-              <span class="panel-title">Recently shipped</span>
-              <span class="panel-count mono">${data.shipped.length}</span>
-            </div>
-            <div class="shipped-grid">${shippedCards}</div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-head"><span class="panel-title">Activity feed</span></div>
-            <div class="feed">${activityLines}</div>
-          </div>
-        </div>
-
-        <div class="runs-drawer-slot"></div>
-
-        <div class="panel config-panel${configCollapsed ? ' is-collapsed' : ''}">
-          <div class="panel-head">
-            <span class="panel-title">Config</span>
-            <button class="config-toggle" type="button" aria-expanded="${configCollapsed ? 'false' : 'true'}" aria-label="Toggle config">${configCollapsed ? '&#9656;' : '&#9662;'}</button>
-          </div>
-          <div class="config-collapse">
-            <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
-            <div class="config-list">${configRows}</div>
-          </div>
-        </div>
-      </main>
-    </div>
-    <footer class="app-footer mono">
-      <span class="footer-attr">nloehlein@godaddy.com</span>
-      <span class="footer-dot" aria-hidden="true">&bull;</span>
-      <span>GoMaestro v${esc(__APP_VERSION__)}</span>
-      <span class="footer-dot" aria-hidden="true">&bull;</span>
-      <span>updated ${esc(__BUILD_DATE__)}</span>
-      <span class="footer-dot" aria-hidden="true">&bull;</span>
-      <span>${repos.length} repo${repos.length === 1 ? '' : 's'} tracked</span>
-      <span class="footer-dot" aria-hidden="true">&bull;</span>
-      <span>${activeRuns.length} running</span>
-    </footer>`;
+  root.innerHTML = `${DIRECTION_CONTRACT}
+    <div class="bench" data-page="dashboard">
+      ${renderBenchHead({
+        active: 'dashboard',
+        repos,
+        selectedRepo,
+        themeId,
+        readout: { running: activeRuns.length, queued: queue.length, review: data.stats.awaitingReview },
+        autoClaim: autoClaimToggle,
+      })}
+      ${banner}
+      ${renderRack(layout, panelDefs)}
+      <div class="runs-drawer-slot"></div>
+      <div class="operator-note">
+        ${ICON_LOCK}
+        <span>Read/write scoped to this branch only. Merge requires human approval &mdash; the agent never merges to main, and there is no merge control here.</span>
+      </div>
+      <footer class="app-footer mono">
+        <span class="footer-attr">nloehlein@godaddy.com</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span>
+        <span>GoMaestro v${esc(__APP_VERSION__)}</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span>
+        <span>updated ${esc(__BUILD_DATE__)}</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span>
+        <span>${repos.length} repo${repos.length === 1 ? '' : 's'} tracked</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span>
+        <span>${activeRuns.length} running</span>
+      </footer>
+    </div>`;
 }
 
 export interface RunTabView {
@@ -495,7 +568,12 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
   const ciClass: string = checks.failed > 0 ? 'pr-ci mono pr-ci-bad' : 'pr-ci mono';
   const reviews: { requested: number; approved: number; changesRequested: number; commented: number } =
     pr.reviews ?? { requested: 0, approved: 0, changesRequested: 0, commented: 0 };
-  const reviewersBadge: string = `<span class="pr-reviewers mono" title="Reviewers — requested / approved / changes requested / commented">&#8635;${reviews.requested} &#10003;${reviews.approved} &#10007;${reviews.changesRequested} &#9998;${reviews.commented}</span>`;
+  const tally = (icon: string, n: number, label: string): string =>
+    `<span class="tally" title="${label}"><span class="tally-ic" aria-hidden="true">${icon}</span>${n}</span>`;
+  const ciBadge: string =
+    `<span class="${ciClass}">${tally(ICON_CHECK, checks.passed, 'Checks passed')}${tally(ICON_X_MARK, checks.failed, 'Checks failed')}${tally(ICON_DOTS, checks.pending, 'Checks pending')}</span>`;
+  const reviewersBadge: string =
+    `<span class="pr-reviewers mono" aria-label="Reviewers requested ${reviews.requested}, approved ${reviews.approved}, changes requested ${reviews.changesRequested}, commented ${reviews.commented}">${tally(ICON_REQUEST, reviews.requested, 'Requested')}${tally(ICON_CHECK, reviews.approved, 'Approved')}${tally(ICON_X_MARK, reviews.changesRequested, 'Changes requested')}${tally(ICON_PENCIL, reviews.commented, 'Commented')}</span>`;
   const rerun: string = canRerun
     ? '<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea><button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>'
     : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
@@ -503,7 +581,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">
       <div class="pr-panel-head">
         <span class="chip ${stateChipClass}">${stateLabel}</span>
-        <span class="${ciClass}">&#10003;${checks.passed} &#10007;${checks.failed} &#8943;${checks.pending}</span>
+        ${ciBadge}
         <span class="chip chip-review">${esc(pr.reviewDecision)}</span>
         ${reviewersBadge}
         <span class="pr-branch mono">${esc(pr.headRefName)}</span>
@@ -587,18 +665,11 @@ export interface TriageViewOpts {
   selectedRepo: string | null;
   jiraBaseUrl: string | null;
   degraded: boolean;
+  themeId: string;
 }
 
 export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts): string {
-  const { repos, selectedRepo, jiraBaseUrl, degraded } = opts;
-  const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
-  const scopeOptions: string = ['<option value="">All repos</option>']
-    .concat(
-      sortedRepos.map(
-        (repo) => `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
-      ),
-    )
-    .join('');
+  const { repos, selectedRepo, jiraBaseUrl, degraded, themeId } = opts;
   const banner: string = degraded
     ? '<div class="degraded-banner">Jira unavailable — triage is empty.</div>'
     : '';
@@ -606,12 +677,8 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
   const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, launchable);
   const scopeHint: string = launchable ? '' : 'Select a repo to launch these against.';
   return `
-    <div class="triage-view">
-      <div class="cmux-topbar">
-        <button class="view-toggle" type="button" data-view="dashboard">&#9668; Dashboard</button>
-        <span class="cmux-topbar-title mono">TRIAGE</span>
-        <select class="triage-scope" aria-label="Repository scope">${scopeOptions}</select>
-      </div>
+    <div class="bench triage-view" data-page="triage">
+      ${renderBenchHead({ active: 'triage', repos, selectedRepo, themeId, readout: null, autoClaim: '' })}
       ${banner}
       <div class="triage-grid">
         ${triageGroup('Unassigned · Backlog', groups.unassignedBacklog, launchRow, jiraBaseUrl, 'No unassigned backlog tickets.', scopeHint)}
@@ -642,12 +709,6 @@ function cmuxActionsFor(tab: CmuxTabView): CmuxActionSpec[] {
   return providerOf(tab) ? [...CMUX_UNIVERSAL_ACTIONS, ...CMUX_AGENT_ACTIONS] : CMUX_UNIVERSAL_ACTIONS;
 }
 
-const CMUX_TOPBAR: string = `
-    <div class="cmux-topbar">
-      <button class="view-toggle" type="button" data-view="dashboard">&#9668; Dashboard</button>
-      <span class="cmux-topbar-title mono">CMUX CONTROL</span>
-    </div>`;
-
 interface CmuxNavKeySpec {
   key: string;
   label: string;
@@ -668,11 +729,22 @@ export interface CmuxViewState {
   selectedSurface: string | null;
   screen: string;
   isCapturing: boolean;
+  repos: string[];
+  selectedRepo: string | null;
+  themeId: string;
 }
 
 export function renderCmuxView(state: CmuxViewState): string {
+  const head: string = renderBenchHead({
+    active: 'cmux',
+    repos: state.repos,
+    selectedRepo: state.selectedRepo,
+    themeId: state.themeId,
+    readout: null,
+    autoClaim: '',
+  });
   if (!state.connected) {
-    return `<div class="cmux-view">${CMUX_TOPBAR}<div class="panel empty-note">cmux not connected. Is the cmux app running?</div></div>`;
+    return `<div class="bench cmux-view" data-page="cmux">${head}<div class="panel empty-note">cmux not connected. Is the cmux app running?</div></div>`;
   }
 
   const list: string = state.tabs.length
@@ -710,7 +782,7 @@ export function renderCmuxView(state: CmuxViewState): string {
       </div>`
     : '<div class="empty-note">Select a tab to view its screen.</div>';
 
-  return `<div class="cmux-view">${CMUX_TOPBAR}
+  return `<div class="bench cmux-view" data-page="cmux">${head}
     <div class="cmux-body">
       <div class="panel cmux-list">${list}</div>
       <div class="panel cmux-detail">${detail}</div>

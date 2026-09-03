@@ -8,6 +8,7 @@ import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
 import type { CmuxTabView } from './logic/cmuxPanel';
 import { DEFAULT_THEME_ID, THEMES } from './data/themes';
+import { defaultLayout, stackOnto } from './logic/rack';
 
 const NOW: Date = new Date('2026-08-17T12:00:00.000Z');
 
@@ -61,7 +62,7 @@ describe('renderDashboard', () => {
       queue: [{ id: 'ABC-12', title: 'thing', priority: 'P1', status: 'in-progress', repo: 'o/r' }],
       activity: [{ time: NOW.toISOString(), text: '<b>ABC-12</b> &rarr; In Review', accent: true }],
     });
-    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, false, 'https://jira.example.com/');
+    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, undefined, 'https://jira.example.com/');
     const links: NodeListOf<HTMLAnchorElement> = el.querySelectorAll<HTMLAnchorElement>('a.ticket-link');
     expect(links.length).toBeGreaterThanOrEqual(2);
     links.forEach((a) => expect(a.getAttribute('href')).toBe('https://jira.example.com/browse/ABC-12'));
@@ -72,7 +73,7 @@ describe('renderDashboard', () => {
     const snap: DashboardSnapshot = snapshot({
       queue: [{ id: 'ABC-12', title: 'thing', priority: 'P1', status: 'in-progress', repo: 'o/r' }],
     });
-    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, false, null);
+    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, undefined, null);
     expect(el.querySelector('a.ticket-link')).toBeNull();
     expect(el.querySelector('.queue-item .ticket-id')?.textContent).toContain('ABC-12');
   });
@@ -90,7 +91,7 @@ describe('renderDashboard', () => {
     renderDashboard(el, scoped, NOW, [], ['org/alpha', 'org/beta'], 'org/alpha');
     const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.repo-select');
     expect(select).not.toBeNull();
-    expect(el.querySelector('.legend .repo-select')).not.toBeNull();
+    expect(el.querySelector('.bench-head .repo-select')).not.toBeNull();
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(['', 'org/alpha', 'org/beta']);
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('org/alpha');
     expect(el.querySelectorAll('.pr-card').length).toBe(2);
@@ -417,17 +418,17 @@ describe('renderTriageView', () => {
   }
 
   it('renders three groups with a back button and scope select', () => {
-    const el = mount(renderTriageView(groups, { repos: ['o/a', 'o/b'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false }));
+    const el = mount(renderTriageView(groups, { repos: ['o/a', 'o/b'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
     expect(el.querySelector('.view-toggle[data-view="dashboard"]')).not.toBeNull();
     expect(el.querySelectorAll('.triage-group')).toHaveLength(3);
-    expect(el.querySelector('.triage-scope')).not.toBeNull();
+    expect(el.querySelector('.bench-head .repo-select')).not.toBeNull();
     expect(el.textContent).toContain('AB-1');
     expect(el.textContent).toContain('AB-2');
     expect(el.textContent).toContain('AB-3');
   });
 
   it('puts a Launch button on unassigned rows only when a repo is scoped, never on mine rows', () => {
-    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false }));
+    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
     const launchTickets: string[] = Array.from(el.querySelectorAll<HTMLButtonElement>('.launch-btn')).map((b) => b.dataset.ticket ?? '');
     expect(launchTickets).toContain('AB-1');
     expect(launchTickets).toContain('AB-2');
@@ -435,14 +436,14 @@ describe('renderTriageView', () => {
   });
 
   it('hides Launch and shows a scope hint when no repo is scoped', () => {
-    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: null, jiraBaseUrl: null, degraded: false }));
+    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: null, jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
     expect(el.querySelectorAll('.launch-btn')).toHaveLength(0);
     expect(el.querySelector('.triage-hint')).not.toBeNull();
     expect(el.textContent).toContain('AB-1');
   });
 
   it('links ticket ids to Jira when a base url is present', () => {
-    const el = mount(renderTriageView(groups, { repos: [], selectedRepo: null, jiraBaseUrl: 'https://x.atlassian.net', degraded: false }));
+    const el = mount(renderTriageView(groups, { repos: [], selectedRepo: null, jiraBaseUrl: 'https://x.atlassian.net', degraded: false, themeId: DEFAULT_THEME_ID }));
     const link: HTMLAnchorElement | null = el.querySelector<HTMLAnchorElement>('a.ticket-link[href$="/browse/AB-3"]');
     expect(link).not.toBeNull();
   });
@@ -450,7 +451,7 @@ describe('renderTriageView', () => {
   it('shows empty-state notes for empty groups', () => {
     const el = mount(renderTriageView(
       { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] },
-      { repos: [], selectedRepo: null, jiraBaseUrl: null, degraded: false },
+      { repos: [], selectedRepo: null, jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID },
     ));
     expect(el.querySelectorAll('.empty-note').length).toBeGreaterThanOrEqual(3);
   });
@@ -561,6 +562,9 @@ function cmuxStateFixture(over: Partial<CmuxViewState> = {}): CmuxViewState {
     selectedSurface: null,
     screen: '',
     isCapturing: false,
+    repos: [],
+    selectedRepo: null,
+    themeId: DEFAULT_THEME_ID,
     ...over,
   };
 }
@@ -682,23 +686,39 @@ describe('renderRunsDrawer', () => {
   });
 });
 
-describe('renderDashboard config panel', () => {
+describe('renderDashboard bench rack', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('includes a runs-drawer slot and a config toggle', () => {
+  it('renders a runs-drawer slot, the bench nameplate, and three page tabs', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
-    expect(el.querySelector('.config-toggle')).not.toBeNull();
-    expect(el.querySelector('.config-panel.is-collapsed')).toBeNull();
+    expect(el.querySelector('.bench-head .nameplate')).not.toBeNull();
+    expect(el.querySelectorAll('.page-tab')).toHaveLength(3);
+    expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('dashboard');
   });
 
-  it('marks the config panel collapsed when requested', () => {
+  it('renders every panel as a draggable faceplate with a collapse control', () => {
     const el: HTMLDivElement = root();
-    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, true);
-    expect(el.querySelector('.config-panel.is-collapsed')).not.toBeNull();
-    expect(el.querySelector('.config-toggle')?.getAttribute('aria-expanded')).toBe('false');
+    renderDashboard(el, snapshot(), NOW);
+    const panels: string[] = Array.from(el.querySelectorAll<HTMLElement>('.faceplate')).map((f) => f.dataset.panel ?? '');
+    ['newrun', 'backlog', 'running', 'recent', 'pr', 'shipped', 'activity', 'config'].forEach((id) =>
+      expect(panels).toContain(id),
+    );
+    expect(el.querySelector('.rack-handle[draggable="true"]')).not.toBeNull();
+    expect(el.querySelector('.panel-collapse')).not.toBeNull();
+  });
+
+  it('honors a custom layout: stacked panels share a slot with tabs', () => {
+    const el: HTMLDivElement = root();
+    const layout = stackOnto(defaultLayout(), 'running', 'backlog');
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, layout);
+    const tabbed = el.querySelector<HTMLElement>('.faceplate .slot-tabs');
+    expect(tabbed).not.toBeNull();
+    const tabPanels = Array.from(tabbed!.querySelectorAll<HTMLButtonElement>('.slot-tab')).map((b) => b.dataset.panelTab);
+    expect(tabPanels).toContain('backlog');
+    expect(tabPanels).toContain('running');
   });
 });
