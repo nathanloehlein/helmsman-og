@@ -516,7 +516,7 @@ select { text-transform: none; }
 .cmux-error { color: var(--bad); font-size: 11px; }
 .cmux-capture-row { display: flex; align-items: center; gap: 10px; }
 .cmux-capture-toggle {
-  padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px;
+  padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--panel-2); color: var(--text);
 }
 .cmux-capture-toggle.is-active { background: rgba(245, 166, 35, 0.15); border-color: var(--accent); color: var(--accent); }
@@ -524,7 +524,7 @@ select { text-transform: none; }
 .cmux-screen.is-capturing { outline: 2px solid var(--accent); outline-offset: -1px; }
 .cmux-keypad { display: flex; gap: 6px; flex-wrap: wrap; }
 .cmux-keypad-btn {
-  min-width: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px;
+  min-width: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--panel-2); color: var(--text); font-size: 12px;
 }
 .cmux-keypad-btn:hover { background: rgba(245, 166, 35, 0.06); }

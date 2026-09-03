@@ -21,6 +21,8 @@ colors:
   live-green: "#57e39a"
   scope-ground: "#05100b"
   phosphor-green: "#4df2a1"
+  phosphor-bright: "#daffee"
+  lamp-idle: "#2a2d34"
   hairline: "rgba(245, 166, 35, 0.15)"
   hairline-strong: "rgba(245, 166, 35, 0.32)"
   hairline-faint: "rgba(255, 255, 255, 0.06)"
@@ -35,14 +37,34 @@ typography:
     fontSize: "11px"
     fontWeight: 700
     letterSpacing: "0.14em"
+  label-fine:
+    fontFamily: '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace'
+    fontSize: "10px"
+    fontWeight: 700
+    letterSpacing: "0.16em"
+  label-micro:
+    fontFamily: '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace'
+    fontSize: "9px"
+    fontWeight: 700
+    letterSpacing: "0.2em"
   data:
     fontFamily: '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace'
     fontSize: "12px"
     fontWeight: 500
     fontFeature: "tabular-nums"
+  data-lg:
+    fontFamily: '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace'
+    fontSize: "13px"
+    fontWeight: 500
+    fontFeature: "tabular-nums"
   numeric:
     fontFamily: '"DSEG7", "JetBrains Mono", ui-monospace, monospace'
     fontSize: "17px"
+    fontWeight: 700
+    letterSpacing: "0.02em"
+  numeric-sm:
+    fontFamily: '"DSEG7", "JetBrains Mono", ui-monospace, monospace'
+    fontSize: "15px"
     fontWeight: 700
     letterSpacing: "0.02em"
   body:
