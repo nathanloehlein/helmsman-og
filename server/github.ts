@@ -306,3 +306,29 @@ export async function submitReview(
     return { ok: false, error: String(err) };
   }
 }
+
+const COPILOT_REVIEWER: string = 'copilot-pull-request-reviewer[bot]';
+
+/**
+ * Requests a GitHub Copilot code review on a PR by adding the Copilot bot as a
+ * requested reviewer. Fails soft: a 422 when Copilot review is not enabled for
+ * the repo (or the bot is not a valid reviewer) is surfaced, never thrown.
+ */
+export async function requestCopilotReview(
+  github: GithubConfig,
+  repo: string,
+  prNumber: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res: Response = await fetch(`${API}/repos/${repo}/pulls/${prNumber}/requested_reviewers`, {
+      method: 'POST',
+      headers: { ...headers(github), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewers: [COPILOT_REVIEWER] }),
+    });
+    if (res.ok) return { ok: true };
+    const errorBody: { message?: string } = await res.json().catch(() => ({}));
+    return { ok: false, error: errorBody.message ?? `GitHub ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

@@ -142,6 +142,32 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('requests a Copilot review on the opened PR after a successful run', async () => {
+    const db: Db = openDb(':memory:');
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async () => 42);
+    const requestCopilotReview = vi.fn(async (_repo: string, _prNumber: number) => ({ ok: true as const }));
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([], true)), jira, botAccountId: 'bot-acc', findPrNumber, requestCopilotReview };
+
+    await startRun(task, d);
+
+    expect(requestCopilotReview).toHaveBeenCalledWith('o/r', 42);
+    db.close();
+  });
+
+  it('does not request a Copilot review on a rerun (the PR already exists)', async () => {
+    const db: Db = openDb(':memory:');
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt', branch: 'fix/x' }));
+    const requestCopilotReview = vi.fn(async (_repo: string, _prNumber: number) => ({ ok: true as const }));
+    const rerunTask: AgentTask = { ticketId: 'rerun', title: '', repo: 'o/r', jiraBaseUrl: '', task: 'address it', prBranch: 'fix/x', prNumber: 12 };
+    const d: RunnerDeps = { ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], true)), createWorktreeFromBranch, requestCopilotReview };
+
+    await startRun(rerunTask, d);
+
+    expect(requestCopilotReview).not.toHaveBeenCalled();
+    db.close();
+  });
+
   it('uses the adapter-parsed PR number and does not call findPrNumber (fallback-only)', async () => {
     const db: Db = openDb(':memory:');
     const jira = fakeJira();

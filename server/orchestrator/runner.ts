@@ -23,6 +23,7 @@ export interface RunnerDeps {
   isStopped?: () => boolean;
   readReview?: (worktreePath: string) => Promise<string | null>;
   postReview?: (repo: string, prNumber: number, body: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  requestCopilotReview?: (repo: string, prNumber: number) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 async function claimTicket(
@@ -132,6 +133,15 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
     if (result.ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
       await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
+    }
+
+    if (result.ok && prNumber != null && !task.prBranch && !task.review && deps.requestCopilotReview) {
+      const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
+      if (r.ok) {
+        onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
+      } else {
+        onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
+      }
     }
 
     if (task.review && result.ok && prNumber != null && deps.readReview && deps.postReview) {

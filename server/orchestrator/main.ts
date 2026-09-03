@@ -17,7 +17,7 @@ import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { createWorktree, createWorktreeFromBranch, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
-import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, type PrStatus } from '../github';
+import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
@@ -174,6 +174,12 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           const g: AppConfig['github'] = configStore.current().github;
           return g
             ? ghSubmitReview(g, repo, prNumber, 'COMMENT', reviewBody)
+            : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
+        },
+        requestCopilotReview: (repo: string, prNumber: number) => {
+          const g: AppConfig['github'] = configStore.current().github;
+          return g
+            ? ghRequestCopilotReview(g, repo, prNumber)
             : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
         },
       });

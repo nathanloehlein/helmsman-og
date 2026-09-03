@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchPrStatus, submitReview } from './github';
+import { fetchPrStatus, requestCopilotReview, submitReview } from './github';
 import type { GithubConfig } from './config';
 import type { PrStatus } from './github';
 
@@ -180,6 +180,47 @@ describe('submitReview', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await submitReview(github, 'octo/repo', 5, 'COMMENT', 'note');
+
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('requestCopilotReview', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts the Copilot bot to the requested_reviewers endpoint', async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      expect(url.toString()).toBe('https://api.github.com/repos/octo/repo/pulls/5/requested_reviewers');
+      expect(JSON.parse(init?.body as string)).toEqual({ reviewers: ['copilot-pull-request-reviewer[bot]'] });
+      return jsonResponse(true, {});
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await requestCopilotReview(github, 'octo/repo', 5);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('returns ok:false with the GitHub message when Copilot review is unavailable', async () => {
+    const fetchMock = vi.fn(
+      async () => jsonResponse(false, { message: 'Reviews may only be requested from collaborators.' }),
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await requestCopilotReview(github, 'octo/repo', 5);
+
+    expect(result).toEqual({ ok: false, error: 'Reviews may only be requested from collaborators.' });
+  });
+
+  it('returns ok:false when fetch throws', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('network down');
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await requestCopilotReview(github, 'octo/repo', 5);
 
     expect(result.ok).toBe(false);
   });
