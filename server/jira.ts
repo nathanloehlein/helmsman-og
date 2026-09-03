@@ -1,6 +1,18 @@
 import type { JiraConfig } from './config';
-import { buildActiveJql, buildQueueJql } from './config';
+import {
+  buildActiveJql,
+  buildMineOpenJql,
+  buildQueueJql,
+  buildUnassignedBacklogJql,
+  buildUnassignedTodoJql,
+} from './config';
 import type { JiraHistory, JiraIssue } from './types';
+
+export interface TriageGroups {
+  unassignedBacklog: JiraIssue[];
+  unassignedTodo: JiraIssue[];
+  mineOpen: JiraIssue[];
+}
 
 const FIELDS: string = 'summary,status,priority,resolutiondate';
 
@@ -53,6 +65,24 @@ export async function fetchIssueSummary(jira: JiraConfig, key: string): Promise<
 
 export function fetchQueueIssues(jira: JiraConfig): Promise<JiraIssue[]> {
   return search(jira, buildQueueJql(jira));
+}
+
+export async function fetchTriageGroups(
+  jira: JiraConfig,
+  statusBacklog: string,
+  statusTodo: string,
+): Promise<TriageGroups> {
+  const results: PromiseSettledResult<JiraIssue[]>[] = await Promise.allSettled([
+    search(jira, buildUnassignedBacklogJql(jira, statusBacklog)),
+    search(jira, buildUnassignedTodoJql(jira, statusTodo)),
+    search(jira, buildMineOpenJql(jira)),
+  ]);
+  if (results.every((r) => r.status === 'rejected')) {
+    throw (results[0] as PromiseRejectedResult).reason;
+  }
+  const value = (i: number): JiraIssue[] =>
+    results[i]!.status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<JiraIssue[]>).value : [];
+  return { unassignedBacklog: value(0), unassignedTodo: value(1), mineOpen: value(2) };
 }
 
 export async function fetchActiveIssues(jira: JiraConfig): Promise<JiraIssue[]> {

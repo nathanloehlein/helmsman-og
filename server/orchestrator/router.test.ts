@@ -13,11 +13,18 @@ const samplePrStatus: PrStatus = {
   reviewDecision: 'REVIEW_REQUIRED',
   comments: 0,
   checks: { passed: 1, failed: 0, pending: 0 },
+  reviews: { requested: 0, approved: 0, changesRequested: 0, commented: 0 },
   url: 'https://github.com/o/r/pull/5',
 };
 
 const deps: RouterDeps = {
   dashboard: async (repo) => ({ snapshot: { repo: repo ?? 'all' }, degraded: [], repos: ['o/r'], selectedRepo: repo }),
+  triage: async (repo) => ({
+    groups: { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] },
+    degraded: false,
+    selectedRepo: repo,
+    jiraBaseUrl: 'https://x.atlassian.net',
+  }),
   db: {
     listRuns: () => [{ id: 'r1', ticketId: 'T-1', repo: 'o/r', adapter: 'claude-code', status: 'running', attempt: 1, prNumber: null, startedAt: 'x', endedAt: null, costUsd: null, worktreePath: null }],
   } as unknown as RouterDeps['db'],
@@ -44,6 +51,13 @@ describe('handleApi', () => {
     const r = await handleApi('GET', '/api/dashboard', new URLSearchParams('repo=o/r'), null, deps);
     expect(r?.status).toBe(200);
     expect((r?.json as { selectedRepo: string }).selectedRepo).toBe('o/r');
+  });
+
+  it('serves triage groups with the repo query', async () => {
+    const r = await handleApi('GET', '/api/triage', new URLSearchParams('repo=o/r'), null, deps);
+    expect(r?.status).toBe(200);
+    expect((r?.json as { selectedRepo: string }).selectedRepo).toBe('o/r');
+    expect((r?.json as { groups: unknown }).groups).toBeDefined();
   });
 
   it('lists runs', async () => {

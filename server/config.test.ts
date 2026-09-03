@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildActiveJql, buildQueueJql, loadConfig } from './config';
+import {
+  buildActiveJql,
+  buildMineOpenJql,
+  buildQueueJql,
+  buildUnassignedBacklogJql,
+  buildUnassignedTodoJql,
+  loadConfig,
+} from './config';
 
 const FULL = {
   JIRA_BASE_URL: 'https://x.atlassian.net',
@@ -80,6 +87,31 @@ describe('loadConfig', () => {
     expect(buildActiveJql(cfg.jira!)).toBe(
       'project = "AIROBUILD" AND assignee = currentUser() AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC',
     );
+  });
+
+  it('builds unassigned backlog + todo JQLs with assignee IS EMPTY', () => {
+    const cfg = loadConfig(FULL);
+    expect(buildUnassignedBacklogJql(cfg.jira!, cfg.statusBacklog)).toBe(
+      'project = "AIROBUILD" AND assignee IS EMPTY AND status = "Backlog" ORDER BY priority',
+    );
+    expect(buildUnassignedTodoJql(cfg.jira!, cfg.statusTodo)).toBe(
+      'project = "AIROBUILD" AND assignee IS EMPTY AND status = "To Do" ORDER BY priority',
+    );
+  });
+
+  it('builds a mine-open JQL spanning every non-done status', () => {
+    const cfg = loadConfig({ ...FULL, JIRA_ASSIGNEE: 'currentUser()' });
+    expect(buildMineOpenJql(cfg.jira!)).toBe(
+      'project = "AIROBUILD" AND assignee = currentUser() AND statusCategory != Done ORDER BY status ASC, priority ASC',
+    );
+  });
+
+  it('defaults triage status names and overrides them from env', () => {
+    expect(loadConfig(FULL).statusBacklog).toBe('Backlog');
+    expect(loadConfig(FULL).statusTodo).toBe('To Do');
+    const cfg = loadConfig({ ...FULL, JIRA_STATUS_BACKLOG: 'Icebox', JIRA_STATUS_TODO: 'Selected' });
+    expect(cfg.statusBacklog).toBe('Icebox');
+    expect(cfg.statusTodo).toBe('Selected');
   });
 
   it('defaults botAccountId to null, maxAttempts to 1, and jira lifecycle statuses', () => {

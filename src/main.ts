@@ -1,8 +1,9 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer } from './render';
+import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView } from './render';
 import type { RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
+import { fetchTriage, type TriageGroupsView } from './data/triage';
 import {
   launchAgent,
   launchRun,
@@ -82,7 +83,9 @@ export class DashboardView {
   private uiConfig: UiConfig = { config: {}, overridden: [] };
   private configCollapsed: boolean = loadConfigCollapsed();
   private launchSeq: number = 0;
-  private view: 'dashboard' | 'cmux' = 'dashboard';
+  private view: 'dashboard' | 'cmux' | 'triage' = 'dashboard';
+  private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
+  private triageDegraded: boolean = false;
   private cmuxConnected: boolean = false;
   private cmuxTabs: CmuxTabView[] = [];
   private cmuxPanelState: PanelState = { selectedSurface: null };
@@ -127,6 +130,10 @@ export class DashboardView {
   private paint(): void {
     if (this.view === 'cmux') {
       this.paintCmux();
+      return;
+    }
+    if (this.view === 'triage') {
+      this.paintTriage();
       return;
     }
     if (!this.snapshot) return;
@@ -187,6 +194,36 @@ export class DashboardView {
       screen: this.cmuxScreen,
       isCapturing: this.cmuxCapturing,
     });
+  }
+
+  private paintTriage(): void {
+    this.root.innerHTML = renderTriageView(this.triageGroups, {
+      repos: this.repos,
+      selectedRepo: this.selectedRepo,
+      jiraBaseUrl: this.jiraBaseUrl,
+      degraded: this.triageDegraded,
+    });
+    const scope: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.triage-scope');
+    if (scope) {
+      scope.addEventListener('change', () => {
+        this.selectedRepo = scope.value || null;
+        saveRepoScope(this.selectedRepo);
+        void this.loadTriage().then(() => this.paint());
+      });
+    }
+  }
+
+  private async loadTriage(): Promise<void> {
+    const res = await fetchTriage(this.selectedRepo);
+    this.triageGroups = res.groups;
+    this.triageDegraded = res.degraded;
+    if (res.jiraBaseUrl) this.jiraBaseUrl = res.jiraBaseUrl;
+  }
+
+  private async enterTriageView(): Promise<void> {
+    this.view = 'triage';
+    await this.loadTriage();
+    this.paint();
   }
 
   private async enterCmuxView(): Promise<void> {
@@ -554,7 +591,9 @@ export class DashboardView {
 
     const viewToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.view-toggle');
     if (viewToggle) {
-      if (viewToggle.dataset.view === 'cmux') void this.enterCmuxView();
+      const targetView: string | undefined = viewToggle.dataset.view;
+      if (targetView === 'cmux') void this.enterCmuxView();
+      else if (targetView === 'triage') void this.enterTriageView();
       else this.leaveCmuxView();
       return;
     }

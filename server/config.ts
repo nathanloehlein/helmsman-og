@@ -24,6 +24,8 @@ export interface AppConfig {
   maxAttempts: number;
   statusInProgress: string;
   statusInReview: string;
+  statusBacklog: string;
+  statusTodo: string;
   autoClaimIntervalMs: number;
   agentAdapter: 'claude-code' | 'command';
   agentCmd: string | null;
@@ -79,6 +81,8 @@ export function loadConfig(env: Env): AppConfig {
   const maxAttempts: number = Number.isFinite(parsedMaxAttempts) ? parsedMaxAttempts : 1;
   const statusInProgress: string = req(env, 'JIRA_STATUS_IN_PROGRESS') ?? 'In Progress';
   const statusInReview: string = req(env, 'JIRA_STATUS_IN_REVIEW') ?? 'In Review';
+  const statusBacklog: string = req(env, 'JIRA_STATUS_BACKLOG') ?? 'Backlog';
+  const statusTodo: string = req(env, 'JIRA_STATUS_TODO') ?? 'To Do';
   const autoClaimIntervalMsRaw: string | null = req(env, 'AUTO_CLAIM_INTERVAL_MS');
   const parsedAutoClaimIntervalMs: number = autoClaimIntervalMsRaw ? parseInt(autoClaimIntervalMsRaw, 10) : NaN;
   const autoClaimIntervalMs: number = Number.isFinite(parsedAutoClaimIntervalMs) ? parsedAutoClaimIntervalMs : 60000;
@@ -97,6 +101,8 @@ export function loadConfig(env: Env): AppConfig {
     maxAttempts,
     statusInProgress,
     statusInReview,
+    statusBacklog,
+    statusTodo,
     autoClaimIntervalMs,
     agentAdapter,
     agentCmd,
@@ -115,4 +121,16 @@ export function buildQueueJql(jira: JiraConfig): string {
 
 export function buildActiveJql(jira: JiraConfig): string {
   return `project = "${jira.project}" AND assignee = ${formatAssignee(jira.assignee)} AND status IN ("In Progress","In Review","Done") AND updated >= -7d ORDER BY updated DESC`;
+}
+
+export function buildUnassignedBacklogJql(jira: JiraConfig, status: string): string {
+  return `project = "${jira.project}" AND assignee IS EMPTY AND status = "${status}" ORDER BY priority`;
+}
+
+export function buildUnassignedTodoJql(jira: JiraConfig, status: string): string {
+  return `project = "${jira.project}" AND assignee IS EMPTY AND status = "${status}" ORDER BY priority`;
+}
+
+export function buildMineOpenJql(jira: JiraConfig): string {
+  return `project = "${jira.project}" AND assignee = ${formatAssignee(jira.assignee)} AND statusCategory != Done ORDER BY status ASC, priority ASC`;
 }

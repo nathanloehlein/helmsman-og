@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer } from './render';
+import { CONFIG_HELP, renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer, renderTriageView } from './render';
 import { EDITABLE_KEYS } from '../server/orchestrator/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
@@ -403,6 +403,59 @@ describe('renderDashboard', () => {
   });
 });
 
+describe('renderTriageView', () => {
+  const groups = {
+    unassignedBacklog: [{ id: 'AB-1', title: 'Backlog one', priority: 'P1' as const, status: 'backlog' as const, repo: 'o/a' }],
+    unassignedTodo: [{ id: 'AB-2', title: 'Todo one', priority: 'P2' as const, status: 'backlog' as const, repo: 'o/a' }],
+    mineOpen: [{ id: 'AB-3', title: 'Mine one', priority: 'P3' as const, status: 'in-review' as const, repo: 'o/a' }],
+  };
+
+  function mount(html: string): HTMLElement {
+    const el: HTMLElement = document.createElement('div');
+    el.innerHTML = html;
+    return el;
+  }
+
+  it('renders three groups with a back button and scope select', () => {
+    const el = mount(renderTriageView(groups, { repos: ['o/a', 'o/b'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false }));
+    expect(el.querySelector('.view-toggle[data-view="dashboard"]')).not.toBeNull();
+    expect(el.querySelectorAll('.triage-group')).toHaveLength(3);
+    expect(el.querySelector('.triage-scope')).not.toBeNull();
+    expect(el.textContent).toContain('AB-1');
+    expect(el.textContent).toContain('AB-2');
+    expect(el.textContent).toContain('AB-3');
+  });
+
+  it('puts a Launch button on unassigned rows only when a repo is scoped, never on mine rows', () => {
+    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false }));
+    const launchTickets: string[] = Array.from(el.querySelectorAll<HTMLButtonElement>('.launch-btn')).map((b) => b.dataset.ticket ?? '');
+    expect(launchTickets).toContain('AB-1');
+    expect(launchTickets).toContain('AB-2');
+    expect(launchTickets).not.toContain('AB-3');
+  });
+
+  it('hides Launch and shows a scope hint when no repo is scoped', () => {
+    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: null, jiraBaseUrl: null, degraded: false }));
+    expect(el.querySelectorAll('.launch-btn')).toHaveLength(0);
+    expect(el.querySelector('.triage-hint')).not.toBeNull();
+    expect(el.textContent).toContain('AB-1');
+  });
+
+  it('links ticket ids to Jira when a base url is present', () => {
+    const el = mount(renderTriageView(groups, { repos: [], selectedRepo: null, jiraBaseUrl: 'https://x.atlassian.net', degraded: false }));
+    const link: HTMLAnchorElement | null = el.querySelector<HTMLAnchorElement>('a.ticket-link[href$="/browse/AB-3"]');
+    expect(link).not.toBeNull();
+  });
+
+  it('shows empty-state notes for empty groups', () => {
+    const el = mount(renderTriageView(
+      { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] },
+      { repos: [], selectedRepo: null, jiraBaseUrl: null, degraded: false },
+    ));
+    expect(el.querySelectorAll('.empty-note').length).toBeGreaterThanOrEqual(3);
+  });
+});
+
 function prFixture(over: Partial<PrStatusView> = {}): PrStatusView {
   return {
     number: 42,
@@ -449,6 +502,28 @@ describe('renderPrPanel', () => {
     const html: string = renderPrPanel(prFixture(), true);
     expect(html).toContain('pr-review-agent');
     expect(html).toContain('Code-review with agent');
+  });
+
+  it('renders the reviewer tally counts', () => {
+    const html: string = renderPrPanel(
+      prFixture({ reviews: { requested: 2, approved: 3, changesRequested: 1, commented: 4 } }),
+      false,
+    );
+    const el: HTMLElement = document.createElement('div');
+    el.innerHTML = html;
+    const reviewers: HTMLElement | null = el.querySelector<HTMLElement>('.pr-reviewers');
+    expect(reviewers).not.toBeNull();
+    expect(reviewers?.textContent).toContain('2');
+    expect(reviewers?.textContent).toContain('3');
+    expect(reviewers?.textContent).toContain('1');
+    expect(reviewers?.textContent).toContain('4');
+  });
+
+  it('renders zero reviewer counts when the tally is absent', () => {
+    const html: string = renderPrPanel(prFixture({ reviews: undefined }), false);
+    const el: HTMLElement = document.createElement('div');
+    el.innerHTML = html;
+    expect(el.querySelector('.pr-reviewers')).not.toBeNull();
   });
 
   it('renders a not-found note when there is no PR', () => {

@@ -2,7 +2,8 @@ import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
-import type { PrStatus, Priority } from './types';
+import type { PrStatus, Priority, Ticket, TicketStatus } from './types';
+import type { TriageGroupsView } from './data/triage';
 import type { AgentCaps, RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
@@ -340,6 +341,7 @@ export function renderDashboard(
           <div class="topbar-sep"></div>
           <span class="topbar-mode mono">MODE <b>LIVE</b></span>
           <select class="theme-select" aria-label="Theme">${themeOptions}</select>
+          <button class="view-toggle" type="button" data-view="triage">TRIAGE &#9658;</button>
           <button class="view-toggle" type="button" data-view="cmux">CMUX &#9658;</button>
           <div class="topbar-fill"></div>
           <div class="topbar-stats">
@@ -491,6 +493,9 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
   const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
   const checks: { passed: number; failed: number; pending: number } = pr.checks ?? { passed: 0, failed: 0, pending: 0 };
   const ciClass: string = checks.failed > 0 ? 'pr-ci mono pr-ci-bad' : 'pr-ci mono';
+  const reviews: { requested: number; approved: number; changesRequested: number; commented: number } =
+    pr.reviews ?? { requested: 0, approved: 0, changesRequested: 0, commented: 0 };
+  const reviewersBadge: string = `<span class="pr-reviewers mono" title="Reviewers — requested / approved / changes requested / commented">&#8635;${reviews.requested} &#10003;${reviews.approved} &#10007;${reviews.changesRequested} &#9998;${reviews.commented}</span>`;
   const rerun: string = canRerun
     ? '<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea><button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>'
     : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
@@ -500,6 +505,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
         <span class="chip ${stateChipClass}">${stateLabel}</span>
         <span class="${ciClass}">&#10003;${checks.passed} &#10007;${checks.failed} &#8943;${checks.pending}</span>
         <span class="chip chip-review">${esc(pr.reviewDecision)}</span>
+        ${reviewersBadge}
         <span class="pr-branch mono">${esc(pr.headRefName)}</span>
         <span class="pr-comments mono">${pr.comments} comments</span>
         <a class="pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">#${pr.number}</a>
@@ -513,6 +519,105 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
         </div>
       </div>
       ${rerun}
+    </div>`;
+}
+
+const STATUS_LABEL: Record<TicketStatus, string> = {
+  backlog: 'Backlog',
+  'in-progress': 'In Progress',
+  'in-review': 'In Review',
+  done: 'Done',
+};
+
+const STATUS_CHIP_CLASS: Record<TicketStatus, string> = {
+  backlog: 'chip-queued',
+  'in-progress': 'chip-progress',
+  'in-review': 'chip-review',
+  done: 'chip-done',
+};
+
+function triageLaunchRow(ticket: Ticket, jiraBaseUrl: string | null, launchable: boolean): string {
+  const action: string = launchable
+    ? `<button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="Launch agent for ${esc(ticket.id)}">Launch</button>`
+    : '';
+  return `
+      <li class="lane triage-row">
+        <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
+        <span class="queue-title">${esc(ticket.title)}</span>
+        <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
+        ${action}
+      </li>`;
+}
+
+function triageStatusRow(ticket: Ticket, jiraBaseUrl: string | null): string {
+  return `
+      <li class="lane triage-row">
+        <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
+        <span class="queue-title">${esc(ticket.title)}</span>
+        <span class="chip ${STATUS_CHIP_CLASS[ticket.status]}">${STATUS_LABEL[ticket.status]}</span>
+        <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
+      </li>`;
+}
+
+function triageGroup(
+  title: string,
+  tickets: Ticket[],
+  row: (t: Ticket, base: string | null) => string,
+  jiraBaseUrl: string | null,
+  emptyNote: string,
+  hint: string = '',
+): string {
+  const items: string = tickets.length
+    ? sortByPriority(tickets).map((t) => row(t, jiraBaseUrl)).join('')
+    : `<li class="empty-note">${esc(emptyNote)}</li>`;
+  const hintEl: string = hint && tickets.length ? `<div class="triage-hint">${esc(hint)}</div>` : '';
+  return `
+        <div class="panel triage-group">
+          <div class="panel-head">
+            <span class="panel-title">${esc(title)}</span>
+            <span class="panel-count mono">${tickets.length}</span>
+          </div>
+          ${hintEl}
+          <ul class="lane-list triage-list">${items}</ul>
+        </div>`;
+}
+
+export interface TriageViewOpts {
+  repos: string[];
+  selectedRepo: string | null;
+  jiraBaseUrl: string | null;
+  degraded: boolean;
+}
+
+export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts): string {
+  const { repos, selectedRepo, jiraBaseUrl, degraded } = opts;
+  const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
+  const scopeOptions: string = ['<option value="">All repos</option>']
+    .concat(
+      sortedRepos.map(
+        (repo) => `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
+      ),
+    )
+    .join('');
+  const banner: string = degraded
+    ? '<div class="degraded-banner">Jira unavailable — triage is empty.</div>'
+    : '';
+  const launchable: boolean = selectedRepo !== null;
+  const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, launchable);
+  const scopeHint: string = launchable ? '' : 'Select a repo to launch these against.';
+  return `
+    <div class="triage-view">
+      <div class="cmux-topbar">
+        <button class="view-toggle" type="button" data-view="dashboard">&#9668; Dashboard</button>
+        <span class="cmux-topbar-title mono">TRIAGE</span>
+        <select class="triage-scope" aria-label="Repository scope">${scopeOptions}</select>
+      </div>
+      ${banner}
+      <div class="triage-grid">
+        ${triageGroup('Unassigned · Backlog', groups.unassignedBacklog, launchRow, jiraBaseUrl, 'No unassigned backlog tickets.', scopeHint)}
+        ${triageGroup('Unassigned · To Do', groups.unassignedTodo, launchRow, jiraBaseUrl, 'No unassigned to-do tickets.', scopeHint)}
+        ${triageGroup('Mine · in flight', groups.mineOpen, triageStatusRow, jiraBaseUrl, 'Nothing assigned to you outside Done.')}
+      </div>
     </div>`;
 }
 

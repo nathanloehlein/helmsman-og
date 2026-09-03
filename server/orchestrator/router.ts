@@ -1,5 +1,6 @@
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
+import type { TriageResponse } from '../triage-endpoint';
 import type { CmuxTab } from './cmux/model';
 import { isAllowedKey } from './cmux/keys';
 
@@ -34,6 +35,7 @@ function toRunSummary(row: RunRow): RunSummary {
 
 export interface RouterDeps {
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
+  triage: (repo: string | null) => Promise<TriageResponse>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
   launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string }) => string;
@@ -68,6 +70,9 @@ export async function handleApi(
   if (path === '/api/dashboard' && method === 'GET') {
     const payload = await deps.dashboard(query.get('repo'));
     return { status: 200, json: payload };
+  }
+  if (path === '/api/triage' && method === 'GET') {
+    return { status: 200, json: await deps.triage(query.get('repo')) };
   }
   if (path === '/api/agents' && method === 'GET') {
     return { status: 200, json: { runs: deps.db.listRuns(50).map(toRunSummary), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };

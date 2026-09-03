@@ -1,3 +1,10 @@
+export interface ReviewTallyView {
+  requested: number;
+  approved: number;
+  changesRequested: number;
+  commented: number;
+}
+
 export interface PrStatusView {
   number: number;
   repo: string;
@@ -8,6 +15,7 @@ export interface PrStatusView {
   reviewDecision: string;
   comments: number;
   checks: { passed: number; failed: number; pending: number };
+  reviews?: ReviewTallyView;
   url: string;
 }
 

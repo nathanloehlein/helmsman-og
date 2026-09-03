@@ -12,6 +12,7 @@ interface SearchItem {
 
 interface RawReview {
   state: string;
+  user: { login: string } | null;
 }
 
 interface PullRequestItem {
@@ -25,6 +26,8 @@ interface PullRequestDetail {
   head: { ref: string; sha: string };
   comments?: number;
   html_url: string;
+  requested_reviewers?: unknown[];
+  requested_teams?: unknown[];
 }
 
 interface CheckRun {
@@ -34,6 +37,13 @@ interface CheckRun {
 
 interface CheckRunsResponse {
   check_runs: CheckRun[];
+}
+
+export interface ReviewTally {
+  requested: number;
+  approved: number;
+  changesRequested: number;
+  commented: number;
 }
 
 export interface PrStatus {
@@ -47,6 +57,7 @@ export interface PrStatus {
   reviewDecision: PrReviewDecision;
   comments: number;
   checks: { passed: number; failed: number; pending: number };
+  reviews: ReviewTally;
   url: string;
 }
 
@@ -64,22 +75,57 @@ function repoFromUrl(repositoryUrl: string): string {
   return repositoryUrl.replace(`${API}/repos/`, '');
 }
 
-async function latestReviewDecision(
+async function fetchReviews(
   github: GithubConfig,
   repo: string,
   prNumber: number,
-): Promise<PrReviewDecision> {
+): Promise<RawReview[] | null> {
   const res: Response = await fetch(`${API}/repos/${repo}/pulls/${prNumber}/reviews?per_page=100`, {
     headers: headers(github),
   });
   if (!res.ok) return null;
-  const reviews: RawReview[] = await res.json();
+  return res.json();
+}
+
+function decisionFromReviews(reviews: RawReview[]): PrReviewDecision {
   const decisive: RawReview[] = reviews.filter(
     (r) => r.state === 'CHANGES_REQUESTED' || r.state === 'APPROVED',
   );
   const last: RawReview | undefined = decisive[decisive.length - 1];
   if (!last) return 'REVIEW_REQUIRED';
   return last.state === 'CHANGES_REQUESTED' ? 'CHANGES_REQUESTED' : 'APPROVED';
+}
+
+function tallyReviews(reviews: RawReview[], requested: number): ReviewTally {
+  const latestPerUser: Map<string, string> = new Map();
+  for (const review of reviews) {
+    const login: string | undefined = review.user?.login;
+    if (!login) continue;
+    if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
+      latestPerUser.set(login, review.state);
+    } else if (review.state === 'COMMENTED' && !latestPerUser.has(login)) {
+      latestPerUser.set(login, 'COMMENTED');
+    }
+  }
+  let approved: number = 0;
+  let changesRequested: number = 0;
+  let commented: number = 0;
+  for (const state of latestPerUser.values()) {
+    if (state === 'APPROVED') approved++;
+    else if (state === 'CHANGES_REQUESTED') changesRequested++;
+    else if (state === 'COMMENTED') commented++;
+  }
+  return { requested, approved, changesRequested, commented };
+}
+
+async function latestReviewDecision(
+  github: GithubConfig,
+  repo: string,
+  prNumber: number,
+): Promise<PrReviewDecision> {
+  const reviews: RawReview[] | null = await fetchReviews(github, repo, prNumber);
+  if (reviews === null) return null;
+  return decisionFromReviews(reviews);
 }
 
 /**
@@ -203,13 +249,19 @@ export async function fetchPrStatus(
     if (!res.ok) return null;
     const body: PullRequestDetail = await res.json();
 
-    const [checks, reviewDecision]: [
+    const [checks, reviews]: [
       { passed: number; failed: number; pending: number },
-      PrReviewDecision,
+      RawReview[] | null,
     ] = await Promise.all([
       fetchCheckTally(github, repo, body.head.sha),
-      latestReviewDecision(github, repo, prNumber).catch(() => 'REVIEW_REQUIRED' as PrReviewDecision),
+      fetchReviews(github, repo, prNumber).catch(() => null),
     ]);
+
+    const reviewList: RawReview[] = reviews ?? [];
+    const reviewDecision: PrReviewDecision =
+      reviews === null ? 'REVIEW_REQUIRED' : decisionFromReviews(reviewList);
+    const requested: number =
+      (body.requested_reviewers?.length ?? 0) + (body.requested_teams?.length ?? 0);
 
     return {
       number: prNumber,
@@ -222,6 +274,7 @@ export async function fetchPrStatus(
       reviewDecision,
       comments: body.comments ?? 0,
       checks,
+      reviews: tallyReviews(reviewList, requested),
       url: body.html_url,
     };
   } catch {

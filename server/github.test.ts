@@ -65,8 +65,46 @@ describe('fetchPrStatus', () => {
       reviewDecision: 'REVIEW_REQUIRED',
       comments: 2,
       checks: { passed: 1, failed: 1, pending: 1 },
+      reviews: { requested: 0, approved: 0, changesRequested: 0, commented: 0 },
       url: 'u',
     });
+  });
+
+  it('tallies reviewers by latest state per user plus pending requests', async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const href: string = url.toString();
+      if (href.endsWith('/pulls/5')) {
+        return jsonResponse(true, {
+          state: 'open',
+          draft: false,
+          merged: false,
+          head: { ref: 'fix/x', sha: 'abc' },
+          comments: 2,
+          html_url: 'u',
+          requested_reviewers: [{ login: 'pending-a' }, { login: 'pending-b' }],
+          requested_teams: [{ slug: 'team-x' }],
+        });
+      }
+      if (href.endsWith('/commits/abc/check-runs')) {
+        return jsonResponse(true, { check_runs: [] });
+      }
+      if (href.includes('/pulls/5/reviews')) {
+        return jsonResponse(true, [
+          { state: 'COMMENTED', user: { login: 'alice' } },
+          { state: 'APPROVED', user: { login: 'alice' } },
+          { state: 'CHANGES_REQUESTED', user: { login: 'bob' } },
+          { state: 'COMMENTED', user: { login: 'carol' } },
+          { state: 'DISMISSED', user: { login: 'dave' } },
+        ]);
+      }
+      throw new Error(`unexpected url: ${href}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const status: PrStatus | null = await fetchPrStatus(github, 'octo/repo', 5);
+
+    expect(status?.reviews).toEqual({ requested: 3, approved: 1, changesRequested: 1, commented: 1 });
+    expect(status?.reviewDecision).toBe('CHANGES_REQUESTED');
   });
 
   it('returns null on a non-ok pulls fetch', async () => {
