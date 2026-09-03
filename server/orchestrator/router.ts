@@ -53,6 +53,7 @@ export interface RouterDeps {
   cmuxListTabs: () => Promise<{ connected: boolean; tabs: CmuxTab[] }>;
   cmuxReadScreen: (surface: string, lines: number) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
   cmuxSend: (surface: string, text: string, enter: boolean) => Promise<{ ok: true } | { ok: false; error: string }>;
+  cmuxPasteImage: (surface: string, dataBase64: string, ext: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   cmuxAction: (surface: string, provider: string | null, action: string) => Promise<{ ok: true; keys: string[] } | { ok: false; error: string }>;
   cmuxKey: (surface: string, key: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
@@ -169,6 +170,14 @@ export async function handleApi(
     }
     const r = await deps.cmuxSend(b.surface, b.text, b.enter === true);
     return r.ok ? { status: 200, json: { ok: true } } : { status: 400, json: { error: r.error } };
+  }
+  if (path === '/api/cmux/paste-image' && method === 'POST') {
+    const b = _body as { surface?: string; dataBase64?: string; ext?: string } | null;
+    if (typeof b?.surface !== 'string' || typeof b?.dataBase64 !== 'string') {
+      return { status: 400, json: { error: 'surface and dataBase64 required' } };
+    }
+    const r = await deps.cmuxPasteImage(b.surface, b.dataBase64, typeof b.ext === 'string' ? b.ext : 'png');
+    return r.ok ? { status: 200, json: { ok: true, path: r.path } } : { status: 400, json: { error: r.error } };
   }
   if (path === '/api/cmux/action' && method === 'POST') {
     const b = _body as { surface?: string; provider?: string | null; action?: string } | null;

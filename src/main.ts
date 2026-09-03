@@ -99,6 +99,7 @@ export class DashboardView {
     applyTheme(this.themeId);
     this.root.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
     this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event));
+    this.root.addEventListener('paste', (event: ClipboardEvent): void => void this.handlePasteImage(event));
 
     const drawer: HTMLDivElement = document.createElement('div');
     drawer.className = 'run-drawer';
@@ -401,6 +402,56 @@ export class DashboardView {
     } catch {
       this.showCmuxError('Send failed.');
     }
+  }
+
+  private async handlePasteImage(event: ClipboardEvent): Promise<void> {
+    if (this.view !== 'cmux') return;
+    const surface: string | null = this.cmuxPanelState.selectedSurface;
+    if (!surface) return;
+    const items: DataTransferItemList | undefined = event.clipboardData?.items;
+    if (!items) return;
+    const imageItem: DataTransferItem | undefined = Array.from(items).find((i) => i.type.startsWith('image/'));
+    if (!imageItem) return;
+    const file: File | null = imageItem.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    const ext: string = file.type.split('/')[1] ?? 'png';
+    let dataBase64: string;
+    try {
+      dataBase64 = await this.blobToBase64(file);
+    } catch {
+      this.showCmuxError('Could not read pasted image.');
+      return;
+    }
+    try {
+      const res: Response = await fetch('/api/cmux/paste-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface, dataBase64, ext }),
+      });
+      if (!res.ok) {
+        const errBody: { error?: string } = await res.json().catch(() => ({}) as { error?: string });
+        this.showCmuxError(errBody?.error ?? 'Image paste failed.');
+        return;
+      }
+      this.clearCmuxError();
+      await this.pollCmuxScreen();
+    } catch {
+      this.showCmuxError('Image paste failed.');
+    }
+  }
+
+  private blobToBase64(blob: Blob): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const reader: FileReader = new FileReader();
+      reader.onerror = (): void => reject(new Error('read failed'));
+      reader.onload = (): void => {
+        const result: string = String(reader.result);
+        const comma: number = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.readAsDataURL(blob);
+    });
   }
 
   private handleCmuxCaptureToggle(): void {

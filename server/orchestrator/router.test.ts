@@ -34,6 +34,7 @@ const deps: RouterDeps = {
   cmuxListTabs: async () => ({ connected: true, tabs: [] }),
   cmuxReadScreen: async (_surface: string, _lines: number) => ({ ok: true as const, text: '' }),
   cmuxSend: async (_surface: string, _text: string, _enter: boolean) => ({ ok: true as const }),
+  cmuxPasteImage: async (_surface: string, _dataBase64: string, _ext: string) => ({ ok: true as const, path: '/tmp/x.png' }),
   cmuxAction: async (_surface: string, _provider: string | null, _action: string) => ({ ok: true as const, keys: [] }),
   cmuxKey: async (_surface: string, _key: string) => ({ ok: true as const }),
 };
@@ -353,6 +354,22 @@ describe('cmux endpoints', () => {
     const ok = await handleApi('POST', '/api/cmux/send', new URLSearchParams(), { surface: 'surface:1', text: 'ls', enter: true }, cmuxDeps);
     expect(ok?.status).toBe(200);
     expect(calls).toEqual([['surface:1', 'ls', true]]);
+  });
+
+  it('POST /api/cmux/paste-image writes the image and returns its path, requires surface and data', async () => {
+    const calls: unknown[] = [];
+    const cmuxDeps = baseCmuxDeps({
+      cmuxPasteImage: (s, d, e) => {
+        calls.push([s, d, e]);
+        return Promise.resolve({ ok: true, path: '/tmp/gomaestro-clip-x.png' });
+      },
+    });
+    const bad = await handleApi('POST', '/api/cmux/paste-image', new URLSearchParams(), { surface: 'surface:1' }, cmuxDeps);
+    expect(bad?.status).toBe(400);
+    const ok = await handleApi('POST', '/api/cmux/paste-image', new URLSearchParams(), { surface: 'surface:1', dataBase64: 'aGk=', ext: 'png' }, cmuxDeps);
+    expect(ok?.status).toBe(200);
+    expect((ok?.json as { path?: string }).path).toBe('/tmp/gomaestro-clip-x.png');
+    expect(calls).toEqual([['surface:1', 'aGk=', 'png']]);
   });
 
   it('POST /api/cmux/action rejects an unknown action', async () => {

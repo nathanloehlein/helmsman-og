@@ -1055,6 +1055,48 @@ describe('DashboardView drawer survives polling', () => {
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
 
+  it('uploads a pasted clipboard image to the active surface', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const tabOne: CmuxTabView = cmuxTab();
+    const pasteCalls: Array<{ surface?: string; dataBase64?: string; ext?: string }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/cmux/tabs')) {
+        return { ok: true, status: 200, json: async () => ({ connected: true, tabs: [tabOne] }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/screen')) {
+        return { ok: true, status: 200, json: async () => ({ surface: tabOne.surfaceRef, text: 'hello' }) } as unknown as Response;
+      }
+      if (url.includes('/api/cmux/paste-image')) {
+        pasteCalls.push(JSON.parse(String(init?.body ?? '{}')));
+        return { ok: true, status: 200, json: async () => ({ ok: true, path: '/tmp/x.png' }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('.cmux-input')).not.toBeNull());
+
+    const file: File = new File([new Uint8Array([1, 2, 3])], 'x.png', { type: 'image/png' });
+    const ev: Event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'clipboardData', {
+      value: { items: [{ type: 'image/png', getAsFile: () => file }] },
+    });
+    root.querySelector<HTMLInputElement>('.cmux-input')!.dispatchEvent(ev);
+
+    await vi.waitFor(() => expect(pasteCalls.length).toBe(1));
+    expect(pasteCalls[0]).toMatchObject({ surface: tabOne.surfaceRef, dataBase64: 'AQID', ext: 'png' });
+
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
+  });
+
   it('re-enables the action button and shows an error when a cmux action fails', async () => {
     const response: DashboardResponse = await buildResponse();
     const tabOne: CmuxTabView = cmuxTab();

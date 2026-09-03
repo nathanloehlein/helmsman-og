@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import type { AppConfig } from '../config';
@@ -276,6 +277,18 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       cmuxListTabs: () => cmux.listTabs(),
       cmuxReadScreen: (surface: string, lines: number) => cmux.readScreen(surface, lines),
       cmuxSend: (surface: string, text: string, enter: boolean) => cmux.send(surface, text, enter),
+      cmuxPasteImage: async (surface: string, dataBase64: string, ext: string) => {
+        const safeExt: string = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'png';
+        const file: string = join(tmpdir(), `gomaestro-clip-${randomUUID()}.${safeExt}`);
+        try {
+          await writeFile(file, Buffer.from(dataBase64, 'base64'));
+        } catch (err: unknown) {
+          return { ok: false as const, error: `write failed: ${String(err)}` };
+        }
+        const r = await cmux.send(surface, `${file} `, false);
+        if (!r.ok) return r;
+        return { ok: true as const, path: file };
+      },
       cmuxAction: async (surface: string, provider: string | null, action: string) => {
         const keys = keysFor(provider, action as never);
         if (!keys) return { ok: false as const, error: 'unknown action' };
