@@ -18,6 +18,7 @@ function snapshot(over: Partial<DashboardSnapshot> = {}): DashboardSnapshot {
     queue: [],
     steps: [],
     shipped: [],
+    myOpenPrs: [],
     activity: [],
     stats: { completedToday: 0, awaitingReview: 0, avgCycleMinutes: 0 },
     throughput7d: [0, 0, 0, 0, 0, 0, 0],
@@ -725,6 +726,31 @@ describe('renderDashboard bench rack', () => {
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.newrun-model')).not.toBeNull();
     expect(el.querySelector('.newrun-effort')).not.toBeNull();
+  });
+
+  it('renders the My open PRs panel with clickable rows carrying repo + number', () => {
+    const el: HTMLDivElement = root();
+    const snap = snapshot({
+      myOpenPrs: [
+        { number: 42, title: 'do a thing', repo: 'org/alpha', reviewDecision: 'CHANGES_REQUESTED', draft: false, createdAt: NOW.toISOString() },
+        { number: 43, title: 'wip thing', repo: 'org/alpha', reviewDecision: 'REVIEW_REQUIRED', draft: true, createdAt: NOW.toISOString() },
+      ],
+    });
+    renderDashboard(el, snap, NOW);
+    expect(el.querySelector('.faceplate[data-panel="myprs"]')).not.toBeNull();
+    const rows = Array.from(el.querySelectorAll<HTMLElement>('.myprs-row'));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dataset.repo).toBe('org/alpha');
+    expect(rows[0].dataset.number).toBe('42');
+    expect(el.textContent).toContain('#42');
+    expect(el.textContent).toContain('Draft');
+  });
+
+  it('shows an empty note in My open PRs when there are none', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    const panel = el.querySelector<HTMLElement>('.faceplate[data-panel="myprs"]');
+    expect(panel?.querySelector('.empty-note')).not.toBeNull();
   });
 
   it('honors a custom layout: stacked panels share a slot with tabs', () => {

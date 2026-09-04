@@ -1,4 +1,4 @@
-export type PanelId = 'newrun' | 'backlog' | 'running' | 'recent' | 'pr' | 'shipped' | 'activity' | 'config';
+export type PanelId = 'newrun' | 'backlog' | 'running' | 'recent' | 'pr' | 'myprs' | 'shipped' | 'activity' | 'config';
 
 export const ALL_PANELS: PanelId[] = [
   'newrun',
@@ -6,6 +6,7 @@ export const ALL_PANELS: PanelId[] = [
   'running',
   'recent',
   'pr',
+  'myprs',
   'shipped',
   'activity',
   'config',
@@ -27,7 +28,7 @@ function unit(panel: PanelId): RackSlot {
 
 export function defaultLayout(): RackLayout {
   return [
-    [unit('newrun'), unit('backlog'), unit('running')],
+    [unit('newrun'), unit('backlog'), unit('running'), unit('myprs')],
     [unit('pr'), unit('recent'), unit('activity'), unit('shipped'), unit('config')],
   ];
 }

@@ -770,6 +770,12 @@ export class DashboardView {
       return;
     }
 
+    const myPrRow: HTMLElement | null = target.closest<HTMLElement>('.myprs-row');
+    if (myPrRow) {
+      this.handleMyPrClick(myPrRow);
+      return;
+    }
+
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
   }
@@ -844,8 +850,23 @@ export class DashboardView {
       result.innerHTML = '<div class="pr-panel empty-note">Enter a PR URL or owner/repo#number.</div>';
       return;
     }
-    const pr: PrStatusView | null = await getPrStatus(parsed.repo, parsed.number);
-    result.innerHTML = renderPrPanel(pr, this.repos.includes(parsed.repo));
+    await this.loadPr(parsed.repo, parsed.number);
+  }
+
+  private async loadPr(repo: string, number: number): Promise<void> {
+    const input: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.pr-lookup-input');
+    const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
+    if (input) input.value = `${repo}#${number}`;
+    if (!result) return;
+    const pr: PrStatusView | null = await getPrStatus(repo, number);
+    result.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+  }
+
+  private handleMyPrClick(row: HTMLElement): void {
+    const repo: string | undefined = row.dataset.repo;
+    const number: number = Number(row.dataset.number);
+    if (!repo || !Number.isFinite(number)) return;
+    void this.loadPr(repo, number);
   }
 
   private async handleStopClick(btn: HTMLButtonElement): Promise<void> {

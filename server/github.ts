@@ -7,7 +7,17 @@ interface SearchItem {
   created_at: string;
   user: { login: string } | null;
   repository_url: string;
+  draft?: boolean;
   pull_request?: { merged_at: string | null };
+}
+
+export interface OpenAuthoredPr {
+  number: number;
+  title: string;
+  repo: string;
+  reviewDecision: PrReviewDecision;
+  draft: boolean;
+  createdAt: string;
 }
 
 interface RawReview {
@@ -158,6 +168,41 @@ export async function fetchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]
         createdAt: item.created_at,
         reviewDecision: mergedAt ? null : await latestReviewDecision(github, repo, item.number),
         repo,
+      };
+    }),
+  );
+}
+
+/**
+ * Fetches the current author's OPEN pull requests across every repo they can
+ * see (author-scoped issue-search, state:open). Fails soft: returns [] on a
+ * non-ok response rather than throwing, so an empty panel never breaks the
+ * dashboard.
+ */
+export async function fetchOpenAuthoredPrs(github: GithubConfig): Promise<OpenAuthoredPr[]> {
+  const url: URL = new URL(`${API}/search/issues`);
+  url.searchParams.set('q', `author:${github.author} type:pr state:open`);
+  url.searchParams.set('sort', 'updated');
+  url.searchParams.set('order', 'desc');
+  url.searchParams.set('per_page', '20');
+
+  const res: Response = await fetch(url, { headers: headers(github) });
+  if (!res.ok) return [];
+  const body: { items?: SearchItem[] } = await res.json();
+  const items: SearchItem[] = body.items ?? [];
+
+  return Promise.all(
+    items.map(async (item): Promise<OpenAuthoredPr> => {
+      const repo: string = repoFromUrl(item.repository_url);
+      return {
+        number: item.number,
+        title: item.title,
+        repo,
+        draft: item.draft ?? false,
+        createdAt: item.created_at,
+        reviewDecision: await latestReviewDecision(github, repo, item.number).catch(
+          (): PrReviewDecision => 'REVIEW_REQUIRED',
+        ),
       };
     }),
   );

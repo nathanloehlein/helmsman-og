@@ -4,7 +4,7 @@ import type { AppConfig, GithubConfig, JiraConfig } from './config';
 import { loadConfig } from './config';
 import { assembleSnapshot } from './snapshot';
 import { fetchActiveIssues, fetchQueueIssues } from './jira';
-import { fetchAuthoredPrs } from './github';
+import { fetchAuthoredPrs, fetchOpenAuthoredPrs, type OpenAuthoredPr } from './github';
 import { loadDashboard } from '../src/data/mock';
 
 export interface DashboardResponse {
@@ -19,6 +19,7 @@ export interface Deps {
   fetchQueueIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchActiveIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchAuthoredPrs: (github: GithubConfig) => Promise<GithubPr[]>;
+  fetchOpenAuthoredPrs: (github: GithubConfig) => Promise<OpenAuthoredPr[]>;
   loadMock: () => Promise<DashboardSnapshot>;
 }
 
@@ -26,6 +27,7 @@ const DEFAULT_DEPS: Deps = {
   fetchQueueIssues,
   fetchActiveIssues,
   fetchAuthoredPrs,
+  fetchOpenAuthoredPrs,
   loadMock: loadDashboard,
 };
 
@@ -41,6 +43,7 @@ export async function buildDashboardResponse(
   let queueIssues: JiraIssue[] = [];
   let activeIssues: JiraIssue[] = [];
   let prs: GithubPr[] = [];
+  let openPrs: OpenAuthoredPr[] = [];
 
   if (config.jira) {
     const mappedProject: string | undefined = selectedRepo
@@ -63,7 +66,10 @@ export async function buildDashboardResponse(
 
   if (config.github) {
     try {
-      prs = await deps.fetchAuthoredPrs(config.github);
+      [prs, openPrs] = await Promise.all([
+        deps.fetchAuthoredPrs(config.github),
+        deps.fetchOpenAuthoredPrs(config.github),
+      ]);
     } catch {
       degraded.push('github');
     }
@@ -83,6 +89,9 @@ export async function buildDashboardResponse(
   const scopedPrs: GithubPr[] = selectedRepo
     ? prs.filter((pr) => pr.repo === selectedRepo)
     : prs;
+  const scopedOpenPrs: OpenAuthoredPr[] = selectedRepo
+    ? openPrs.filter((pr) => pr.repo === selectedRepo)
+    : openPrs;
   const repoLabel: string = selectedRepo
     ? (selectedRepo.split('/').pop() ?? selectedRepo)
     : config.repoLabel;
@@ -91,6 +100,7 @@ export async function buildDashboardResponse(
     queueIssues,
     activeIssues,
     prs: scopedPrs,
+    openPrs: scopedOpenPrs,
     repo: repoLabel,
     now,
   });
@@ -105,6 +115,7 @@ export async function buildDashboardResponse(
     }
     if (githubDegraded) {
       snapshot.shipped = jiraDegraded ? mock.shipped : [];
+      snapshot.myOpenPrs = jiraDegraded ? mock.myOpenPrs : [];
     }
     if (jiraDegraded && githubDegraded) {
       snapshot.activity = mock.activity;

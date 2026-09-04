@@ -24,6 +24,9 @@
 .tally { display: inline-flex; align-items: center; gap: 3px; }
 .tally-ic { display: inline-flex; }
 .tally-ic svg { width: 12px; height: 12px; }
+.myprs-row { cursor: pointer; }
+.myprs-row:hover { background: rgba(245, 166, 35, 0.06); }
+.myprs-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tuning { display: flex; gap: 8px; }
 .tuning-select { flex: 1 1 0; min-width: 0; font-size: 11px; }
 .bench-jacks { display: inline-flex; align-items: center; gap: 7px; margin-left: 8px; padding-left: 10px; border-left: 1px solid var(--line-faint); opacity: 0.5; pointer-events: none; }
@@ -387,7 +390,8 @@ select { text-transform: none; }
 .config-row { display: grid; grid-template-columns: minmax(180px, 1fr) 2fr auto; gap: 10px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line-faint); }
 .config-key { font-size: 11px; color: var(--text-dim); }
 .config-overridden { color: var(--accent); font-size: 10px; }
-.config-hint { color: var(--text-faint); cursor: help; font-size: 11px; }
+.config-hint { display: inline-flex; vertical-align: middle; color: var(--text-faint); cursor: help; }
+.config-hint svg { width: 13px; height: 13px; }
 .config-hint:hover, .config-hint:focus { color: var(--accent); outline: none; }
 .config-error { grid-column: 2 / 3; color: var(--bad); font-size: 11px; }
 

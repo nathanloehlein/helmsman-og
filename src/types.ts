@@ -29,6 +29,15 @@ export interface ShippedPr {
   repo?: string;
 }
 
+export interface OpenPr {
+  number: number;
+  title: string;
+  repo: string;
+  reviewDecision: string;
+  draft: boolean;
+  createdAt: string;
+}
+
 export interface ActivityEvent {
   time: string;
   text: string;

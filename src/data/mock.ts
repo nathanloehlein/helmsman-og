@@ -1,10 +1,11 @@
-import type { ActivityEvent, DailyStats, ShippedPr, Ticket, WorkStep } from '../types';
+import type { ActivityEvent, DailyStats, OpenPr, ShippedPr, Ticket, WorkStep } from '../types';
 
 export interface DashboardSnapshot {
   repo: string;
   queue: Ticket[];
   steps: WorkStep[];
   shipped: ShippedPr[];
+  myOpenPrs: OpenPr[];
   activity: ActivityEvent[];
   stats: DailyStats;
   throughput7d: number[];
@@ -42,6 +43,12 @@ const SHIPPED: ShippedPr[] = [
   { number: 1799, title: 'Migrate build script to pnpm', ticketId: 'DEVX-448', status: 'changes-requested', openedAt: hoursAgo(49) },
 ];
 
+const MY_OPEN_PRS: OpenPr[] = [
+  { number: 1831, title: 'Add exponential backoff with jitter to retry queue', repo: REPO, reviewDecision: 'REVIEW_REQUIRED', draft: false, createdAt: minutesAgo(0) },
+  { number: 1822, title: 'Fix flaky test in auth middleware', repo: REPO, reviewDecision: 'CHANGES_REQUESTED', draft: false, createdAt: hoursAgo(2) },
+  { number: 1826, title: 'WIP: cache config lookup in gateway', repo: REPO, reviewDecision: 'REVIEW_REQUIRED', draft: true, createdAt: hoursAgo(6) },
+];
+
 const ACTIVITY: ActivityEvent[] = [
   { time: minutesAgo(0), text: '<b>DEVX-482</b> &rarr; In Review, opening PR #1831', accent: true },
   { time: minutesAgo(1), text: 'vitest run complete &mdash; 14 passed', accent: false },
@@ -68,6 +75,7 @@ export async function loadDashboard(): Promise<DashboardSnapshot> {
     queue: QUEUE,
     steps: STEPS,
     shipped: SHIPPED,
+    myOpenPrs: MY_OPEN_PRS,
     activity: ACTIVITY,
     stats: STATS,
     throughput7d: THROUGHPUT_7D,

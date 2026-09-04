@@ -1,5 +1,6 @@
 import type { GithubPr, JiraHistory, JiraIssue } from './types';
-import type { ActivityEvent, DailyStats, Priority, PrStatus, ShippedPr, Ticket, TicketStatus, WorkStep } from '../src/types';
+import type { OpenAuthoredPr } from './github';
+import type { ActivityEvent, DailyStats, OpenPr, Priority, PrStatus, ShippedPr, Ticket, TicketStatus, WorkStep } from '../src/types';
 import type { DashboardSnapshot } from '../src/data/mock';
 import { escapeHtml } from '../src/logic/html';
 
@@ -172,16 +173,28 @@ export function buildThroughput7d(activeIssues: JiraIssue[], now: Date): number[
   return buckets;
 }
 
+export function openPrToView(pr: OpenAuthoredPr): OpenPr {
+  return {
+    number: pr.number,
+    title: pr.title,
+    repo: pr.repo,
+    reviewDecision: pr.reviewDecision ?? 'REVIEW_REQUIRED',
+    draft: pr.draft,
+    createdAt: pr.createdAt,
+  };
+}
+
 export interface SnapshotInput {
   queueIssues: JiraIssue[];
   activeIssues: JiraIssue[];
   prs: GithubPr[];
+  openPrs: OpenAuthoredPr[];
   repo: string;
   now: Date;
 }
 
 export function assembleSnapshot(input: SnapshotInput): DashboardSnapshot {
-  const { queueIssues, activeIssues, prs, repo, now } = input;
+  const { queueIssues, activeIssues, prs, openPrs, repo, now } = input;
   const current: JiraIssue | undefined = activeIssues.find(
     (i) => mapStatus(i.fields.status.name, i.fields.status.statusCategory.key) === 'in-progress',
   );
@@ -190,6 +203,7 @@ export function assembleSnapshot(input: SnapshotInput): DashboardSnapshot {
     queue: queueIssues.map((i) => issueToTicket(i, repo)),
     steps: current ? buildSteps(current, prs) : [],
     shipped: prs.map(prToShipped),
+    myOpenPrs: openPrs.map(openPrToView),
     activity: buildActivity(activeIssues, prs),
     stats: computeStats(activeIssues, now),
     throughput7d: buildThroughput7d(activeIssues, now),

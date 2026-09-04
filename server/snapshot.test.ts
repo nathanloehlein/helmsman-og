@@ -221,6 +221,7 @@ describe('assembleSnapshot', () => {
       queueIssues: [{ key: 'Q-1', fields: { summary: 'queued', status: { name: 'Backlog', statusCategory: { key: 'new' } }, priority: { name: 'P1' }, resolutiondate: null } }],
       activeIssues: [],
       prs: [],
+      openPrs: [],
       repo: 'o/r',
       now,
     });

@@ -44,6 +44,12 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'changes-requested': { label: 'Changes requested', chipClass: 'chip-blocked' },
 }
 
+function reviewChip(decision: string): { cls: string; label: string } {
+  if (decision === 'APPROVED') return { cls: 'chip-done', label: 'Approved' };
+  if (decision === 'CHANGES_REQUESTED') return { cls: 'chip-blocked', label: 'Changes' };
+  return { cls: 'chip-review', label: 'Review' };
+}
+
 const RUN_STATUS_CHIP: Record<string, { label: string; chipClass: string; laneState: string }> = {
   succeeded: { label: 'Succeeded', chipClass: 'chip-done', laneState: 'double' },
   failed: { label: 'Failed', chipClass: 'chip-blocked', laneState: 'ring' },
@@ -186,6 +192,7 @@ const PANEL_TITLE: Record<PanelId, string> = {
   running: 'Agents running',
   recent: 'Recent runs',
   pr: 'Review a PR',
+  myprs: 'My open PRs',
   shipped: 'Recently shipped',
   activity: 'Activity feed',
   config: 'Config',
@@ -413,6 +420,22 @@ export function renderDashboard(
         .join('')
     : '<li class="empty-note">No past runs.</li>';
 
+  const myPrItems: string = data.myOpenPrs.length
+    ? data.myOpenPrs
+        .map((pr) => {
+          const chip = reviewChip(pr.reviewDecision);
+          return `
+      <li class="lane myprs-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open PR #${pr.number} in the review panel">
+        <span class="ticket-id mono">#${pr.number}</span>
+        <span class="queue-title">${esc(pr.title)}</span>
+        <span class="agent-repo mono">${esc(shortRepo(pr.repo))}</span>
+        ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
+        <span class="chip ${chip.cls}">${chip.label}</span>
+      </li>`;
+        })
+        .join('')
+    : '<li class="empty-note">No open pull requests.</li>';
+
   const configEntries: [string, unknown][] = Object.entries(uiConfig.config ?? {});
   const configRows: string = configEntries.length
     ? configEntries
@@ -483,6 +506,11 @@ export function renderDashboard(
           <button class="pr-lookup-go">Load PR</button>
         </div>
         <div class="pr-lookup-result"></div>`,
+    },
+    myprs: {
+      lamp: data.myOpenPrs.length ? 'queued' : 'idle',
+      count: data.myOpenPrs.length,
+      body: `<ul class="myprs-list lane-list">${myPrItems}</ul>`,
     },
     shipped: {
       lamp: 'idle',

@@ -13,6 +13,7 @@ const OK_DEPS = {
   fetchQueueIssues: async () => [{ key: 'Q-1', fields: { summary: 'q', status: { name: 'Backlog', statusCategory: { key: 'new' } }, priority: { name: 'P1' }, resolutiondate: null } }],
   fetchActiveIssues: async () => [],
   fetchAuthoredPrs: async () => [],
+  fetchOpenAuthoredPrs: async () => [],
   loadMock: async () => { throw new Error('mock should not be called'); },
 };
 
@@ -68,11 +69,16 @@ describe('buildDashboardResponse', () => {
         },
         fetchActiveIssues: async () => [],
         fetchAuthoredPrs: async () => [prA, prB],
+        fetchOpenAuthoredPrs: async () => [
+          { number: 1, title: 'a', repo: 'o/a', reviewDecision: 'REVIEW_REQUIRED', draft: false, createdAt: NOW.toISOString() },
+          { number: 2, title: 'b', repo: 'o/b', reviewDecision: 'APPROVED', draft: false, createdAt: NOW.toISOString() },
+        ],
       },
       'o/a',
     );
     expect(seenProject).toBe('PROJA');
     expect(r.snapshot.shipped.map((p) => p.number)).toEqual([1]);
+    expect(r.snapshot.myOpenPrs.map((p) => p.number)).toEqual([1]);
     expect(r.repos).toEqual(['o/a', 'o/b']);
     expect(r.selectedRepo).toBe('o/a');
   });
