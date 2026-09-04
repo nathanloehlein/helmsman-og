@@ -173,39 +173,95 @@ export async function fetchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]
   );
 }
 
-/**
- * Fetches the current author's OPEN pull requests across every repo they can
- * see (author-scoped issue-search, state:open). Fails soft: returns [] on a
- * non-ok response rather than throwing, so an empty panel never breaks the
- * dashboard.
- */
-export async function fetchOpenAuthoredPrs(github: GithubConfig): Promise<OpenAuthoredPr[]> {
+interface PullListItem {
+  number: number;
+  title: string;
+  draft?: boolean;
+  created_at: string;
+  user: { login: string } | null;
+}
+
+async function toOpenAuthoredPr(
+  github: GithubConfig,
+  repo: string,
+  number: number,
+  title: string,
+  draft: boolean,
+  createdAt: string,
+): Promise<OpenAuthoredPr> {
+  return {
+    number,
+    title,
+    repo,
+    draft,
+    createdAt,
+    reviewDecision: await latestReviewDecision(github, repo, number).catch(
+      (): PrReviewDecision => 'REVIEW_REQUIRED',
+    ),
+  };
+}
+
+async function searchOpenAuthoredPrs(github: GithubConfig): Promise<OpenAuthoredPr[]> {
   const url: URL = new URL(`${API}/search/issues`);
   url.searchParams.set('q', `author:${github.author} type:pr state:open`);
   url.searchParams.set('sort', 'updated');
   url.searchParams.set('order', 'desc');
-  url.searchParams.set('per_page', '20');
+  url.searchParams.set('per_page', '30');
 
   const res: Response = await fetch(url, { headers: headers(github) });
   if (!res.ok) return [];
   const body: { items?: SearchItem[] } = await res.json();
   const items: SearchItem[] = body.items ?? [];
-
   return Promise.all(
-    items.map(async (item): Promise<OpenAuthoredPr> => {
-      const repo: string = repoFromUrl(item.repository_url);
-      return {
-        number: item.number,
-        title: item.title,
-        repo,
-        draft: item.draft ?? false,
-        createdAt: item.created_at,
-        reviewDecision: await latestReviewDecision(github, repo, item.number).catch(
-          (): PrReviewDecision => 'REVIEW_REQUIRED',
-        ),
-      };
-    }),
+    items.map((item) =>
+      toOpenAuthoredPr(github, repoFromUrl(item.repository_url), item.number, item.title, item.draft ?? false, item.created_at),
+    ),
   );
+}
+
+const OPEN_PR_PAGE_CAP: number = 3;
+
+async function repoOpenAuthoredPrs(github: GithubConfig, repo: string): Promise<OpenAuthoredPr[]> {
+  const found: OpenAuthoredPr[] = [];
+  for (let page = 1; page <= OPEN_PR_PAGE_CAP; page++) {
+    const url: URL = new URL(`${API}/repos/${repo}/pulls`);
+    url.searchParams.set('state', 'open');
+    url.searchParams.set('sort', 'created');
+    url.searchParams.set('direction', 'desc');
+    url.searchParams.set('per_page', '100');
+    url.searchParams.set('page', String(page));
+    const res: Response | null = await fetch(url, { headers: headers(github) }).catch((): null => null);
+    if (!res || !res.ok) break;
+    const items: PullListItem[] = await res.json().catch((): PullListItem[] => []);
+    if (!Array.isArray(items) || items.length === 0) break;
+    for (const item of items) {
+      if (item.user?.login === github.author) {
+        found.push(await toOpenAuthoredPr(github, repo, item.number, item.title, item.draft ?? false, item.created_at));
+      }
+    }
+    if (items.length < 100) break;
+  }
+  return found;
+}
+
+/**
+ * Fetches the current author's OPEN pull requests. Combines the author-scoped
+ * issue-search (broad, but blind to SSO-gated orgs whose search index the token
+ * can't read) with a direct per-repo pulls scan of the configured `repos`
+ * (which reaches those gated orgs), merged and de-duped. Fails soft: any source
+ * that errors contributes nothing rather than throwing.
+ */
+export async function fetchOpenAuthoredPrs(
+  github: GithubConfig,
+  repos: string[] = [],
+): Promise<OpenAuthoredPr[]> {
+  const [searched, direct]: [OpenAuthoredPr[], OpenAuthoredPr[][]] = await Promise.all([
+    searchOpenAuthoredPrs(github).catch((): OpenAuthoredPr[] => []),
+    Promise.all(repos.map((repo) => repoOpenAuthoredPrs(github, repo).catch((): OpenAuthoredPr[] => []))),
+  ]);
+  const byKey: Map<string, OpenAuthoredPr> = new Map();
+  for (const pr of [...searched, ...direct.flat()]) byKey.set(`${pr.repo}#${pr.number}`, pr);
+  return [...byKey.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
 /**

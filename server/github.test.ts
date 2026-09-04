@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchPrStatus, requestCopilotReview, submitReview } from './github';
+import { fetchOpenAuthoredPrs, fetchPrStatus, requestCopilotReview, submitReview } from './github';
 import type { GithubConfig } from './config';
 import type { PrStatus } from './github';
 
@@ -182,6 +182,41 @@ describe('submitReview', () => {
     const result = await submitReview(github, 'octo/repo', 5, 'COMMENT', 'note');
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('fetchOpenAuthoredPrs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('merges author-search results with a direct per-repo pulls scan, keeping only the author and de-duping', async () => {
+    const T: string = '2026-09-01T00:00:00Z';
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const href: string = url.toString();
+      if (href.includes('/search/issues')) {
+        return jsonResponse(true, {
+          items: [
+            { number: 1, title: 'from search', repository_url: 'https://api.github.com/repos/gdcorp-im/x', created_at: T, draft: false, user: { login: 'octocat' } },
+          ],
+        });
+      }
+      if (href.includes('/repos/gdcorp-partners/gated/pulls')) {
+        return jsonResponse(true, [
+          { number: 5, title: 'mine in gated org', created_at: T, draft: false, user: { login: 'octocat' } },
+          { number: 6, title: 'someone else', created_at: T, draft: true, user: { login: 'other' } },
+        ]);
+      }
+      if (href.includes('/reviews')) return jsonResponse(true, []);
+      throw new Error(`unexpected url: ${href}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const prs = await fetchOpenAuthoredPrs(github, ['gdcorp-partners/gated']);
+    const numbers = prs.map((p) => p.number).sort();
+
+    expect(numbers).toEqual([1, 5]);
+    expect(prs.find((p) => p.number === 6)).toBeUndefined();
   });
 });
 

@@ -78,7 +78,7 @@ describe('buildDashboardResponse', () => {
     );
     expect(seenProject).toBe('PROJA');
     expect(r.snapshot.shipped.map((p) => p.number)).toEqual([1]);
-    expect(r.snapshot.myOpenPrs.map((p) => p.number)).toEqual([1]);
+    expect(r.snapshot.myOpenPrs.map((p) => p.number).sort()).toEqual([1, 2]);
     expect(r.repos).toEqual(['o/a', 'o/b']);
     expect(r.selectedRepo).toBe('o/a');
   });

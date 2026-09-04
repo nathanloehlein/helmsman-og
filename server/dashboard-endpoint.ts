@@ -19,7 +19,7 @@ export interface Deps {
   fetchQueueIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchActiveIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchAuthoredPrs: (github: GithubConfig) => Promise<GithubPr[]>;
-  fetchOpenAuthoredPrs: (github: GithubConfig) => Promise<OpenAuthoredPr[]>;
+  fetchOpenAuthoredPrs: (github: GithubConfig, repos: string[]) => Promise<OpenAuthoredPr[]>;
   loadMock: () => Promise<DashboardSnapshot>;
 }
 
@@ -66,9 +66,12 @@ export async function buildDashboardResponse(
 
   if (config.github) {
     try {
+      const configuredRepos: string[] = Array.from(
+        new Set([...Object.keys(config.repoProjectMap), ...(config.github.repo ? [config.github.repo] : [])]),
+      );
       [prs, openPrs] = await Promise.all([
         deps.fetchAuthoredPrs(config.github),
-        deps.fetchOpenAuthoredPrs(config.github),
+        deps.fetchOpenAuthoredPrs(config.github, configuredRepos),
       ]);
     } catch {
       degraded.push('github');
@@ -89,9 +92,6 @@ export async function buildDashboardResponse(
   const scopedPrs: GithubPr[] = selectedRepo
     ? prs.filter((pr) => pr.repo === selectedRepo)
     : prs;
-  const scopedOpenPrs: OpenAuthoredPr[] = selectedRepo
-    ? openPrs.filter((pr) => pr.repo === selectedRepo)
-    : openPrs;
   const repoLabel: string = selectedRepo
     ? (selectedRepo.split('/').pop() ?? selectedRepo)
     : config.repoLabel;
@@ -100,7 +100,7 @@ export async function buildDashboardResponse(
     queueIssues,
     activeIssues,
     prs: scopedPrs,
-    openPrs: scopedOpenPrs,
+    openPrs,
     repo: repoLabel,
     now,
   });
