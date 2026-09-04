@@ -505,6 +505,15 @@ describe('renderPrPanel', () => {
     expect(html).toContain('Code-review with agent');
   });
 
+  it('includes model + effort selectors on the review/rerun controls', () => {
+    const el: HTMLElement = document.createElement('div');
+    el.innerHTML = renderPrPanel(prFixture(), true);
+    expect(el.querySelector('.pr-model')).not.toBeNull();
+    expect(el.querySelector('.pr-effort')).not.toBeNull();
+    expect(Array.from(el.querySelectorAll<HTMLOptionElement>('.pr-effort option')).map((o) => o.value))
+      .toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
   it('renders the reviewer tally counts', () => {
     const html: string = renderPrPanel(
       prFixture({ reviews: { requested: 2, approved: 3, changesRequested: 1, commented: 4 } }),
@@ -709,6 +718,13 @@ describe('renderDashboard bench rack', () => {
     );
     expect(el.querySelector('.rack-handle[draggable="true"]')).not.toBeNull();
     expect(el.querySelector('.panel-collapse')).not.toBeNull();
+  });
+
+  it('renders model + effort selectors in the New run panel', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    expect(el.querySelector('.newrun-model')).not.toBeNull();
+    expect(el.querySelector('.newrun-effort')).not.toBeNull();
   });
 
   it('honors a custom layout: stacked panels share a slot with tabs', () => {

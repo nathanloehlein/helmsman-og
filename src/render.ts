@@ -5,6 +5,16 @@ import { escapeHtml as esc } from './logic/html';
 import type { PrStatus, Priority, Ticket, TicketStatus } from './types';
 import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
+import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
+
+function tuningSelects(prefix: string): string {
+  const opts = (list: AgentOption[]): string =>
+    list.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+  return `<div class="tuning">
+      <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS)}</select>
+      <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS)}</select>
+    </div>`;
+}
 import type { AgentCaps, RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
@@ -444,6 +454,7 @@ export function renderDashboard(
             <input class="newrun-title" type="text" placeholder="Title (optional)">
             <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
             <select class="newrun-repo" aria-label="Repository for new run">${newRunRepoOptions}</select>
+            ${tuningSelects('newrun')}
             <button class="newrun-launch">Launch run</button>
           </div>
         </div>`,
@@ -575,7 +586,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
   const reviewersBadge: string =
     `<span class="pr-reviewers mono" aria-label="Reviewers requested ${reviews.requested}, approved ${reviews.approved}, changes requested ${reviews.changesRequested}, commented ${reviews.commented}">${tally(ICON_REQUEST, reviews.requested, 'Requested')}${tally(ICON_CHECK, reviews.approved, 'Approved')}${tally(ICON_X_MARK, reviews.changesRequested, 'Changes requested')}${tally(ICON_PENCIL, reviews.commented, 'Commented')}</span>`;
   const rerun: string = canRerun
-    ? '<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea><button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>'
+    ? `<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea>${tuningSelects('pr')}<button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>`
     : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
   return `
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">

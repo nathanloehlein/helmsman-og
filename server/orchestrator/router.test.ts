@@ -152,6 +152,15 @@ describe('agent control routes', () => {
     expect(r?.status).toBe(200);
   });
 
+  it('forwards model and effort to launch (ticket + review)', async () => {
+    const launch = vi.fn(() => 'run-9');
+    const d = { ...launchDeps, launch } as unknown as RouterDeps;
+    await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1', repo: 'o/r', model: 'opus', effort: 'high' }, d);
+    expect(launch).toHaveBeenCalledWith({ ticketId: 'T-1', title: undefined, repo: 'o/r', model: 'opus', effort: 'high' });
+    await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { mode: 'review', repo: 'o/r', prNumber: 5, model: 'sonnet', effort: 'low' }, d);
+    expect(launch).toHaveBeenCalledWith({ repo: 'o/r', prNumber: 5, mode: 'review', model: 'sonnet', effort: 'low' });
+  });
+
   it('rejects a launch missing repo', async () => {
     const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1' }, launchDeps);
     expect(r?.status).toBe(400);

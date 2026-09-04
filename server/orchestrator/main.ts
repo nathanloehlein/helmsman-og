@@ -74,7 +74,7 @@ try {
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string }): string {
+function launch(body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }): string {
   const runId: string = randomUUID();
   const cfg: AppConfig = configStore.current();
   const control: { stopped: boolean; handle: AgentHandle | null } = { stopped: false, handle: null };
@@ -146,6 +146,8 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         const title: string = body.title ?? fetchedTitle ?? ticketId;
         taskObj = { ticketId, title, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
       }
+      taskObj.model = body.model;
+      taskObj.effort = body.effort;
       await startRun(taskObj, {
         db,
         bus,

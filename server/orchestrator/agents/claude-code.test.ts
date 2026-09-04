@@ -1,6 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { buildPrompt } from './claude-code';
+import { agentFlags, buildPrompt } from './claude-code';
 import type { AgentTask } from './adapter';
+
+describe('agentFlags', () => {
+  const base: AgentTask = { ticketId: 'T-1', title: 't', repo: 'o/r', jiraBaseUrl: '' };
+
+  it('is empty when no model or effort is set', () => {
+    expect(agentFlags(base)).toEqual([]);
+  });
+
+  it('appends validated --model and --effort', () => {
+    expect(agentFlags({ ...base, model: 'opus', effort: 'high' })).toEqual([
+      '--model', 'opus', '--effort', 'high',
+    ]);
+  });
+
+  it('drops an invalid effort and an unsafe model', () => {
+    expect(agentFlags({ ...base, model: 'opus --dangerously', effort: 'turbo' })).toEqual([]);
+  });
+});
 
 describe('buildPrompt', () => {
   it('builds the Jira ticket prompt when there is no free-form task', () => {

@@ -10,6 +10,8 @@ export interface LaunchRunBody {
   mode?: 'ticket' | 'freeform' | 'rerun' | 'review';
   prNumber?: number;
   feedback?: string;
+  model?: string;
+  effort?: string;
 }
 
 export async function launchRun(body: LaunchRunBody): Promise<LaunchResult> {

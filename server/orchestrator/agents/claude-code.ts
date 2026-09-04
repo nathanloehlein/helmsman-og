@@ -2,6 +2,16 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface, type Interface } from 'node:readline';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } from './adapter';
 import { mapStreamLine } from './claude-stream';
+import { validEffort, validModel } from '../../../src/logic/agentOptions';
+
+export function agentFlags(task: AgentTask): string[] {
+  const flags: string[] = [];
+  const model: string | null = validModel(task.model);
+  if (model) flags.push('--model', model);
+  const effort: string | null = validEffort(task.effort);
+  if (effort) flags.push('--effort', effort);
+  return flags;
+}
 
 export function buildPrompt(task: AgentTask): string {
   if (task.review && task.prBranch && task.prNumber) {
@@ -47,7 +57,7 @@ export const claudeCodeAdapter: AgentAdapter = {
     const { JIRA_API_TOKEN, JIRA_EMAIL, ...agentEnv } = process.env;
     const child: ChildProcess = spawn(
       'claude',
-      ['-p', buildPrompt(task), '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
+      ['-p', buildPrompt(task), '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', ...agentFlags(task)],
       { cwd: workdir, env: agentEnv },
     );
 

@@ -24,6 +24,8 @@
 .tally { display: inline-flex; align-items: center; gap: 3px; }
 .tally-ic { display: inline-flex; }
 .tally-ic svg { width: 12px; height: 12px; }
+.tuning { display: flex; gap: 8px; }
+.tuning-select { flex: 1 1 0; min-width: 0; font-size: 11px; }
 .bench-jacks { display: inline-flex; align-items: center; gap: 7px; margin-left: 8px; padding-left: 10px; border-left: 1px solid var(--line-faint); opacity: 0.5; pointer-events: none; }
 .bench-jacks svg { width: 14px; height: 14px; color: var(--text-faint); }
 

@@ -38,7 +38,7 @@ export interface RouterDeps {
   triage: (repo: string | null) => Promise<TriageResponse>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string }) => string;
+  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
@@ -78,27 +78,28 @@ export async function handleApi(
     return { status: 200, json: { runs: deps.db.listRuns(50).map(toRunSummary), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
-    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string } | null;
+    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string; model?: string; effort?: string } | null;
     if (!b?.repo) return { status: 400, json: { error: 'repo required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
+    const tuning: { model?: string; effort?: string } = { model: b.model, effort: b.effort };
     if (b.mode === 'rerun') {
       if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
-      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'rerun', feedback: b.feedback });
+      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'rerun', feedback: b.feedback, ...tuning });
       return { status: 200, json: { runId } };
     }
     if (b.mode === 'review') {
       if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
-      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'review' });
+      const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'review', ...tuning });
       return { status: 200, json: { runId } };
     }
     if (b.mode === 'freeform') {
       if (!b.task) return { status: 400, json: { error: 'task required' } };
-      const runId = deps.launch({ repo: b.repo, task: b.task });
+      const runId = deps.launch({ repo: b.repo, task: b.task, ...tuning });
       return { status: 200, json: { runId } };
     }
     if (!b.ticketId) return { status: 400, json: { error: 'ticketId and repo required' } };
-    const runId = deps.launch({ ticketId: b.ticketId, title: b.title, repo: b.repo });
+    const runId = deps.launch({ ticketId: b.ticketId, title: b.title, repo: b.repo, ...tuning });
     return { status: 200, json: { runId } };
   }
   const stopMatch: RegExpMatchArray | null = path.match(/^\/api\/agents\/([^/]+)\/stop$/);

@@ -810,7 +810,7 @@ export class DashboardView {
     if (feedback.trim() === '') return;
     const seq: number = ++this.launchSeq;
     try {
-      const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback });
+      const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback, ...this.readTuning(t.panel, 'pr') });
       if (seq !== this.launchSeq) return;
       this.openRunTab(result.runId, `rerun #${t.number}`);
     } catch (err: unknown) {
@@ -825,7 +825,7 @@ export class DashboardView {
     if (!t) return;
     const seq: number = ++this.launchSeq;
     try {
-      const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number });
+      const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number, ...this.readTuning(t.panel, 'pr') });
       if (seq !== this.launchSeq) return;
       this.openRunTab(result.runId, `review #${t.number}`);
     } catch (err: unknown) {
@@ -1061,16 +1061,26 @@ export class DashboardView {
     }
   }
 
+  private readTuning(scope: ParentNode, prefix: string): { model?: string; effort?: string } {
+    const model: string = scope.querySelector<HTMLSelectElement>(`.${prefix}-model`)?.value ?? '';
+    const effort: string = scope.querySelector<HTMLSelectElement>(`.${prefix}-effort`)?.value ?? '';
+    const tuning: { model?: string; effort?: string } = {};
+    if (model) tuning.model = model;
+    if (effort) tuning.effort = effort;
+    return tuning;
+  }
+
   private buildNewRunPayload(mode: 'ticket' | 'freeform'): { body: LaunchRunBody; ticketId: string; title: string } | null {
     const repoSelect: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.newrun-repo');
     const repo: string = repoSelect?.value ?? '';
     if (!repo) return null;
+    const tuning: { model?: string; effort?: string } = this.readTuning(this.root, 'newrun');
 
     if (mode === 'freeform') {
       const taskEl: HTMLTextAreaElement | null = this.root.querySelector<HTMLTextAreaElement>('.newrun-task');
       const task: string = taskEl?.value ?? '';
       if (task.trim() === '') return null;
-      return { body: { repo, task, mode: 'freeform' }, ticketId: 'freeform', title: task };
+      return { body: { repo, task, mode: 'freeform', ...tuning }, ticketId: 'freeform', title: task };
     }
 
     const ticketEl: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-ticket');
@@ -1078,7 +1088,7 @@ export class DashboardView {
     const ticketId: string = ticketEl?.value ?? '';
     if (ticketId.trim() === '') return null;
     const title: string = titleEl?.value || ticketId;
-    return { body: { ticketId, title, repo, mode: 'ticket' }, ticketId, title };
+    return { body: { ticketId, title, repo, mode: 'ticket', ...tuning }, ticketId, title };
   }
 
   private async handleNewRun(btn: HTMLButtonElement): Promise<void> {
