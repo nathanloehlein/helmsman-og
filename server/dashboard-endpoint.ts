@@ -18,7 +18,7 @@ export interface DashboardResponse {
 export interface Deps {
   fetchQueueIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchActiveIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
-  fetchAuthoredPrs: (github: GithubConfig) => Promise<GithubPr[]>;
+  fetchAuthoredPrs: (github: GithubConfig, repos: string[]) => Promise<GithubPr[]>;
   fetchOpenAuthoredPrs: (github: GithubConfig, repos: string[]) => Promise<OpenAuthoredPr[]>;
   loadMock: () => Promise<DashboardSnapshot>;
 }
@@ -70,7 +70,7 @@ export async function buildDashboardResponse(
         new Set([...Object.keys(config.repoProjectMap), ...(config.github.repo ? [config.github.repo] : [])]),
       );
       [prs, openPrs] = await Promise.all([
-        deps.fetchAuthoredPrs(config.github),
+        deps.fetchAuthoredPrs(config.github, configuredRepos),
         deps.fetchOpenAuthoredPrs(config.github, configuredRepos),
       ]);
     } catch {

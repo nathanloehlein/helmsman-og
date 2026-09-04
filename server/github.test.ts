@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchOpenAuthoredPrs, fetchPrStatus, requestCopilotReview, submitReview } from './github';
+import { fetchAuthoredPrs, fetchOpenAuthoredPrs, fetchPrStatus, requestCopilotReview, submitReview } from './github';
 import type { GithubConfig } from './config';
 import type { PrStatus } from './github';
 
@@ -182,6 +182,40 @@ describe('submitReview', () => {
     const result = await submitReview(github, 'octo/repo', 5, 'COMMENT', 'note');
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('fetchAuthoredPrs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('merges search results with a direct per-repo scan and de-dupes, newest first', async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const href: string = url.toString();
+      if (href.includes('/search/issues')) {
+        return jsonResponse(true, {
+          items: [
+            { number: 1, title: 'searched', repository_url: 'https://api.github.com/repos/gdcorp-im/x', created_at: '2026-08-01T00:00:00Z', user: { login: 'octocat' }, pull_request: { merged_at: null } },
+          ],
+        });
+      }
+      if (href.includes('/repos/gdcorp-partners/gated/pulls')) {
+        return jsonResponse(true, [
+          { number: 9, title: 'gated recent', created_at: '2026-09-01T00:00:00Z', merged_at: null, head: { ref: 'feat/x' }, user: { login: 'octocat' } },
+          { number: 10, title: 'not mine', created_at: '2026-09-02T00:00:00Z', merged_at: null, user: { login: 'other' } },
+        ]);
+      }
+      if (href.includes('/reviews')) return jsonResponse(true, []);
+      throw new Error(`unexpected url: ${href}`);
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const prs = await fetchAuthoredPrs(github, ['gdcorp-partners/gated']);
+
+    expect(prs.map((p) => p.number)).toEqual([9, 1]);
+    expect(prs.find((p) => p.number === 10)).toBeUndefined();
+    expect(prs.find((p) => p.number === 9)?.headRef).toBe('feat/x');
   });
 });
 

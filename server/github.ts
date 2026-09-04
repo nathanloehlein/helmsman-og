@@ -138,12 +138,7 @@ async function latestReviewDecision(
   return decisionFromReviews(reviews);
 }
 
-/**
- * Fetches the author's most-recent PRs across every repo they can see, via
- * GitHub's issue-search API. Author-scoped search sidesteps repo-scoped search,
- * which is SSO-gated on some private orgs and returns 422 for the token there.
- */
-export async function fetchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]> {
+async function searchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]> {
   const url: URL = new URL(`${API}/search/issues`);
   url.searchParams.set('q', `author:${github.author} type:pr`);
   url.searchParams.set('sort', 'updated');
@@ -173,11 +168,67 @@ export async function fetchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]
   );
 }
 
+const REPO_AUTHORED_CAP: number = 8;
+
+async function repoAuthoredPrs(github: GithubConfig, repo: string): Promise<GithubPr[]> {
+  const found: GithubPr[] = [];
+  for (let page = 1; page <= OPEN_PR_PAGE_CAP && found.length < REPO_AUTHORED_CAP; page++) {
+    const url: URL = new URL(`${API}/repos/${repo}/pulls`);
+    url.searchParams.set('state', 'all');
+    url.searchParams.set('sort', 'updated');
+    url.searchParams.set('direction', 'desc');
+    url.searchParams.set('per_page', '100');
+    url.searchParams.set('page', String(page));
+    const res: Response | null = await fetch(url, { headers: headers(github) }).catch((): null => null);
+    if (!res || !res.ok) break;
+    const items: PullListItem[] = await res.json().catch((): PullListItem[] => []);
+    if (!Array.isArray(items) || items.length === 0) break;
+    for (const item of items) {
+      if (found.length >= REPO_AUTHORED_CAP) break;
+      if (item.user?.login !== github.author) continue;
+      const mergedAt: string | null = item.merged_at ?? null;
+      found.push({
+        number: item.number,
+        title: item.title,
+        headRef: item.head?.ref ?? '',
+        authorLogin: github.author,
+        mergedAt,
+        createdAt: item.created_at,
+        reviewDecision: mergedAt ? null : await latestReviewDecision(github, repo, item.number).catch((): PrReviewDecision => 'REVIEW_REQUIRED'),
+        repo,
+      });
+    }
+    if (items.length < 100) break;
+  }
+  return found;
+}
+
+/**
+ * The author's most-recent PRs. Merges the author issue-search (broad, but
+ * blind to SSO-gated orgs the search index won't return for this token) with a
+ * direct per-repo pulls scan of the configured repos (which reaches those
+ * orgs), de-duped by repo#number and ordered most-recent first. The search is
+ * the primary source and still throws on failure so the caller can degrade;
+ * the direct scan is fail-soft.
+ */
+export async function fetchAuthoredPrs(github: GithubConfig, repos: string[] = []): Promise<GithubPr[]> {
+  const searched: GithubPr[] = await searchAuthoredPrs(github);
+  const direct: GithubPr[][] = await Promise.all(
+    repos.map((repo) => repoAuthoredPrs(github, repo).catch((): GithubPr[] => [])),
+  );
+  const byKey: Map<string, GithubPr> = new Map();
+  for (const pr of [...searched, ...direct.flat()]) byKey.set(`${pr.repo}#${pr.number}`, pr);
+  const recency = (pr: GithubPr): number => Date.parse(pr.mergedAt ?? pr.createdAt);
+  return [...byKey.values()].sort((a, b) => recency(b) - recency(a)).slice(0, 12);
+}
+
 interface PullListItem {
   number: number;
   title: string;
   draft?: boolean;
   created_at: string;
+  merged_at?: string | null;
+  head?: { ref: string };
   user: { login: string } | null;
 }
 
