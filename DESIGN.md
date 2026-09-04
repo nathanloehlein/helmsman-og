@@ -112,6 +112,11 @@ components:
     typography: "{typography.data}"
     rounded: "{rounded.sm}"
     padding: "6px 9px"
+  tuning-select:
+    backgroundColor: "{colors.faceplate-raised}"
+    textColor: "{colors.silkscreen}"
+    rounded: "{rounded.sm}"
+    padding: "6px 9px"
   page-tab:
     backgroundColor: "{colors.rack-rail}"
     textColor: "{colors.silkscreen-faint}"
@@ -272,6 +277,11 @@ Each row (`.lane`) is `NN` · id · label · **`.lane-rail`** (a flex amber hair
 ### Inputs / Fields
 - **Style:** raised-surface fill (`faceplate-raised`), 1px `hairline` border, 3px corners, mono 12px.
 - **Focus:** border shifts to solid amber; `:focus-visible` adds a 2px amber outline.
+
+### Tuning Controls (launch calibration)
+- **Purpose:** the paired **Model + Effort** selects that calibrate a run before launch. They sit in the New-run faceplate (after the repo select) and in the PR review/re-run controls, screened like the two calibration knobs a bench instrument would carry.
+- **Style:** a `.tuning` flex row of two equal-width `.tuning-select` dropdowns (`flex: 1 1 0`), each an input-styled select — raised-surface fill (`faceplate-raised`), 1px `hairline` border, 3px corners — set in mono at a slightly finer 11px with normal casing (values are shown as written, not silkscreened).
+- **Focus:** same as inputs — border shifts to solid amber, `:focus-visible` adds a 2px amber outline.
 
 ### Navigation (page tabs)
 - **Style:** uppercase mono on rack-rail ground, 2px transparent bottom-border; hover lifts the text to dim.
