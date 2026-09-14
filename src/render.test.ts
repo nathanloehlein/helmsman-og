@@ -456,6 +456,19 @@ describe('renderTriageView', () => {
     ));
     expect(el.querySelectorAll('.empty-note').length).toBeGreaterThanOrEqual(3);
   });
+
+  it('gives every group a collapse button carrying its id', () => {
+    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
+    const ids: string[] = Array.from(el.querySelectorAll<HTMLButtonElement>('.surface-collapse')).map((b) => b.dataset.collapseId ?? '');
+    expect(ids).toEqual(['triage:backlog', 'triage:todo', 'triage:mine']);
+  });
+
+  it('marks a group collapsed and hides its list when its id is in the set', () => {
+    const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID, collapsed: new Set(['triage:todo']) }));
+    const collapsedGroups = el.querySelectorAll('.triage-group.is-collapsed');
+    expect(collapsedGroups).toHaveLength(1);
+    expect(collapsedGroups[0]!.querySelector('.surface-collapse')!.getAttribute('aria-expanded')).toBe('false');
+  });
 });
 
 function prFixture(over: Partial<PrStatusView> = {}): PrStatusView {
@@ -646,6 +659,19 @@ describe('renderCmuxView', () => {
     const html: string = renderCmuxView(cmuxStateFixture({ tabs: [] }));
     expect(html.toLowerCase()).toContain('no cmux tabs');
   });
+
+  it('gives the list and detail panels collapse buttons with stable ids', () => {
+    const html: string = renderCmuxView(cmuxStateFixture({ selectedSurface: 'surface-1' }));
+    expect(html).toContain('data-collapse-id="cmux:list"');
+    expect(html).toContain('data-collapse-id="cmux:detail"');
+  });
+
+  it('marks a cmux panel collapsed when its id is in the set', () => {
+    const el: HTMLElement = document.createElement('div');
+    el.innerHTML = renderCmuxView(cmuxStateFixture({ selectedSurface: 'surface-1', collapsed: new Set(['cmux:list']) }));
+    expect(el.querySelector('.cmux-list.is-collapsed')).not.toBeNull();
+    expect(el.querySelector('.cmux-detail.is-collapsed')).toBeNull();
+  });
 });
 
 describe('renderRunsDrawer', () => {
@@ -693,6 +719,17 @@ describe('renderRunsDrawer', () => {
     expect(html).toContain('run-drawer-empty');
     expect(html).toContain('run-drawer-title');
     expect(html).not.toContain('run-tab-close');
+  });
+
+  it('shows a drawer collapse button when tabs exist, none when empty', () => {
+    expect(renderRunsDrawer([tab()], 'run-1')).toContain('data-collapse-id="runs:drawer"');
+    expect(renderRunsDrawer([], null)).not.toContain('data-collapse-id="runs:drawer"');
+  });
+
+  it('reflects collapsed state on the drawer button', () => {
+    const el: HTMLElement = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab()], 'run-1', true);
+    expect(el.querySelector('.surface-collapse')!.getAttribute('aria-expanded')).toBe('false');
   });
 });
 

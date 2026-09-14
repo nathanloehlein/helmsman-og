@@ -1510,6 +1510,52 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(configPlate()!.classList.contains('is-collapsed')).toBe(false);
   });
 
+  it('collapses a triage group, persists it, and survives a repaint', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const triagePayload = {
+      groups: {
+        unassignedBacklog: [{ id: 'AB-1', title: 'one', priority: 'P1', status: 'backlog', repo: 'o/a' }],
+        unassignedTodo: [],
+        mineOpen: [],
+      },
+      degraded: false,
+      selectedRepo: null,
+      jiraBaseUrl: null,
+    };
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/triage')) return { ok: true, status: 200, json: async () => triagePayload } as unknown as Response;
+      if (url.includes('/api/config')) return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="triage"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const backlogGroup = (): HTMLElement | null =>
+      root.querySelector<HTMLButtonElement>('.surface-collapse[data-collapse-id="triage:backlog"]')?.closest('.triage-group') ?? null;
+    expect(backlogGroup()!.classList.contains('is-collapsed')).toBe(false);
+    root.querySelector<HTMLButtonElement>('.surface-collapse[data-collapse-id="triage:backlog"]')!.click();
+    expect(backlogGroup()!.classList.contains('is-collapsed')).toBe(true);
+    expect(localStorage.getItem('gomaestro.collapsed')).toContain('triage:backlog');
+
+    view['paintTriage']();
+    expect(backlogGroup()!.classList.contains('is-collapsed')).toBe(true);
+  });
+
+  it('does not collapse the runs drawer when there are no tabs (no orphaned collapsed empty state)', async () => {
+    localStorage.setItem('gomaestro.collapsed', JSON.stringify(['runs:drawer']));
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    const drawer: HTMLElement = view['runDrawerEl'] as HTMLElement;
+    expect(drawer.classList.contains('is-collapsed')).toBe(false);
+    expect(drawer.querySelector('.run-drawer-empty')).not.toBeNull();
+  });
+
   it('fires a drawer PR action exactly once (no double-handling now the drawer lives in root)', async () => {
     const response: DashboardResponse = await buildResponse();
     let reviewLaunches: number = 0;
