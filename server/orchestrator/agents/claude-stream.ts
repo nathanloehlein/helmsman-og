@@ -17,7 +17,7 @@ interface StreamLine {
 
 const PR_URL_RE: RegExp = /github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/i;
 
-function parsePrNumber(text: string): number | undefined {
+export function parsePrNumber(text: string): number | undefined {
   const match: RegExpMatchArray | null = text.match(PR_URL_RE);
   return match ? Number(match[1]) : undefined;
 }
