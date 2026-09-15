@@ -1,9 +1,11 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView } from './render';
+import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView } from './render';
 import type { RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import { fetchTriage, type TriageGroupsView } from './data/triage';
+import { fetchBugs } from './data/bugs';
+import type { BugsResponse } from './types';
 import {
   launchAgent,
   launchRun,
@@ -96,9 +98,10 @@ export class DashboardView {
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
-  private view: 'dashboard' | 'cmux' | 'triage' = 'dashboard';
+  private view: 'dashboard' | 'cmux' | 'triage' | 'bugs' = 'dashboard';
   private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
   private triageDegraded: boolean = false;
+  private bugsResponse: BugsResponse | null = null;
   private cmuxConnected: boolean = false;
   private cmuxTabs: CmuxTabView[] = [];
   private cmuxPanelState: PanelState = { selectedSurface: null };
@@ -149,6 +152,10 @@ export class DashboardView {
       this.paintTriage();
       return;
     }
+    if (this.view === 'bugs') {
+      this.paintBugs();
+      return;
+    }
     if (!this.snapshot) return;
     const preBody: HTMLElement | null =
       this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
@@ -190,6 +197,7 @@ export class DashboardView {
         this.selectedRepo = repo.value || null;
         saveRepoScope(this.selectedRepo);
         if (this.view === 'triage') void this.loadTriage().then(() => this.paint());
+        else if (this.view === 'bugs') void this.loadBugs().then(() => this.paint());
         else void this.refresh();
       });
     }
@@ -285,6 +293,24 @@ export class DashboardView {
   private async enterTriageView(): Promise<void> {
     this.view = 'triage';
     await this.loadTriage();
+    this.paint();
+  }
+
+  private paintBugs(): void {
+    this.root.innerHTML = renderBugsView(
+      this.bugsResponse ?? { cards: [], degraded: true, generatedAt: '', latestWindow: '', previousWindow: '' },
+      { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId },
+    );
+    this.bindHeadControls();
+  }
+
+  private async loadBugs(): Promise<void> {
+    this.bugsResponse = await fetchBugs(this.selectedRepo);
+  }
+
+  private async enterBugsView(): Promise<void> {
+    this.view = 'bugs';
+    await this.loadBugs();
     this.paint();
   }
 
@@ -657,6 +683,7 @@ export class DashboardView {
       if (targetView === this.view) return;
       if (targetView === 'cmux') void this.enterCmuxView();
       else if (targetView === 'triage') void this.enterTriageView();
+      else if (targetView === 'bugs') void this.enterBugsView();
       else this.leaveCmuxView();
       return;
     }
