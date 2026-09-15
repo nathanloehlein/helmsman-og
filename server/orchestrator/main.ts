@@ -91,7 +91,7 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         ? claudeCodeAdapter
         : codexAdapter;
   if (cfg.agentAdapter === 'command' && !cfg.agentCmd) {
-    process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n');
+    process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using codex\n');
   }
   const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
   void (async (): Promise<void> => {
