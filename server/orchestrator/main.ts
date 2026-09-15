@@ -16,6 +16,7 @@ import { RunBus } from './event-bus';
 import { startRun } from './runner';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
+import { codexAdapter } from './agents/codex';
 import { createWorktree, createWorktreeFromBranch, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
@@ -84,7 +85,11 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
     control.handle?.stop();
   });
   const adapter: AgentAdapter =
-    cfg.agentAdapter === 'command' && cfg.agentCmd ? commandAdapter(cfg.agentCmd) : claudeCodeAdapter;
+    cfg.agentAdapter === 'command' && cfg.agentCmd
+      ? commandAdapter(cfg.agentCmd)
+      : cfg.agentAdapter === 'claude-code'
+        ? claudeCodeAdapter
+        : codexAdapter;
   if (cfg.agentAdapter === 'command' && !cfg.agentCmd) {
     process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n');
   }
