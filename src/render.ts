@@ -25,7 +25,7 @@ import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
 export const CONFIG_HELP: Record<string, string> = {
-  AGENT_ADAPTER: "Which agent runs tasks: 'claude-code' (default) or 'command' (runs your custom AGENT_CMD).",
+  AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD).",
   AGENT_CMD: 'Shell command for the "command" adapter. Receives the task prompt and can run arbitrary commands — change with care.',
   AGENT_MAX_ATTEMPTS: 'Maximum times a single run retries before it is abandoned.',
   AGENT_MAX_COST_USD: 'Per-run spend ceiling in USD; the run stops once exceeded. Blank means no cap.',
