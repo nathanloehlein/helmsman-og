@@ -797,21 +797,34 @@ function bugCardHtml(card: BugCard): string {
     </section>`;
 }
 
+const GENERATED_AT_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}):\d{2}(?:\.\d+)?Z$/;
+
+function formatGeneratedAt(generatedAt: string): string {
+  if (generatedAt === '') return 'Generated —';
+  const m = GENERATED_AT_RE.exec(generatedAt);
+  if (!m) return `Generated ${esc(generatedAt)}`;
+  return `Generated ${m[1]} ${m[2]} UTC`;
+}
+
 export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
   const banner: string = res.degraded
     ? '<div class="degraded-banner">Jira unavailable — bug data is empty.</div>'
     : '';
   const cards: string = res.cards.map(bugCardHtml).join('');
+  const bugsBody: string =
+    res.cards.length === 0 && !res.degraded
+      ? '<div class="empty-note">No bug data for this scope.</div>'
+      : `<div class="bugs-grid">${cards}</div>`;
   return `
     <div class="bench bugs-view" data-page="bugs">
       ${renderBenchHead({ active: 'bugs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
       <div class="bugs-windows mono">
         <span>LATEST 7 DAYS · ${esc(res.latestWindow)}</span>
         <span>PREVIOUS 7 DAYS · ${esc(res.previousWindow)}</span>
-        <span>Generated ${esc(res.generatedAt)}</span>
+        <span>${formatGeneratedAt(res.generatedAt)}</span>
       </div>
       ${banner}
-      <div class="bugs-grid">${cards}</div>
+      ${bugsBody}
     </div>`;
 }
 

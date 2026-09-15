@@ -854,4 +854,26 @@ describe('renderBugsView', () => {
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;img');
   });
+
+  it('shows an empty-state note (not a blank grid) when the scope has no cards and is not degraded', () => {
+    const el = mount(renderBugsView({ ...res, cards: [], degraded: false }, opts));
+    expect(el.querySelector('.empty-note')?.textContent).toBe('No bug data for this scope.');
+    expect(el.querySelector('.degraded-banner')).toBeNull();
+    expect(el.querySelectorAll('.bug-card')).toHaveLength(0);
+  });
+
+  it('formats generatedAt as a readable UTC string', () => {
+    const el = mount(renderBugsView(res, opts));
+    expect(el.textContent).toContain('Generated 2026-09-15 16:15 UTC');
+  });
+
+  it('shows an em dash when generatedAt is empty', () => {
+    const el = mount(renderBugsView({ ...res, generatedAt: '' }, opts));
+    expect(el.textContent).toContain('Generated —');
+  });
+
+  it('falls back to the raw value when generatedAt is malformed', () => {
+    const el = mount(renderBugsView({ ...res, generatedAt: 'not-a-date' }, opts));
+    expect(el.textContent).toContain('Generated not-a-date');
+  });
 });

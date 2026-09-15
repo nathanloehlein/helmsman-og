@@ -153,8 +153,10 @@ describe('bug fetchers', () => {
 
   it('fetches open bugs with the bug fields', async () => {
     let seenUrl = '';
-    globalThis.fetch = (async (url: URL | string) => {
+    let seenMethod: string | undefined;
+    globalThis.fetch = (async (url: URL | string, init?: RequestInit) => {
       seenUrl = String(url);
+      seenMethod = init?.method;
       return { ok: true, status: 200, json: async () => ({ issues: [
         { key: 'AB-1', fields: { summary: 's', priority: { name: 'P1 - High' }, duedate: '2026-09-20', resolutiondate: null, created: '2026-09-01T00:00:00Z', customfield_14808: { value: 'S2 - Medium' } } },
       ] }) } as unknown as Response;
@@ -164,6 +166,7 @@ describe('bug fetchers', () => {
     expect(bugs[0]!.fields.customfield_14808!.value).toBe('S2 - Medium');
     expect(seenUrl).toContain('customfield_14808');
     expect(seenUrl).toContain('duedate');
+    expect(seenMethod ?? 'GET').toBe('GET');
   });
 
   it('returns the oldest open bug or null', async () => {
