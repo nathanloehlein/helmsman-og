@@ -136,7 +136,7 @@ export function buildMineOpenJql(jira: JiraConfig): string {
 }
 
 export function buildOpenBugsJql(project: string): string {
-  return `project = "${project}" AND issuetype = Bug AND statusCategory != Done ORDER BY priority ASC, duedate ASC`;
+  return `project = "${project}" AND issuetype = Bug AND statusCategory != Done ORDER BY priority DESC, duedate ASC`;
 }
 
 export function buildCreatedSinceJql(project: string, days: number): string {

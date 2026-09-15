@@ -119,7 +119,7 @@ describe('fetchTriageGroups', () => {
 describe('bug JQL builders', () => {
   it('scopes open bugs to a project and excludes done', () => {
     expect(buildOpenBugsJql('AIROBUILD')).toBe(
-      'project = "AIROBUILD" AND issuetype = Bug AND statusCategory != Done ORDER BY priority ASC, duedate ASC',
+      'project = "AIROBUILD" AND issuetype = Bug AND statusCategory != Done ORDER BY priority DESC, duedate ASC',
     );
   });
   it('windows created and resolved counts', () => {
