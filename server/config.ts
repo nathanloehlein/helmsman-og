@@ -27,7 +27,7 @@ export interface AppConfig {
   statusBacklog: string;
   statusTodo: string;
   autoClaimIntervalMs: number;
-  agentAdapter: 'claude-code' | 'command';
+  agentAdapter: 'claude-code' | 'command' | 'codex';
   agentCmd: string | null;
   maxCostUsd: number | null;
 }
@@ -87,8 +87,9 @@ export function loadConfig(env: Env): AppConfig {
   const parsedAutoClaimIntervalMs: number = autoClaimIntervalMsRaw ? parseInt(autoClaimIntervalMsRaw, 10) : NaN;
   const autoClaimIntervalMs: number = Number.isFinite(parsedAutoClaimIntervalMs) ? parsedAutoClaimIntervalMs : 60000;
   const agentCmd: string | null = req(env, 'AGENT_CMD');
-  const agentAdapter: 'claude-code' | 'command' =
-    req(env, 'AGENT_ADAPTER') === 'command' ? 'command' : 'claude-code';
+  const rawAdapter: string | null = req(env, 'AGENT_ADAPTER');
+  const agentAdapter: 'claude-code' | 'command' | 'codex' =
+    rawAdapter === 'command' ? 'command' : rawAdapter === 'claude-code' ? 'claude-code' : 'codex';
   const maxCostRaw: string | null = req(env, 'AGENT_MAX_COST_USD');
   const parsedMaxCost: number = maxCostRaw ? parseFloat(maxCostRaw) : NaN;
   const maxCostUsd: number | null = Number.isFinite(parsedMaxCost) ? parsedMaxCost : null;
