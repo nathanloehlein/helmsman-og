@@ -134,3 +134,27 @@ export function buildUnassignedTodoJql(jira: JiraConfig, status: string): string
 export function buildMineOpenJql(jira: JiraConfig): string {
   return `project = "${jira.project}" AND assignee = ${formatAssignee(jira.assignee)} AND statusCategory != Done ORDER BY status ASC, priority ASC`;
 }
+
+export function buildOpenBugsJql(project: string): string {
+  return `project = "${project}" AND issuetype = Bug AND statusCategory != Done ORDER BY priority ASC, duedate ASC`;
+}
+
+export function buildCreatedSinceJql(project: string, days: number): string {
+  return `project = "${project}" AND issuetype = Bug AND created >= -${days}d`;
+}
+
+export function buildResolvedSinceJql(project: string, days: number): string {
+  return `project = "${project}" AND issuetype = Bug AND statusCategory = Done AND resolutiondate >= -${days}d`;
+}
+
+export function buildPastSlaJql(project: string): string {
+  return `project = "${project}" AND issuetype = Bug AND statusCategory != Done AND duedate < now()`;
+}
+
+export function buildOldestOpenBugJql(project: string): string {
+  return `project = "${project}" AND issuetype = Bug AND statusCategory != Done ORDER BY created ASC`;
+}
+
+export function buildResolved90Jql(project: string, days: number): string {
+  return `project = "${project}" AND issuetype = Bug AND statusCategory = Done AND resolutiondate >= -${days}d ORDER BY resolutiondate DESC`;
+}

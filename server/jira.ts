@@ -5,6 +5,9 @@ import {
   buildQueueJql,
   buildUnassignedBacklogJql,
   buildUnassignedTodoJql,
+  buildOpenBugsJql,
+  buildOldestOpenBugJql,
+  buildResolved90Jql,
 } from './config';
 import type { JiraHistory, JiraIssue } from './types';
 
@@ -15,6 +18,20 @@ export interface TriageGroups {
 }
 
 const FIELDS: string = 'summary,status,priority,resolutiondate';
+
+const BUG_FIELDS: string = 'summary,priority,duedate,resolutiondate,created,customfield_14808';
+
+export interface BugIssue {
+  key: string;
+  fields: {
+    summary: string;
+    priority: { name: string } | null;
+    duedate: string | null;
+    resolutiondate: string | null;
+    created: string;
+    customfield_14808: { value: string } | null;
+  };
+}
 
 function basicAuth(jira: JiraConfig): string {
   return Buffer.from(`${jira.email}:${jira.apiToken}`).toString('base64');
@@ -95,4 +112,58 @@ export async function fetchActiveIssues(jira: JiraConfig): Promise<JiraIssue[]> 
       }),
     ),
   );
+}
+
+export async function fetchApproxCount(jira: JiraConfig, jql: string): Promise<number> {
+  const url: URL = new URL('/rest/api/3/search/approximate-count', jira.baseUrl);
+  const res: Response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basicAuth(jira)}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jql }),
+  });
+  if (!res.ok) throw new Error(`Jira ${res.status}: ${await res.text()}`);
+  const body: { count?: number } = await res.json();
+  return body.count ?? 0;
+}
+
+async function searchBugs(jira: JiraConfig, jql: string, maxResults: number): Promise<BugIssue[]> {
+  const url: URL = new URL('/rest/api/3/search/jql', jira.baseUrl);
+  url.searchParams.set('jql', jql);
+  url.searchParams.set('fields', BUG_FIELDS);
+  url.searchParams.set('maxResults', String(maxResults));
+  const res: Response = await fetch(url, {
+    headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`Jira ${res.status}: ${await res.text()}`);
+  const body: { issues?: BugIssue[] } = await res.json();
+  return body.issues ?? [];
+}
+
+export function fetchOpenBugs(jira: JiraConfig, project: string): Promise<BugIssue[]> {
+  return searchBugs(jira, buildOpenBugsJql(project), 100);
+}
+
+export async function fetchOldestOpenBug(
+  jira: JiraConfig,
+  project: string,
+): Promise<{ key: string; created: string } | null> {
+  const issues: BugIssue[] = await searchBugs(jira, buildOldestOpenBugJql(project), 1);
+  const first: BugIssue | undefined = issues[0];
+  return first ? { key: first.key, created: first.fields.created } : null;
+}
+
+export async function fetchResolvedDurations(jira: JiraConfig, project: string, days: number): Promise<number[]> {
+  const issues: BugIssue[] = await searchBugs(jira, buildResolved90Jql(project, days), 100);
+  const out: number[] = [];
+  for (const i of issues) {
+    const r: string | null = i.fields.resolutiondate;
+    if (!r) continue;
+    const ms: number = Date.parse(r) - Date.parse(i.fields.created);
+    if (!Number.isNaN(ms)) out.push(Math.max(0, Math.round(ms / 86_400_000)));
+  }
+  return out;
 }
