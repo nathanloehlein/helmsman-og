@@ -234,9 +234,10 @@ describe('renderDashboard', () => {
     expect(hint?.getAttribute('aria-label')).toBe(hint?.getAttribute('title'));
   });
 
-  it('has help text for every editable config key', () => {
+  it('has help text with an example for every editable config key', () => {
     for (const key of EDITABLE_KEYS) {
       expect(CONFIG_HELP[key]?.length ?? 0, `missing tooltip for ${key}`).toBeGreaterThan(0);
+      expect(CONFIG_HELP[key] ?? '', `missing example for ${key}`).toContain('Example:');
     }
   });
 
