@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface, type Interface } from 'node:readline';
 import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } from './adapter';
 import { mapStreamLine } from './claude-stream';
+import { buildPrompt } from './prompt';
 import { validEffort, validModel } from '../../../src/logic/agentOptions';
 
 export function agentFlags(task: AgentTask): string[] {
@@ -11,45 +12,6 @@ export function agentFlags(task: AgentTask): string[] {
   const effort: string | null = validEffort(task.effort);
   if (effort) flags.push('--effort', effort);
   return flags;
-}
-
-export function buildPrompt(task: AgentTask): string {
-  if (task.review && task.prBranch && task.prNumber) {
-    return [
-      `You are code-reviewing open pull request #${task.prNumber} on the current branch (${task.prBranch}).`,
-      `The repository checkout is your current working directory.`,
-      `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
-      `Do a thorough code review of this PR (use the code-review skill if available).`,
-      `Review the whole change path, not just the diff: caller contracts, feature-flag states, error paths, observability, tests, migrations, and deletion fallout.`,
-      `Write your review as GitHub-flavored markdown to a file named .agent-review.md in the repo root.`,
-      `Do NOT modify code, commit, push, open a pull request, merge, or approve — produce ONLY the review file.`,
-    ].join(' ');
-  }
-  if (task.prBranch && task.prNumber) {
-    return [
-      `You are updating open pull request #${task.prNumber} on the current branch (${task.prBranch}).`,
-      `The repository checkout is your current working directory.`,
-      `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
-      `Address this review feedback: ${task.task}.`,
-      `Run the tests, commit, and push to the same branch, and do NOT open a new pull request and do NOT merge.`,
-    ].join(' ');
-  }
-  const openPr: string =
-    task.task && task.task.length > 0
-      ? `Task: ${task.task}.`
-      : `Work Jira ticket ${task.ticketId}: ${task.title}.`;
-  const pushAndOpenPr: string =
-    task.task && task.task.length > 0
-      ? `Explore, implement the change, run the tests, commit on a new branch, then push it and open a pull request using the gh CLI.`
-      : `Explore, implement the change, run the tests, commit on a new branch, then push it and open a pull request with the ticket id in the title using the gh CLI.`;
-  return [
-    openPr,
-    `The repository checkout is your current working directory.`,
-    `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
-    pushAndOpenPr,
-    `Pushing the branch and opening the PR are required steps, not optional — do them without asking.`,
-    `Do NOT merge the PR. Stop only after the PR is open.`,
-  ].join(' ');
 }
 
 export const claudeCodeAdapter: AgentAdapter = {
