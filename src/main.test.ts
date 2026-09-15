@@ -1656,4 +1656,34 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     await view.refresh();
     expect(top).toBe(1000);
   });
+
+  it('enters the bugs view and renders a card per project', async () => {
+    const response: DashboardResponse = await buildResponse();
+    const bugsPayload = {
+      cards: [{
+        project: 'AIROBUILD', repo: null, label: 'AIROBUILD', open: 3, delta: 1, completed: 2, pastSla: 1,
+        oldest: { key: 'AB-1', ageDays: 40 }, p75: { days: 5, n: 12, capped: false },
+        rows: [{ key: 'AB-1', title: 'x', priority: 'P1 - High', severity: 'S2 - Medium', sla: { text: 'Past SLA by 1d', overdue: true, days: -1 } }],
+        degraded: false, jiraBaseUrl: 'https://x',
+      }],
+      degraded: false, generatedAt: 'g', latestWindow: 'l', previousWindow: 'p',
+    };
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/api/bugs')) return { ok: true, status: 200, json: async () => bugsPayload } as unknown as Response;
+      if (url.includes('/api/config')) return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root = document.querySelector<HTMLElement>('#app')!;
+    const view = new DashboardView(root);
+    await view.refresh();
+    root.querySelector<HTMLButtonElement>('.view-toggle[data-view="bugs"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(root.querySelector('.bugs-view')).not.toBeNull();
+    expect(root.querySelectorAll('.bug-card')).toHaveLength(1);
+    expect(root.textContent).toContain('3 Open bugs');
+  });
 });

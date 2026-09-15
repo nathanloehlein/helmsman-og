@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import { buildTriageResponse } from '../triage-endpoint';
+import { buildBugsResponse } from '../bugs-endpoint';
 import type { AppConfig } from '../config';
 import { openDb } from './db';
 import { recoverOrphanedRuns } from './recovery';
@@ -252,6 +253,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
       dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       triage: (repo) => buildTriageResponse(configStore.effectiveEnv(), undefined, repo),
+      bugs: (repo) => buildBugsResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       db,
       canStart: (repo: string) => pm.canStart(repo),
       launch,

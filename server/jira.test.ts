@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchIssueSummary, fetchTriageGroups } from './jira';
+import { fetchIssueSummary, fetchTriageGroups, fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations } from './jira';
 import type { JiraConfig } from './config';
 import type { JiraIssue } from './types';
+import {
+  buildOpenBugsJql, buildCreatedSinceJql, buildResolvedSinceJql,
+  buildPastSlaJql, buildOldestOpenBugJql, buildResolved90Jql,
+} from './config';
 
 const jira: JiraConfig = {
   baseUrl: 'https://example.atlassian.net',
@@ -109,5 +113,77 @@ describe('fetchTriageGroups', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(fetchTriageGroups(jira, 'Backlog', 'To Do')).rejects.toThrow();
+  });
+});
+
+describe('bug JQL builders', () => {
+  it('scopes open bugs to a project and excludes done', () => {
+    expect(buildOpenBugsJql('AIROBUILD')).toBe(
+      'project = "AIROBUILD" AND issuetype = Bug AND statusCategory != Done ORDER BY priority DESC, duedate ASC',
+    );
+  });
+  it('windows created and resolved counts', () => {
+    expect(buildCreatedSinceJql('P', 7)).toBe('project = "P" AND issuetype = Bug AND created >= -7d');
+    expect(buildResolvedSinceJql('P', 7)).toBe('project = "P" AND issuetype = Bug AND statusCategory = Done AND resolutiondate >= -7d');
+  });
+  it('flags past-SLA open bugs and oldest open', () => {
+    expect(buildPastSlaJql('P')).toBe('project = "P" AND issuetype = Bug AND statusCategory != Done AND duedate < now()');
+    expect(buildOldestOpenBugJql('P')).toBe('project = "P" AND issuetype = Bug AND statusCategory != Done ORDER BY created ASC');
+  });
+  it('windows resolved durations', () => {
+    expect(buildResolved90Jql('P', 90)).toBe('project = "P" AND issuetype = Bug AND statusCategory = Done AND resolutiondate >= -90d ORDER BY resolutiondate DESC');
+  });
+});
+
+const JIRA = { baseUrl: 'https://x.atlassian.net', email: 'e@x', apiToken: 't', project: 'AIROBUILD', assignee: 'me', jql: null };
+
+describe('bug fetchers', () => {
+  it('reads approximate-count via POST', async () => {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    globalThis.fetch = (async (url: URL | string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body as string });
+      return { ok: true, status: 200, json: async () => ({ count: 175 }) } as unknown as Response;
+    }) as typeof globalThis.fetch;
+    const n = await fetchApproxCount(JIRA, 'project = "AIROBUILD"');
+    expect(n).toBe(175);
+    expect(calls[0]!.url).toContain('/rest/api/3/search/approximate-count');
+    expect(calls[0]!.method).toBe('POST');
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ jql: 'project = "AIROBUILD"' });
+  });
+
+  it('fetches open bugs with the bug fields', async () => {
+    let seenUrl = '';
+    let seenMethod: string | undefined;
+    globalThis.fetch = (async (url: URL | string, init?: RequestInit) => {
+      seenUrl = String(url);
+      seenMethod = init?.method;
+      return { ok: true, status: 200, json: async () => ({ issues: [
+        { key: 'AB-1', fields: { summary: 's', priority: { name: 'P1 - High' }, duedate: '2026-09-20', resolutiondate: null, created: '2026-09-01T00:00:00Z', customfield_14808: { value: 'S2 - Medium' } } },
+      ] }) } as unknown as Response;
+    }) as typeof globalThis.fetch;
+    const bugs = await fetchOpenBugs(JIRA, 'AIROBUILD');
+    expect(bugs).toHaveLength(1);
+    expect(bugs[0]!.fields.customfield_14808!.value).toBe('S2 - Medium');
+    expect(seenUrl).toContain('customfield_14808');
+    expect(seenUrl).toContain('duedate');
+    expect(seenMethod ?? 'GET').toBe('GET');
+  });
+
+  it('returns the oldest open bug or null', async () => {
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ issues: [
+      { key: 'AB-2992', fields: { summary: 's', priority: null, duedate: null, resolutiondate: null, created: '2026-06-25T00:00:00Z', customfield_14808: null } },
+    ] }) }) as unknown as Response) as typeof globalThis.fetch;
+    expect(await fetchOldestOpenBug(JIRA, 'AIROBUILD')).toEqual({ key: 'AB-2992', created: '2026-06-25T00:00:00Z' });
+
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ issues: [] }) }) as unknown as Response) as typeof globalThis.fetch;
+    expect(await fetchOldestOpenBug(JIRA, 'AIROBUILD')).toBeNull();
+  });
+
+  it('computes resolution durations in whole days', async () => {
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ issues: [
+      { key: 'AB-1', fields: { summary: 's', priority: null, duedate: null, created: '2026-09-01T00:00:00Z', resolutiondate: '2026-09-11T00:00:00Z', customfield_14808: null } },
+      { key: 'AB-2', fields: { summary: 's', priority: null, duedate: null, created: '2026-09-01T00:00:00Z', resolutiondate: null, customfield_14808: null } },
+    ] }) }) as unknown as Response) as typeof globalThis.fetch;
+    expect(await fetchResolvedDurations(JIRA, 'AIROBUILD', 90)).toEqual([10]);
   });
 });

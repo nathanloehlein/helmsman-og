@@ -2,7 +2,7 @@ import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
-import type { PrStatus, Priority, Ticket, TicketStatus } from './types';
+import type { BugCard, BugsResponse, PrStatus, Priority, Ticket, TicketStatus } from './types';
 import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
@@ -182,12 +182,13 @@ function buildSparkline(values: number[]): string {
     </svg>`;
 }
 
-export type PageView = 'dashboard' | 'triage' | 'cmux';
+export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs';
 
 const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'dashboard', label: 'Bench' },
   { view: 'triage', label: 'Triage' },
   { view: 'cmux', label: 'cmux' },
+  { view: 'bugs', label: 'Bugs' },
 ];
 
 const PANEL_TITLE: Record<PanelId, string> = {
@@ -735,6 +736,95 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
         ${triageGroup('Unassigned · To Do', groups.unassignedTodo, launchRow, jiraBaseUrl, 'No unassigned to-do tickets.', scopeHint, 'triage:todo', collapsed.has('triage:todo'))}
         ${triageGroup('Mine · in flight', groups.mineOpen, triageStatusRow, jiraBaseUrl, 'Nothing assigned to you outside Done.', '', 'triage:mine', collapsed.has('triage:mine'))}
       </div>
+    </div>`;
+}
+
+export interface BugsViewOpts {
+  repos: string[];
+  selectedRepo: string | null;
+  themeId: string;
+}
+
+function bugChip(text: string, cls: string): string {
+  return `<span class="chip ${cls}">${esc(text)}</span>`;
+}
+
+function bugPriorityClass(priority: string): string {
+  return priority.startsWith('P1') ? 'chip-blocked' : 'chip-queued';
+}
+
+function bugCardHtml(card: BugCard): string {
+  if (card.degraded) {
+    return `<section class="panel bug-card"><div class="panel-head"><span class="panel-title">${esc(card.label)}</span></div><div class="empty-note">Jira unavailable for ${esc(card.project)}.</div></section>`;
+  }
+  const deltaStr: string = card.delta > 0 ? `+${card.delta}` : String(card.delta);
+  const oldest: string = card.oldest
+    ? `${ticketLabel(card.oldest.key, card.jiraBaseUrl)} · ${card.oldest.ageDays}d`
+    : '—';
+  const p75: string = card.p75.days === null ? '—' : `${card.p75.days}d`;
+  const n: string = card.p75.capped ? `${card.p75.n}+` : String(card.p75.n);
+  const rows: string = card.rows.length
+    ? card.rows.map((r) => `
+        <tr class="bug-row">
+          <td class="bug-key">${ticketLabel(r.key, card.jiraBaseUrl)}</td>
+          <td class="bug-title">${esc(r.title)}</td>
+          <td>${bugChip(r.priority, bugPriorityClass(r.priority))}</td>
+          <td>${bugChip(r.severity, 'chip-queued')}</td>
+          <td><span class="chip bug-sla ${r.sla.overdue ? 'chip-blocked' : 'chip-review'}">${esc(r.sla.text)}</span></td>
+        </tr>`).join('')
+    : '<tr><td colspan="5" class="empty-note">No open bugs.</td></tr>';
+  const jiraSearch: string = card.jiraBaseUrl
+    ? `<a class="bug-jira-link" href="${esc(card.jiraBaseUrl)}/issues/?jql=${encodeURIComponent(`project = "${card.project}" AND issuetype = Bug AND statusCategory != Done`)}" target="_blank" rel="noopener">View all in Jira ↗</a>`
+    : '';
+  return `
+    <section class="panel bug-card">
+      <div class="panel-head bug-card-head">
+        <span class="bug-squad chip chip-queued">${esc(card.label)}</span>
+        <span class="panel-title">${card.open} Open bugs</span>
+      </div>
+      <div class="bug-stats mono">
+        <span class="bug-stat"><b>${card.open}</b> Open <em>(${deltaStr} vs prior)</em></span>
+        <span class="bug-stat"><b>${card.completed}</b> Completed</span>
+        <span class="bug-stat"><b class="${card.pastSla > 0 ? 'bug-bad' : ''}">${card.pastSla}</b> Past SLA</span>
+        <span class="bug-stat">Oldest open ${oldest}</span>
+        <span class="bug-stat">P75 · ${p75} <em>(n=${n})</em></span>
+      </div>
+      <table class="bug-table">
+        <thead><tr><th>Key</th><th>Title</th><th>Priority</th><th>Severity</th><th>SLA</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${jiraSearch}
+    </section>`;
+}
+
+const GENERATED_AT_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}):\d{2}(?:\.\d+)?Z$/;
+
+function formatGeneratedAt(generatedAt: string): string {
+  if (generatedAt === '') return 'Generated —';
+  const m = GENERATED_AT_RE.exec(generatedAt);
+  if (!m) return `Generated ${esc(generatedAt)}`;
+  return `Generated ${m[1]} ${m[2]} UTC`;
+}
+
+export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
+  const banner: string = res.degraded
+    ? '<div class="degraded-banner">Jira unavailable — bug data is empty.</div>'
+    : '';
+  const cards: string = res.cards.map(bugCardHtml).join('');
+  const bugsBody: string =
+    res.cards.length === 0 && !res.degraded
+      ? '<div class="empty-note">No bug data for this scope.</div>'
+      : `<div class="bugs-grid">${cards}</div>`;
+  return `
+    <div class="bench bugs-view" data-page="bugs">
+      ${renderBenchHead({ active: 'bugs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
+      <div class="bugs-windows mono">
+        <span>LATEST 7 DAYS · ${esc(res.latestWindow)}</span>
+        <span>PREVIOUS 7 DAYS · ${esc(res.previousWindow)}</span>
+        <span>${formatGeneratedAt(res.generatedAt)}</span>
+      </div>
+      ${banner}
+      ${bugsBody}
     </div>`;
 }
 
