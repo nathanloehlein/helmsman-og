@@ -23,4 +23,9 @@ describe('agentOptions', () => {
     expect(validModel('opus --dangerously')).toBeNull();
     expect(validModel('-flag')).toBeNull();
   });
+
+  it('offers astra as a model option', () => {
+    expect(MODEL_OPTIONS.some((o) => o.value === 'gpt-6-astra')).toBe(true);
+    expect(validModel('gpt-6-astra')).toBe('gpt-6-astra');
+  });
 });

@@ -671,7 +671,14 @@ describe('DashboardView drawer survives polling', () => {
 
     const launchCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/agents/launch'));
     const launchBody: unknown = JSON.parse((launchCall![1] as RequestInit).body as string);
-    expect(launchBody).toEqual({ mode: 'rerun', repo: 'o/r', prNumber: 7, feedback: 'please fix the lint error' });
+    expect(launchBody).toEqual({
+      mode: 'rerun',
+      repo: 'o/r',
+      prNumber: 7,
+      feedback: 'please fix the lint error',
+      model: 'gpt-6-astra',
+      effort: 'medium',
+    });
 
     await vi.waitFor(() => {
       expect(FakeEventSource.instances.length).toBeGreaterThan(0);
@@ -732,7 +739,7 @@ describe('DashboardView drawer survives polling', () => {
 
     const launchCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/agents/launch'));
     const launchBody: unknown = JSON.parse((launchCall![1] as RequestInit).body as string);
-    expect(launchBody).toEqual({ mode: 'review', repo: 'o/r', prNumber: 7 });
+    expect(launchBody).toEqual({ mode: 'review', repo: 'o/r', prNumber: 7, model: 'gpt-6-astra', effort: 'medium' });
 
     await vi.waitFor(() => {
       expect(FakeEventSource.instances.length).toBeGreaterThan(0);

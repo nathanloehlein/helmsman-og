@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { agentFlags, buildPrompt } from './claude-code';
+import { agentFlags } from './claude-code';
+import { buildPrompt } from './prompt';
 import type { AgentTask } from './adapter';
 
 describe('agentFlags', () => {

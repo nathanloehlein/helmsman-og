@@ -234,9 +234,10 @@ describe('renderDashboard', () => {
     expect(hint?.getAttribute('aria-label')).toBe(hint?.getAttribute('title'));
   });
 
-  it('has help text for every editable config key', () => {
+  it('has help text with an example for every editable config key', () => {
     for (const key of EDITABLE_KEYS) {
       expect(CONFIG_HELP[key]?.length ?? 0, `missing tooltip for ${key}`).toBeGreaterThan(0);
+      expect(CONFIG_HELP[key] ?? '', `missing example for ${key}`).toContain('Example:');
     }
   });
 
@@ -764,6 +765,15 @@ describe('renderDashboard bench rack', () => {
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.newrun-model')).not.toBeNull();
     expect(el.querySelector('.newrun-effort')).not.toBeNull();
+  });
+
+  it('defaults the New Run tuning selects to astra and medium', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    const model = el.querySelector<HTMLSelectElement>('.newrun-model')!;
+    const effort = el.querySelector<HTMLSelectElement>('.newrun-effort')!;
+    expect(model.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('gpt-6-astra');
+    expect(effort.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('medium');
   });
 
   it('renders the My open PRs panel with clickable rows carrying repo + number', () => {

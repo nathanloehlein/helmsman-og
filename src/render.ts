@@ -7,12 +7,12 @@ import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
 
-function tuningSelects(prefix: string): string {
-  const opts = (list: AgentOption[]): string =>
-    list.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+function tuningSelects(prefix: string, defaultModel: string = 'gpt-6-astra', defaultEffort: string = 'medium'): string {
+  const opts = (list: AgentOption[], def: string): string =>
+    list.map((o) => `<option value="${esc(o.value)}"${o.value === def ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
   return `<div class="tuning">
-      <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS)}</select>
-      <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS)}</select>
+      <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS, defaultModel)}</select>
+      <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS, defaultEffort)}</select>
     </div>`;
 }
 import type { AgentCaps, RunSummary } from './data/agents';
@@ -25,17 +25,17 @@ import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
 
 export const CONFIG_HELP: Record<string, string> = {
-  AGENT_ADAPTER: "Which agent runs tasks: 'claude-code' (default) or 'command' (runs your custom AGENT_CMD).",
-  AGENT_CMD: 'Shell command for the "command" adapter. Receives the task prompt and can run arbitrary commands — change with care.',
-  AGENT_MAX_ATTEMPTS: 'Maximum times a single run retries before it is abandoned.',
-  AGENT_MAX_COST_USD: 'Per-run spend ceiling in USD; the run stops once exceeded. Blank means no cap.',
-  AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart.',
-  REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in.',
-  JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry.',
-  JIRA_ASSIGNEE: 'Jira account that claimed tickets are assigned to (e.g. currentUser()).',
-  JIRA_JQL: 'Optional JQL filter that narrows which tickets appear in the backlog queue.',
-  GITHUB_REPO: 'Default owner/repo used for GitHub PR lookups when none is otherwise provided.',
-  GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Recently shipped and Activity panels.',
+  AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
+  AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
+  AGENT_MAX_ATTEMPTS: 'Maximum times a single run retries before it is abandoned. Example: 3',
+  AGENT_MAX_COST_USD: 'Per-run spend ceiling in USD; the run stops once exceeded. Blank means no cap. Example: 5.00',
+  AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart. Example: 60000',
+  REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
+  JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry. Example: AIROBUILD',
+  JIRA_ASSIGNEE: 'Jira account that claimed tickets are assigned to — currentUser() or an accountId. Example: currentUser()',
+  JIRA_JQL: 'Optional JQL filter that narrows which tickets appear in the backlog queue. Example: labels = agent-ready AND priority >= High',
+  GITHUB_REPO: 'Default owner/repo used for GitHub PR lookups when none is otherwise provided. Example: gdcorp-partners/airo-app-builder',
+  GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Recently shipped and Activity panels. Example: nloehlein-godaddy',
 };
 
 const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {

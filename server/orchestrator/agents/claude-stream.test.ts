@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapStreamLine } from './claude-stream';
+import { mapStreamLine, parsePrNumber } from './claude-stream';
 
 describe('mapStreamLine', () => {
   it('maps an assistant tool_use to a tool event', () => {
@@ -37,5 +37,14 @@ describe('mapStreamLine', () => {
     const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'see pull/5 in the docs' }] } });
     const ev = mapStreamLine(line);
     expect(ev?.prNumber).toBeUndefined();
+  });
+});
+
+describe('parsePrNumber', () => {
+  it('extracts the number from a PR URL', () => {
+    expect(parsePrNumber('opened https://github.com/o/r/pull/8922 done')).toBe(8922);
+  });
+  it('returns undefined when absent', () => {
+    expect(parsePrNumber('no pr here')).toBeUndefined();
   });
 });

@@ -156,10 +156,22 @@ describe('loadConfig', () => {
     expect(cfg.autoClaimIntervalMs).toBe(60000);
   });
 
-  it('defaults agentAdapter to claude-code and agentCmd to null', () => {
+  it('defaults agentAdapter to codex and agentCmd to null', () => {
     const cfg = loadConfig(FULL);
-    expect(cfg.agentAdapter).toBe('claude-code');
+    expect(cfg.agentAdapter).toBe('codex');
     expect(cfg.agentCmd).toBeNull();
+  });
+
+  it('unset AGENT_ADAPTER yields codex', () => {
+    expect(loadConfig({ ...FULL, AGENT_ADAPTER: undefined }).agentAdapter).toBe('codex');
+  });
+
+  it('explicit claude-code preserved', () => {
+    expect(loadConfig({ ...FULL, AGENT_ADAPTER: 'claude-code' }).agentAdapter).toBe('claude-code');
+  });
+
+  it('command preserved', () => {
+    expect(loadConfig({ ...FULL, AGENT_ADAPTER: 'command' }).agentAdapter).toBe('command');
   });
 
   it('selects the command adapter and template from env', () => {
@@ -168,9 +180,9 @@ describe('loadConfig', () => {
     expect(cfg.agentCmd).toBe('run {ticket}');
   });
 
-  it('falls back to claude-code for an unrecognized AGENT_ADAPTER value', () => {
+  it('falls back to codex for an unrecognized AGENT_ADAPTER value', () => {
     const cfg = loadConfig({ ...FULL, AGENT_ADAPTER: 'foo' });
-    expect(cfg.agentAdapter).toBe('claude-code');
+    expect(cfg.agentAdapter).toBe('codex');
   });
 
   it('defaults maxCostUsd to null', () => {
