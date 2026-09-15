@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer, renderTriageView } from './render';
+import { CONFIG_HELP, renderBugsView, renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer, renderTriageView } from './render';
 import { EDITABLE_KEYS } from '../server/orchestrator/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
@@ -7,6 +7,7 @@ import type { RunSummary } from './data/agents';
 import type { UiConfig } from './data/config';
 import type { PrStatusView } from './data/pr';
 import type { CmuxTabView } from './logic/cmuxPanel';
+import type { BugsResponse } from './types';
 import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 import { defaultLayout, stackOnto } from './logic/rack';
 
@@ -738,12 +739,12 @@ describe('renderDashboard bench rack', () => {
     document.body.innerHTML = '';
   });
 
-  it('renders a runs-drawer slot, the bench nameplate, and three page tabs', () => {
+  it('renders a runs-drawer slot, the bench nameplate, and four page tabs', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
     expect(el.querySelector('.bench-head .nameplate')).not.toBeNull();
-    expect(el.querySelectorAll('.page-tab')).toHaveLength(3);
+    expect(el.querySelectorAll('.page-tab')).toHaveLength(4);
     expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('dashboard');
   });
 
@@ -799,5 +800,58 @@ describe('renderDashboard bench rack', () => {
     const tabPanels = Array.from(tabbed!.querySelectorAll<HTMLButtonElement>('.slot-tab')).map((b) => b.dataset.panelTab);
     expect(tabPanels).toContain('backlog');
     expect(tabPanels).toContain('running');
+  });
+});
+
+describe('renderBugsView', () => {
+  function mount(html: string): HTMLElement {
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    return el;
+  }
+  const res: BugsResponse = {
+    cards: [{
+      project: 'AIROBUILD', repo: 'o/a', label: 'Airo Editing',
+      open: 20, delta: 4, completed: 6, pastSla: 7,
+      oldest: { key: 'AIROBUILD-2992', ageDays: 82 },
+      p75: { days: 9.4, n: 94, capped: false },
+      rows: [
+        { key: 'AIROBUILD-5849', title: 'Media Library bug', priority: 'P1 - High', severity: 'S2 - Medium', sla: { text: 'Past SLA by 7d', overdue: true, days: -7 } },
+        { key: 'AIROBUILD-6319', title: 'Media preview stale', priority: 'P1 - High', severity: 'S2 - Medium', sla: { text: 'SLA in 6d', overdue: false, days: 6 } },
+      ],
+      degraded: false, jiraBaseUrl: 'https://x.atlassian.net',
+    }],
+    degraded: false, generatedAt: '2026-09-15T16:15:05Z', latestWindow: '2026-09-09 → 2026-09-15', previousWindow: '2026-09-02 → 2026-09-08',
+  };
+  const opts = { repos: ['o/a'], selectedRepo: 'o/a', themeId: DEFAULT_THEME_ID };
+
+  it('renders a BUGS tab, a card header, stats, and a row per bug', () => {
+    const el = mount(renderBugsView(res, opts));
+    expect(el.querySelector('.page-tab[data-view="bugs"]')).not.toBeNull();
+    expect(el.textContent).toContain('20 Open bugs');
+    expect(el.textContent).toContain('+4');
+    expect(el.textContent).toContain('9.4');
+    expect(el.querySelectorAll('.bug-row')).toHaveLength(2);
+    expect(el.querySelector('a.ticket-link[href$="/browse/AIROBUILD-2992"]')).not.toBeNull();
+  });
+
+  it('flags overdue SLA with chip-blocked and future SLA without it', () => {
+    const el = mount(renderBugsView(res, opts));
+    const slas = Array.from(el.querySelectorAll<HTMLElement>('.bug-sla'));
+    expect(slas[0]!.className).toContain('chip-blocked');
+    expect(slas[1]!.className).not.toContain('chip-blocked');
+  });
+
+  it('shows a degraded banner and no cards when degraded', () => {
+    const el = mount(renderBugsView({ ...res, cards: [], degraded: true }, opts));
+    expect(el.querySelector('.degraded-banner')).not.toBeNull();
+    expect(el.querySelectorAll('.bug-card')).toHaveLength(0);
+  });
+
+  it('escapes malicious titles', () => {
+    const bad: BugsResponse = { ...res, cards: [{ ...res.cards[0]!, rows: [{ ...res.cards[0]!.rows[0]!, title: '<img src=x onerror=alert(1)>' }] }] };
+    const html = renderBugsView(bad, opts);
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
   });
 });
