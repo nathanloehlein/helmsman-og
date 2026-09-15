@@ -73,9 +73,6 @@ export function sortBugs(rows: BugRow[]): BugRow[] {
 
 export function assembleCard(input: AssembleCardInput): BugCard {
   const p75 = percentile(input.durations, 75);
-  const rank = (75 / 100) * (input.durations.length - 1);
-  const frac = rank - Math.floor(rank);
-  const capped = frac !== 0;
   return {
     project: input.project,
     repo: input.repo,
@@ -90,7 +87,7 @@ export function assembleCard(input: AssembleCardInput): BugCard {
     p75: {
       days: p75 === null ? null : Math.round(p75 * 10) / 10,
       n: input.durationsTotal,
-      capped,
+      capped: input.durationsTotal > input.durations.length,
     },
     rows: sortBugs(input.rows),
     degraded: false,

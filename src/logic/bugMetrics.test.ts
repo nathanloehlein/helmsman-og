@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  priorityRank, ageDays, slaLabel, percentile, sortBugs, assembleCard,
+  priorityRank, daysUntil, ageDays, slaLabel, percentile, sortBugs, assembleCard,
 } from './bugMetrics';
 import type { BugRow } from '../types';
 
@@ -21,6 +21,21 @@ describe('priorityRank', () => {
   it('ranks unknown/null last', () => {
     expect(priorityRank(null)).toBeGreaterThan(900);
     expect(priorityRank('Blocker')).toBeGreaterThan(900);
+  });
+});
+
+describe('daysUntil', () => {
+  it('returns negative days when duedate is in the past', () => {
+    expect(daysUntil('2026-09-08', NOW)).toBe(-7);
+  });
+  it('returns 0 when duedate is today (UTC midnight)', () => {
+    expect(daysUntil('2026-09-15', NOW)).toBe(0);
+  });
+  it('returns positive days when duedate is in the future', () => {
+    expect(daysUntil('2026-09-21', NOW)).toBe(6);
+  });
+  it('returns null when duedate is null', () => {
+    expect(daysUntil(null, NOW)).toBeNull();
   });
 });
 
@@ -80,20 +95,20 @@ describe('sortBugs', () => {
 });
 
 describe('assembleCard', () => {
-  it('computes delta, oldest age, p75, and sorts rows', () => {
+  it('computes delta, oldest age, p75, and sorts rows (not capped)', () => {
     const card = assembleCard({
       project: 'AIROBUILD', repo: 'o/a', label: 'Airo Editing', jiraBaseUrl: 'https://x', now: NOW,
       open: 20, createdLast7d: 10, completedLast7d: 6, pastSla: 7,
       oldestKey: 'AB-2992', oldestCreated: '2026-06-25T16:00:00Z',
       rows: [row({ key: 'Z', priority: 'P3 - Low' }), row({ key: 'Y', priority: 'P1 - High' })],
-      durations: [1, 2, 3, 4, 5], durationsTotal: 94,
+      durations: [1, 2, 3, 4, 5], durationsTotal: 5,
     });
     expect(card.open).toBe(20);
     expect(card.delta).toBe(4);
     expect(card.completed).toBe(6);
     expect(card.pastSla).toBe(7);
     expect(card.oldest).toEqual({ key: 'AB-2992', ageDays: 82 });
-    expect(card.p75).toEqual({ days: 4, n: 94, capped: false });
+    expect(card.p75).toEqual({ days: 4, n: 5, capped: false });
     expect(card.rows.map((r) => r.key)).toEqual(['Y', 'Z']);
     expect(card.degraded).toBe(false);
   });
