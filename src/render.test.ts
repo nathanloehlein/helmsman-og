@@ -766,6 +766,15 @@ describe('renderDashboard bench rack', () => {
     expect(el.querySelector('.newrun-effort')).not.toBeNull();
   });
 
+  it('defaults the New Run tuning selects to astra and medium', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW);
+    const model = el.querySelector<HTMLSelectElement>('.newrun-model')!;
+    const effort = el.querySelector<HTMLSelectElement>('.newrun-effort')!;
+    expect(model.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('astra');
+    expect(effort.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('medium');
+  });
+
   it('renders the My open PRs panel with clickable rows carrying repo + number', () => {
     const el: HTMLDivElement = root();
     const snap = snapshot({

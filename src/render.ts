@@ -7,12 +7,12 @@ import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
 
-function tuningSelects(prefix: string): string {
-  const opts = (list: AgentOption[]): string =>
-    list.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+function tuningSelects(prefix: string, defaultModel: string = 'astra', defaultEffort: string = 'medium'): string {
+  const opts = (list: AgentOption[], def: string): string =>
+    list.map((o) => `<option value="${esc(o.value)}"${o.value === def ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
   return `<div class="tuning">
-      <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS)}</select>
-      <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS)}</select>
+      <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS, defaultModel)}</select>
+      <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS, defaultEffort)}</select>
     </div>`;
 }
 import type { AgentCaps, RunSummary } from './data/agents';

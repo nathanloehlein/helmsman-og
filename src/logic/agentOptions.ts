@@ -5,6 +5,7 @@ export interface AgentOption {
 
 export const MODEL_OPTIONS: AgentOption[] = [
   { value: '', label: 'Default model' },
+  { value: 'astra', label: 'Astra (Codex)' },
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'fable', label: 'Fable' },
