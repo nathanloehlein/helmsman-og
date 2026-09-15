@@ -771,7 +771,7 @@ describe('renderDashboard bench rack', () => {
     renderDashboard(el, snapshot(), NOW);
     const model = el.querySelector<HTMLSelectElement>('.newrun-model')!;
     const effort = el.querySelector<HTMLSelectElement>('.newrun-effort')!;
-    expect(model.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('astra');
+    expect(model.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('gpt-6-astra');
     expect(effort.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('medium');
   });
 

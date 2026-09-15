@@ -5,7 +5,7 @@ import { buildPrompt } from './prompt';
 import { parsePrNumber } from './claude-stream';
 import { validModel } from '../../../src/logic/agentOptions';
 
-const DEFAULT_MODEL: string = 'astra';
+const DEFAULT_MODEL: string = 'gpt-6-astra';
 const DEFAULT_EFFORT: string = 'medium';
 const CODEX_EFFORTS: Set<string> = new Set(['minimal', 'low', 'medium', 'high']);
 
@@ -43,7 +43,11 @@ export const codexAdapter: AgentAdapter = {
     }
     if (child.stderr) {
       const rl: Interface = createInterface({ input: child.stderr });
-      rl.on('line', (line: string) => onEvent({ kind: 'log', text: line }));
+      rl.on('line', (line: string) => {
+        const parsed: number | undefined = parsePrNumber(line);
+        if (parsed !== undefined) prNumber = parsed;
+        onEvent({ kind: 'log', text: line });
+      });
     }
 
     const exit: Promise<AgentResult> = new Promise((resolve) => {

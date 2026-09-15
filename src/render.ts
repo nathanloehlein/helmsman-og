@@ -7,7 +7,7 @@ import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
 
-function tuningSelects(prefix: string, defaultModel: string = 'astra', defaultEffort: string = 'medium'): string {
+function tuningSelects(prefix: string, defaultModel: string = 'gpt-6-astra', defaultEffort: string = 'medium'): string {
   const opts = (list: AgentOption[], def: string): string =>
     list.map((o) => `<option value="${esc(o.value)}"${o.value === def ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
   return `<div class="tuning">

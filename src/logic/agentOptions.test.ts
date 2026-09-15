@@ -25,7 +25,7 @@ describe('agentOptions', () => {
   });
 
   it('offers astra as a model option', () => {
-    expect(MODEL_OPTIONS.some((o) => o.value === 'astra')).toBe(true);
-    expect(validModel('astra')).toBe('astra');
+    expect(MODEL_OPTIONS.some((o) => o.value === 'gpt-6-astra')).toBe(true);
+    expect(validModel('gpt-6-astra')).toBe('gpt-6-astra');
   });
 });
