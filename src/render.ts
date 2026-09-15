@@ -74,6 +74,10 @@ const ICON_COLLAPSE: string =
 const ICON_EXPAND: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>'
 
+function surfaceCollapseBtn(id: string, label: string, collapsed: boolean): string {
+  return `<button class="surface-collapse" type="button" data-collapse-id="${esc(id)}" aria-expanded="${collapsed ? 'false' : 'true'}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${esc(label)}">${collapsed ? ICON_EXPAND : ICON_COLLAPSE}</button>`;
+}
+
 const ICON_INFO: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v3.4" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.5" fill="currentColor" stroke="none"/></svg>'
 
@@ -573,7 +577,7 @@ export interface RunTabView {
   complete: boolean;
 }
 
-export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null): string {
+export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, collapsed: boolean = false): string {
   const strip: string = tabs
     .map(
       (t) => `
@@ -592,8 +596,10 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null): s
       : '';
   const header: string =
     tabs.length === 0 ? '<span class="run-drawer-title mono">AGENT RUNS</span>' : '';
+  const collapseBtn: string =
+    tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'agent runs', collapsed) : '';
   return `
-    <div class="run-tabs" role="tablist">${header}${strip}</div>
+    <div class="run-tabs" role="tablist">${header}${strip}${collapseBtn}</div>
     <div class="run-drawer-body mono">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
@@ -683,16 +689,19 @@ function triageGroup(
   jiraBaseUrl: string | null,
   emptyNote: string,
   hint: string = '',
+  panelId: string = '',
+  collapsed: boolean = false,
 ): string {
   const items: string = tickets.length
     ? sortByPriority(tickets).map((t) => row(t, jiraBaseUrl)).join('')
     : `<li class="empty-note">${esc(emptyNote)}</li>`;
   const hintEl: string = hint && tickets.length ? `<div class="triage-hint">${esc(hint)}</div>` : '';
   return `
-        <div class="panel triage-group">
+        <div class="panel triage-group${collapsed ? ' is-collapsed' : ''}">
           <div class="panel-head">
             <span class="panel-title">${esc(title)}</span>
             <span class="panel-count mono">${tickets.length}</span>
+            ${surfaceCollapseBtn(panelId, title, collapsed)}
           </div>
           ${hintEl}
           <ul class="lane-list triage-list">${items}</ul>
@@ -705,10 +714,12 @@ export interface TriageViewOpts {
   jiraBaseUrl: string | null;
   degraded: boolean;
   themeId: string;
+  collapsed?: Set<string>;
 }
 
 export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts): string {
   const { repos, selectedRepo, jiraBaseUrl, degraded, themeId } = opts;
+  const collapsed: Set<string> = opts.collapsed ?? new Set();
   const banner: string = degraded
     ? '<div class="degraded-banner">Jira unavailable — triage is empty.</div>'
     : '';
@@ -720,9 +731,9 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
       ${renderBenchHead({ active: 'triage', repos, selectedRepo, themeId, readout: null, autoClaim: '' })}
       ${banner}
       <div class="triage-grid">
-        ${triageGroup('Unassigned · Backlog', groups.unassignedBacklog, launchRow, jiraBaseUrl, 'No unassigned backlog tickets.', scopeHint)}
-        ${triageGroup('Unassigned · To Do', groups.unassignedTodo, launchRow, jiraBaseUrl, 'No unassigned to-do tickets.', scopeHint)}
-        ${triageGroup('Mine · in flight', groups.mineOpen, triageStatusRow, jiraBaseUrl, 'Nothing assigned to you outside Done.')}
+        ${triageGroup('Unassigned · Backlog', groups.unassignedBacklog, launchRow, jiraBaseUrl, 'No unassigned backlog tickets.', scopeHint, 'triage:backlog', collapsed.has('triage:backlog'))}
+        ${triageGroup('Unassigned · To Do', groups.unassignedTodo, launchRow, jiraBaseUrl, 'No unassigned to-do tickets.', scopeHint, 'triage:todo', collapsed.has('triage:todo'))}
+        ${triageGroup('Mine · in flight', groups.mineOpen, triageStatusRow, jiraBaseUrl, 'Nothing assigned to you outside Done.', '', 'triage:mine', collapsed.has('triage:mine'))}
       </div>
     </div>`;
 }
@@ -771,6 +782,7 @@ export interface CmuxViewState {
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
+  collapsed?: Set<string>;
 }
 
 export function renderCmuxView(state: CmuxViewState): string {
@@ -821,10 +833,19 @@ export function renderCmuxView(state: CmuxViewState): string {
       </div>`
     : '<div class="empty-note">Select a tab to view its screen.</div>';
 
+  const collapsed: Set<string> = state.collapsed ?? new Set();
+  const listCollapsed: boolean = collapsed.has('cmux:list');
+  const detailCollapsed: boolean = collapsed.has('cmux:detail');
   return `<div class="bench cmux-view" data-page="cmux">${head}
     <div class="cmux-body">
-      <div class="panel cmux-list">${list}</div>
-      <div class="panel cmux-detail">${detail}</div>
+      <div class="panel cmux-list${listCollapsed ? ' is-collapsed' : ''}">
+        <div class="panel-head"><span class="panel-title">Tabs</span>${surfaceCollapseBtn('cmux:list', 'Tabs', listCollapsed)}</div>
+        <div class="cmux-list-body">${list}</div>
+      </div>
+      <div class="panel cmux-detail${detailCollapsed ? ' is-collapsed' : ''}">
+        <div class="panel-head"><span class="panel-title">Screen</span>${surfaceCollapseBtn('cmux:detail', 'Screen', detailCollapsed)}</div>
+        <div class="cmux-detail-body">${detail}</div>
+      </div>
     </div>
   </div>`;
 }

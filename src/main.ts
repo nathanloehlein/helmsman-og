@@ -29,6 +29,8 @@ import {
   saveRepoScope,
   loadRackLayoutRaw,
   saveRackLayoutRaw,
+  loadCollapsed,
+  saveCollapsed,
 } from './logic/prefs';
 import {
   deserialize as deserializeRack,
@@ -92,6 +94,7 @@ export class DashboardView {
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private uiConfig: UiConfig = { config: {}, overridden: [] };
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
+  private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
   private view: 'dashboard' | 'cmux' | 'triage' = 'dashboard';
   private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
@@ -255,6 +258,7 @@ export class DashboardView {
       repos: this.repos,
       selectedRepo: this.selectedRepo,
       themeId: this.themeId,
+      collapsed: this.collapsed,
     });
     this.bindHeadControls();
   }
@@ -266,6 +270,7 @@ export class DashboardView {
       jiraBaseUrl: this.jiraBaseUrl,
       degraded: this.triageDegraded,
       themeId: this.themeId,
+      collapsed: this.collapsed,
     });
     this.bindHeadControls();
   }
@@ -664,6 +669,19 @@ export class DashboardView {
       return;
     }
 
+    const surfaceCollapseBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.surface-collapse');
+    if (surfaceCollapseBtn) {
+      const id: string | undefined = surfaceCollapseBtn.dataset.collapseId;
+      if (id) {
+        if (this.collapsed.has(id)) this.collapsed.delete(id);
+        else this.collapsed.add(id);
+        saveCollapsed(this.collapsed);
+        if (id === 'runs:drawer') this.renderRunDrawer();
+        else this.paint();
+      }
+      return;
+    }
+
     const slotTab: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.slot-tab');
     if (slotTab) {
       this.rackLayout = setActivePanel(this.rackLayout, slotTab.dataset.panelTab as PanelId);
@@ -1001,7 +1019,9 @@ export class DashboardView {
       label: t.label,
       complete: t.complete,
     }));
-    this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId);
+    const drawerCollapsed: boolean = this.collapsed.has('runs:drawer') && this.runTabs.length > 0;
+    this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId, drawerCollapsed);
+    this.runDrawerEl.classList.toggle('is-collapsed', drawerCollapsed);
     const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
     if (!active) return;
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');

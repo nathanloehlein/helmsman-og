@@ -20,6 +20,7 @@ export function buildPrompt(task: AgentTask): string {
       `The repository checkout is your current working directory.`,
       `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
       `Do a thorough code review of this PR (use the code-review skill if available).`,
+      `Review the whole change path, not just the diff: caller contracts, feature-flag states, error paths, observability, tests, migrations, and deletion fallout.`,
       `Write your review as GitHub-flavored markdown to a file named .agent-review.md in the repo root.`,
       `Do NOT modify code, commit, push, open a pull request, merge, or approve — produce ONLY the review file.`,
     ].join(' ');

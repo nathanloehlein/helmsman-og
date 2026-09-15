@@ -77,6 +77,7 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('code-review');
     expect(prompt).toContain('#12');
     expect(prompt).toContain('.agent-review.md');
+    expect(prompt).toContain('Review the whole change path, not just the diff');
     expect(prompt).toContain('Do NOT');
     expect(prompt).toContain('push');
     expect(prompt).toContain('merge');

@@ -252,6 +252,25 @@ html, body {
 .faceplate.is-collapsed .faceplate-body { display: none; }
 .faceplate.is-collapsed { background: linear-gradient(180deg, var(--face-hi), var(--face)); }
 
+.surface-collapse {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  background: none; border: none; color: var(--text-faint); cursor: pointer;
+}
+.surface-collapse:hover { color: var(--accent); }
+.surface-collapse svg { width: 14px; height: 14px; }
+.triage-group.is-collapsed .triage-list,
+.triage-group.is-collapsed .triage-hint { display: none; }
+.cmux-list .panel-head .surface-collapse,
+.cmux-detail .panel-head .surface-collapse { margin-left: auto; }
+.cmux-list.is-collapsed .cmux-list-body,
+.cmux-detail.is-collapsed .cmux-detail-body { display: none; }
+.cmux-list.is-collapsed, .cmux-detail.is-collapsed { overflow: visible; }
+.run-tabs .surface-collapse { margin-left: auto; align-self: center; flex: none; }
+.run-drawer.is-collapsed .run-drawer-body,
+.run-drawer.is-collapsed .run-drawer-footer,
+.run-drawer.is-collapsed .run-drawer-pr { display: none; }
+
 .slot-tabs { display: flex; gap: 2px; }
 .slot-tab {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
