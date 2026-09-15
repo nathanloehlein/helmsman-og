@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleApi, type RouterDeps } from './router';
 import type { PrStatus } from '../github';
+import type { BugsResponse } from '../../src/types';
 
 const samplePrStatus: PrStatus = {
   number: 5,
@@ -25,6 +26,7 @@ const deps: RouterDeps = {
     selectedRepo: repo,
     jiraBaseUrl: 'https://x.atlassian.net',
   }),
+  bugs: async (): Promise<BugsResponse> => ({ cards: [], degraded: false, generatedAt: '', latestWindow: '', previousWindow: '' }),
   db: {
     listRuns: () => [{ id: 'r1', ticketId: 'T-1', repo: 'o/r', adapter: 'claude-code', status: 'running', attempt: 1, prNumber: null, startedAt: 'x', endedAt: null, costUsd: null, worktreePath: null }],
   } as unknown as RouterDeps['db'],
@@ -58,6 +60,16 @@ describe('handleApi', () => {
     expect(r?.status).toBe(200);
     expect((r?.json as { selectedRepo: string }).selectedRepo).toBe('o/r');
     expect((r?.json as { groups: unknown }).groups).toBeDefined();
+  });
+
+  it('routes GET /api/bugs to the bugs dep with the repo query', async () => {
+    let seen: string | null | undefined;
+    const res = await handleApi('GET', '/api/bugs', new URLSearchParams('repo=o/a'), null, {
+      ...deps,
+      bugs: async (repo: string | null) => { seen = repo; return { cards: [], degraded: false, generatedAt: 'now', latestWindow: 'a', previousWindow: 'b' }; },
+    });
+    expect(seen).toBe('o/a');
+    expect(res).toEqual({ status: 200, json: { cards: [], degraded: false, generatedAt: 'now', latestWindow: 'a', previousWindow: 'b' } });
   });
 
   it('lists runs', async () => {
