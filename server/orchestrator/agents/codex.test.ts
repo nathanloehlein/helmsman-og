@@ -1,9 +1,6 @@
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { codexArgs, validCodexEffort, codexAdapter } from './codex';
-import type { AgentEvent, AgentTask } from './adapter';
+import type { AgentTask } from './adapter';
 
 function task(over: Partial<AgentTask> = {}): AgentTask {
   return { ticketId: 'AB-1', title: 't', repo: 'o/r', jiraBaseUrl: '', ...over };
@@ -43,49 +40,28 @@ describe('codexArgs', () => {
   });
 });
 
-describe('codexAdapter.start', () => {
+describe('codexAdapter', () => {
   it('has id codex', () => {
     expect(codexAdapter.id).toBe('codex');
   });
 
-  it('parses a PR number from a pull/<n> line arriving on the child stderr', async () => {
-    const binDir: string = mkdtempSync(join(tmpdir(), 'codex-bin-'));
-    const bin: string = join(binDir, 'codex');
-    writeFileSync(bin, '#!/usr/bin/env node\nconsole.error("opened https://github.com/o/r/pull/99");\n');
-    chmodSync(bin, 0o755);
-
-    const originalPath: string | undefined = process.env.PATH;
-    process.env.PATH = `${binDir}${originalPath ? `:${originalPath}` : ''}`;
-    try {
-      const events: AgentEvent[] = [];
-      const handle = codexAdapter.start(task(), process.cwd(), (e: AgentEvent) => events.push(e));
-      const result = await handle.exit;
-
-      expect(result.prNumber).toBe(99);
-      expect(events.some((e: AgentEvent) => e.kind === 'log' && e.text.includes('pull/99'))).toBe(true);
-    } finally {
-      process.env.PATH = originalPath;
-    }
+  it('buildCommand runs codex with codexArgs', () => {
+    const { cmd, args } = codexAdapter.buildCommand(task());
+    expect(cmd).toBe('codex');
+    expect(args).toEqual(codexArgs(task()));
   });
 
-  it('does not block on stdin (codex exec reads stdin; the child must get EOF, not an open pipe)', async () => {
-    const binDir: string = mkdtempSync(join(tmpdir(), 'codex-bin-'));
-    const bin: string = join(binDir, 'codex');
-    writeFileSync(
-      bin,
-      '#!/usr/bin/env node\nprocess.stdin.on("data", () => {});\nprocess.stdin.on("end", () => { console.log("opened https://github.com/o/r/pull/7"); process.exit(0); });\nprocess.stdin.resume();\n',
-    );
-    chmodSync(bin, 0o755);
+  it('parseLine extracts a PR number from a pull/<n> line', () => {
+    const event = codexAdapter.parseLine('opened https://github.com/o/r/pull/7');
+    expect(event).toEqual({ kind: 'log', text: 'opened https://github.com/o/r/pull/7', prNumber: 7 });
+  });
 
-    const originalPath: string | undefined = process.env.PATH;
-    process.env.PATH = `${binDir}${originalPath ? `:${originalPath}` : ''}`;
-    try {
-      const handle = codexAdapter.start(task(), process.cwd(), () => {});
-      const result = await handle.exit;
-      expect(result.ok).toBe(true);
-      expect(result.prNumber).toBe(7);
-    } finally {
-      process.env.PATH = originalPath;
-    }
-  }, 5000);
+  it('parseLine returns a plain log event when there is no PR number', () => {
+    const event = codexAdapter.parseLine('just some output');
+    expect(event).toEqual({ kind: 'log', text: 'just some output' });
+  });
+
+  it('parseLine returns null for a blank line', () => {
+    expect(codexAdapter.parseLine('')).toBeNull();
+  });
 });

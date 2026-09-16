@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { openDb, type Db, type RunRow } from './db';
 
 let db: Db;
@@ -9,6 +12,7 @@ function run(over: Partial<RunRow> = {}): RunRow {
     id: 'r1', ticketId: 'LEKA-1', repo: 'o/r', adapter: 'claude-code',
     status: 'running', attempt: 1, prNumber: null,
     startedAt: '2026-08-18T00:00:00.000Z', endedAt: null, costUsd: null, worktreePath: '/tmp/w',
+    hostKind: null, hostRef: null, logPath: null, exitPath: null, specPath: null, logOffset: null, taskJson: null,
     ...over,
   };
 }
@@ -66,5 +70,21 @@ describe('db', () => {
     db.updateRun('r1', {});
     const after: RunRow | null = db.getRun('r1');
     expect(after).toEqual(before);
+  });
+
+  it('migrates: adds durable-run columns to a pre-existing runs table and round-trips them', () => {
+    const path = join(tmpdir(), `gm-mig-${Math.random().toString(36).slice(2)}.sqlite`);
+    const legacy = new Database(path);
+    legacy.exec(`CREATE TABLE runs (id TEXT PRIMARY KEY, ticketId TEXT, repo TEXT, adapter TEXT, status TEXT, attempt INTEGER, prNumber INTEGER, startedAt TEXT, endedAt TEXT, costUsd REAL, worktreePath TEXT);`);
+    legacy.prepare(`INSERT INTO runs (id,ticketId,repo,adapter,status,attempt,prNumber,startedAt,endedAt,costUsd,worktreePath) VALUES ('old','T-1','o/r','codex','running',1,null,'t',null,null,null)`).run();
+    legacy.close();
+
+    db = openDb(path);
+    db.updateRun('old', { hostKind: 'detached', hostRef: '{"kind":"detached","pid":9}', logPath: '/l', exitPath: '/e', specPath: '/s', logOffset: 42, taskJson: '{"ticketId":"T-1"}' });
+    const row = db.getRun('old')!;
+    expect(row.hostKind).toBe('detached');
+    expect(row.logOffset).toBe(42);
+    expect(db.reattachableRuns().map((r) => r.id)).toContain('old');
+    db.close();
   });
 });

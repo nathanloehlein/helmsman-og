@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentEvent, AgentResult, AgentTask } from './adapter';
+import type { AgentTask } from './adapter';
 import { buildArgv, commandAdapter } from './command';
 
 describe('buildArgv', () => {
@@ -29,31 +29,34 @@ describe('buildArgv', () => {
 });
 
 describe('commandAdapter', () => {
-  it('spawns the templated command without a shell, streams log events, and captures the last PR number', async () => {
-    const task: AgentTask = { ticketId: 'X-1', title: 't', repo: 'o/r', jiraBaseUrl: '' };
-    const events: AgentEvent[] = [];
-    const adapter = commandAdapter('node -e console.log("hello");console.log("pull/42")');
-    const handle = adapter.start(task, process.cwd(), (e: AgentEvent) => events.push(e));
-    const result: AgentResult = await handle.exit;
-
-    expect(result.ok).toBe(true);
-    expect(result.prNumber).toBe(42);
-    expect(events.some((e: AgentEvent) => e.kind === 'log' && e.text.includes('hello'))).toBe(true);
-  });
-
   it('reports id "command"', () => {
     expect(commandAdapter('node -e 0').id).toBe('command');
   });
 
-  it('resolves ok:false and emits an error event for an empty command template, without throwing', async () => {
+  it('buildCommand splits the templated argv into cmd + args', () => {
     const task: AgentTask = { ticketId: 'X-1', title: 't', repo: 'o/r', jiraBaseUrl: '' };
-    const events: AgentEvent[] = [];
-    const adapter = commandAdapter('   ');
-    const handle = adapter.start(task, process.cwd(), (e: AgentEvent) => events.push(e));
-    const result: AgentResult = await handle.exit;
+    const adapter = commandAdapter('node -e console.log("hello")');
+    const { cmd, args } = adapter.buildCommand(task);
+    expect(cmd).toBe('node');
+    expect(args).toEqual(['-e', 'console.log("hello")']);
+  });
 
-    expect(result).toEqual({ ok: false });
-    expect(events.some((e: AgentEvent) => e.kind === 'error')).toBe(true);
-    expect(() => handle.stop()).not.toThrow();
+  it('buildCommand resolves to an empty cmd for a blank template', () => {
+    const task: AgentTask = { ticketId: 'X-1', title: 't', repo: 'o/r', jiraBaseUrl: '' };
+    const adapter = commandAdapter('   ');
+    const { cmd, args } = adapter.buildCommand(task);
+    expect(cmd).toBe('');
+    expect(args).toEqual([]);
+  });
+
+  it('parseLine extracts the last PR number from a pull/<n> or PR # line', () => {
+    const adapter = commandAdapter('node -e 0');
+    expect(adapter.parseLine('opened pull/42')).toEqual({ kind: 'log', text: 'opened pull/42', prNumber: 42 });
+    expect(adapter.parseLine('see PR #7')).toEqual({ kind: 'log', text: 'see PR #7', prNumber: 7 });
+  });
+
+  it('parseLine returns a plain log event when there is no PR number', () => {
+    const adapter = commandAdapter('node -e 0');
+    expect(adapter.parseLine('hello')).toEqual({ kind: 'log', text: 'hello' });
   });
 });

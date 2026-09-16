@@ -26,12 +26,8 @@ export interface AgentResult {
   costUsd?: number;
 }
 
-export interface AgentHandle {
-  stop(): void;
-  readonly exit: Promise<AgentResult>;
-}
-
 export interface AgentAdapter {
   readonly id: string;
-  start(task: AgentTask, workdir: string, onEvent: (e: AgentEvent) => void): AgentHandle;
+  buildCommand(task: AgentTask): { cmd: string; args: string[] };
+  parseLine(line: string): AgentEvent | null;
 }

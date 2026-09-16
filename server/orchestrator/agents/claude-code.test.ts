@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentFlags } from './claude-code';
+import { agentFlags, claudeCodeAdapter } from './claude-code';
 import { buildPrompt } from './prompt';
 import type { AgentTask } from './adapter';
 
@@ -86,5 +86,41 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('existing');
     expect(prompt).toContain('comments');
     expect(prompt).not.toContain('Address this review feedback');
+  });
+});
+
+describe('claudeCodeAdapter', () => {
+  const base: AgentTask = { ticketId: 'T-1', title: 't', repo: 'o/r', jiraBaseUrl: '' };
+
+  it('has id claude-code', () => {
+    expect(claudeCodeAdapter.id).toBe('claude-code');
+  });
+
+  it('buildCommand runs claude with -p, stream-json output, and skip-permissions', () => {
+    const { cmd, args } = claudeCodeAdapter.buildCommand(base);
+    expect(cmd).toBe('claude');
+    expect(args[0]).toBe('-p');
+    expect(args[1]).toBe(buildPrompt(base));
+    expect(args).toContain('--output-format');
+    expect(args[args.indexOf('--output-format') + 1]).toBe('stream-json');
+    expect(args).toContain('--verbose');
+    expect(args).toContain('--dangerously-skip-permissions');
+  });
+
+  it('buildCommand appends agentFlags for model and effort', () => {
+    const { args } = claudeCodeAdapter.buildCommand({ ...base, model: 'opus', effort: 'high' });
+    expect(args).toContain('--model');
+    expect(args[args.indexOf('--model') + 1]).toBe('opus');
+    expect(args).toContain('--effort');
+    expect(args[args.indexOf('--effort') + 1]).toBe('high');
+  });
+
+  it('parseLine delegates to the stream-json mapper', () => {
+    expect(claudeCodeAdapter.parseLine('')).toBeNull();
+    expect(claudeCodeAdapter.parseLine('not json')).toBeNull();
+    const event = claudeCodeAdapter.parseLine(
+      JSON.stringify({ type: 'result', result: 'done', total_cost_usd: 0.5 }),
+    );
+    expect(event).toEqual({ kind: 'result', text: 'done', costUsd: 0.5, prNumber: undefined });
   });
 });
