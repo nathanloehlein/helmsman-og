@@ -1,6 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createInterface, type Interface } from 'node:readline';
-import type { AgentAdapter, AgentEvent, AgentHandle, AgentResult, AgentTask } from './adapter';
+import type { AgentAdapter, AgentEvent, AgentTask } from './adapter';
 import { buildPrompt } from './prompt';
 import { parsePrNumber } from './claude-stream';
 import { validModel } from '../../../src/logic/agentOptions';
@@ -27,41 +25,12 @@ export function codexArgs(task: AgentTask): string[] {
 
 export const codexAdapter: AgentAdapter = {
   id: 'codex',
-  start(task: AgentTask, workdir: string, onEvent: (e: AgentEvent) => void): AgentHandle {
-    const { JIRA_API_TOKEN, JIRA_EMAIL, ...agentEnv } = process.env;
-    const child: ChildProcess = spawn('codex', codexArgs(task), {
-      cwd: workdir,
-      env: agentEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let prNumber: number | undefined;
-
-    if (child.stdout) {
-      const rl: Interface = createInterface({ input: child.stdout });
-      rl.on('line', (line: string) => {
-        const parsed: number | undefined = parsePrNumber(line);
-        if (parsed !== undefined) prNumber = parsed;
-        onEvent({ kind: 'log', text: line });
-      });
-    }
-    if (child.stderr) {
-      const rl: Interface = createInterface({ input: child.stderr });
-      rl.on('line', (line: string) => {
-        const parsed: number | undefined = parsePrNumber(line);
-        if (parsed !== undefined) prNumber = parsed;
-        onEvent({ kind: 'log', text: line });
-      });
-    }
-
-    const exit: Promise<AgentResult> = new Promise((resolve) => {
-      child.on('close', (code: number | null) => resolve({ ok: code === 0, prNumber }));
-      child.on('error', (err: Error) => {
-        onEvent({ kind: 'error', text: err.message });
-        resolve({ ok: false, prNumber });
-      });
-    });
-
-    return { stop: () => child.kill('SIGTERM'), exit };
+  buildCommand(task: AgentTask): { cmd: string; args: string[] } {
+    return { cmd: 'codex', args: codexArgs(task) };
+  },
+  parseLine(line: string): AgentEvent | null {
+    if (!line) return null;
+    const prNumber: number | undefined = parsePrNumber(line);
+    return prNumber !== undefined ? { kind: 'log', text: line, prNumber } : { kind: 'log', text: line };
   },
 };
