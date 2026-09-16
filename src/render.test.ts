@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderBugsView, renderCmuxView, renderDashboard, renderPrPanel, renderRunsDrawer, renderTriageView } from './render';
+import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderRunsDrawer, renderTriageView } from './render';
 import { EDITABLE_KEYS } from '../server/orchestrator/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
@@ -64,7 +64,7 @@ describe('renderDashboard', () => {
       queue: [{ id: 'ABC-12', title: 'thing', priority: 'P1', status: 'in-progress', repo: 'o/r' }],
       activity: [{ time: NOW.toISOString(), text: '<b>ABC-12</b> &rarr; In Review', accent: true }],
     });
-    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, undefined, 'https://jira.example.com/');
+    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, DEFAULT_THEME_ID, undefined, 'https://jira.example.com/');
     const links: NodeListOf<HTMLAnchorElement> = el.querySelectorAll<HTMLAnchorElement>('a.ticket-link');
     expect(links.length).toBeGreaterThanOrEqual(2);
     links.forEach((a) => expect(a.getAttribute('href')).toBe('https://jira.example.com/browse/ABC-12'));
@@ -75,7 +75,7 @@ describe('renderDashboard', () => {
     const snap: DashboardSnapshot = snapshot({
       queue: [{ id: 'ABC-12', title: 'thing', priority: 'P1', status: 'in-progress', repo: 'o/r' }],
     });
-    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, undefined, null);
+    renderDashboard(el, snap, NOW, [], [], null, [], [], undefined, DEFAULT_THEME_ID, undefined, null);
     expect(el.querySelector('a.ticket-link')).toBeNull();
     expect(el.querySelector('.queue-item .ticket-id')?.textContent).toContain('ABC-12');
   });
@@ -101,7 +101,7 @@ describe('renderDashboard', () => {
 
   it('renders a theme-select with an option per theme and marks the current one selected', () => {
     const el: HTMLDivElement = root();
-    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, 'dracula');
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, 'dracula');
     const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
     expect(select).not.toBeNull();
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(THEMES.map((t) => t.id));
@@ -227,7 +227,7 @@ describe('renderDashboard', () => {
   it('adds a help tooltip to each config key', () => {
     const el: HTMLDivElement = root();
     const uiConfig: UiConfig = { config: { AGENT_ADAPTER: 'claude-code' }, overridden: [] };
-    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, uiConfig);
+    el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
     const hint: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"] .config-hint');
     expect(hint).not.toBeNull();
     expect(hint?.getAttribute('title')).toContain('claude-code');
@@ -392,16 +392,17 @@ describe('renderDashboard', () => {
     expect(emptyNote).not.toBeNull();
   });
 
-  it('renders a config row per key, marks overridden keys, and never renders a secret', () => {
+  it('renders a config row per key, marks overridden keys, and never renders a secret value', () => {
     const el: HTMLDivElement = root();
     const uiConfig: UiConfig = {
       config: { AGENT_ADAPTER: 'claude-code', AGENT_MAX_ATTEMPTS: 1 },
       overridden: ['AGENT_MAX_ATTEMPTS'],
+      jiraTokenSet: true,
     };
 
-    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], { maxAttempts: 1, maxCostUsd: null }, uiConfig);
+    el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
 
-    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-row');
+    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-row:not(.config-secret-row)');
     expect(rows.length).toBe(2);
     const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
@@ -410,8 +411,25 @@ describe('renderDashboard', () => {
     expect(attemptsRow).not.toBeNull();
     expect(attemptsRow!.textContent).toContain('overridden');
     expect(adapterRow!.textContent).not.toContain('overridden');
-    expect(el.querySelector('.config-row[data-key="JIRA_API_TOKEN"]')).toBeNull();
-    expect(el.innerHTML).not.toContain('JIRA_API_TOKEN');
+  });
+
+  it('renders a write-only JIRA_API_TOKEN update row that never carries a value', () => {
+    const el: HTMLDivElement = root();
+    const uiConfig: UiConfig = { config: { AGENT_ADAPTER: 'claude-code' }, overridden: [], jiraTokenSet: true };
+    el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+    const tokenRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-secret-row[data-key="JIRA_API_TOKEN"]');
+    expect(tokenRow).not.toBeNull();
+    const input: HTMLInputElement | null = tokenRow!.querySelector<HTMLInputElement>('.config-secret-input');
+    expect(input!.type).toBe('password');
+    expect(input!.value).toBe('');
+    expect(tokenRow!.querySelector('.config-save')?.getAttribute('data-key')).toBe('JIRA_API_TOKEN');
+    expect(tokenRow!.textContent).toContain('set ✓');
+  });
+
+  it('shows the Jira token as not set when absent', () => {
+    const el: HTMLDivElement = root();
+    el.innerHTML = renderConfigView({ config: {}, overridden: [], jiraTokenSet: false }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+    expect(el.querySelector('.config-secret-row .config-secret-status')?.textContent).toContain('not set');
   });
 
   it('renders a PR lookup panel for reviewing any PR', () => {
@@ -756,12 +774,13 @@ describe('renderDashboard bench rack', () => {
     document.body.innerHTML = '';
   });
 
-  it('renders a runs-drawer slot, the bench nameplate, and four page tabs', () => {
+  it('renders a runs-drawer slot, the bench nameplate, and the page tabs', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
     expect(el.querySelector('.bench-head .nameplate')).not.toBeNull();
-    expect(el.querySelectorAll('.page-tab')).toHaveLength(4);
+    expect(el.querySelectorAll('.page-tab')).toHaveLength(5);
+    expect(el.querySelector('.page-tab[data-view="config"]')).not.toBeNull();
     expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('dashboard');
   });
 
@@ -769,9 +788,10 @@ describe('renderDashboard bench rack', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     const panels: string[] = Array.from(el.querySelectorAll<HTMLElement>('.faceplate')).map((f) => f.dataset.panel ?? '');
-    ['newrun', 'backlog', 'running', 'recent', 'pr', 'shipped', 'activity', 'config'].forEach((id) =>
+    ['newrun', 'backlog', 'running', 'recent', 'pr', 'shipped', 'activity'].forEach((id) =>
       expect(panels).toContain(id),
     );
+    expect(panels).not.toContain('config');
     expect(el.querySelector('.rack-handle[draggable="true"]')).not.toBeNull();
     expect(el.querySelector('.panel-collapse')).not.toBeNull();
   });
@@ -820,7 +840,7 @@ describe('renderDashboard bench rack', () => {
   it('honors a custom layout: stacked panels share a slot with tabs', () => {
     const el: HTMLDivElement = root();
     const layout = stackOnto(defaultLayout(), 'running', 'backlog');
-    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, undefined, DEFAULT_THEME_ID, layout);
+    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, DEFAULT_THEME_ID, layout);
     const tabbed = el.querySelector<HTMLElement>('.faceplate .slot-tabs');
     expect(tabbed).not.toBeNull();
     const tabPanels = Array.from(tabbed!.querySelectorAll<HTMLButtonElement>('.slot-tab')).map((b) => b.dataset.panelTab);

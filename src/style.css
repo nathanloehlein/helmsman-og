@@ -418,6 +418,11 @@ select { text-transform: none; }
 .config-hint svg { width: 13px; height: 13px; }
 .config-hint:hover, .config-hint:focus { color: var(--accent); outline: none; }
 .config-error { grid-column: 2 / 3; color: var(--bad); font-size: 11px; }
+.config-view .config-panel { max-width: 760px; margin: 16px auto; }
+.config-secret-row { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.config-secret-status { margin-left: 6px; font-size: 10px; }
+.config-secret-status.is-set { color: var(--scope-green, var(--accent)); }
+.config-secret-status.is-unset { color: var(--text-faint); }
 
 /* ---------- shipped + feed ---------- */
 .shipped-grid { display: flex; flex-direction: column; }
