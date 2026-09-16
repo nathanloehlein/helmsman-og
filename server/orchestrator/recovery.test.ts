@@ -17,14 +17,19 @@ function run(over: Partial<RunRow> = {}): RunRow {
 }
 
 describe('recoverRuns', () => {
-  it('dispatches each running row to reattach instead of failing it', async () => {
+  it('dispatches each running row to reattach instead of failing it, without awaiting completion', async () => {
     db = openDb(':memory:');
     db.insertRun(run({ id: 'a' }));
     db.insertRun(run({ id: 'b' }));
     db.insertRun(run({ id: 'c', status: 'succeeded', endedAt: '2026-08-17T00:00:00.000Z' }));
 
     const seen: string[] = [];
-    const res = await recoverRuns(db, { reattach: async (row) => { seen.push(row.id); } });
+    const res = await recoverRuns(db, {
+      reattach: (row) => {
+        seen.push(row.id);
+        return new Promise<void>(() => {});
+      },
+    });
 
     expect(new Set(seen)).toEqual(new Set(['a', 'b']));
     expect(new Set(res.reattached)).toEqual(new Set(['a', 'b']));
@@ -39,7 +44,7 @@ describe('recoverRuns', () => {
     expect(c?.status).toBe('succeeded');
   });
 
-  it('keeps dispatching remaining rows when one reattach throws', async () => {
+  it('dispatches every row even when one reattach rejects', async () => {
     db = openDb(':memory:');
     db.insertRun(run({ id: 'a' }));
     db.insertRun(run({ id: 'b' }));
@@ -52,7 +57,26 @@ describe('recoverRuns', () => {
       },
     });
 
-    expect(new Set(seen)).toEqual(new Set(['a', 'b']));
+    expect(seen).toEqual(['a', 'b']);
+    expect(res.reattached).toEqual(['a', 'b']);
+    expect(res.failed).toEqual([]);
+  });
+
+  it('keeps dispatching remaining rows when one reattach throws synchronously', async () => {
+    db = openDb(':memory:');
+    db.insertRun(run({ id: 'a' }));
+    db.insertRun(run({ id: 'b' }));
+
+    const seen: string[] = [];
+    const res = await recoverRuns(db, {
+      reattach: (row) => {
+        seen.push(row.id);
+        if (row.id === 'a') throw new Error('boom');
+        return Promise.resolve();
+      },
+    });
+
+    expect(seen).toEqual(['a', 'b']);
     expect(res.reattached).toEqual(['b']);
     expect(res.failed).toEqual([]);
   });

@@ -78,8 +78,15 @@ describe('cmuxHost argv', () => {
 });
 
 describe('pickHost', () => {
-  it('prefers cmux when present, else detached', async () => {
-    expect((await pickHost({ hasCmux: async () => true, wrapperPath: WRAPPER })).kind).toBe('cmux');
-    expect((await pickHost({ hasCmux: async () => false, wrapperPath: WRAPPER })).kind).toBe('detached');
+  it('uses cmux only when explicitly opted in and cmux is present', async () => {
+    expect((await pickHost({ preferCmux: true, hasCmux: async () => true, wrapperPath: WRAPPER })).kind).toBe('cmux');
+  });
+
+  it('defaults to detached when not opted into cmux, even if cmux is present', async () => {
+    expect((await pickHost({ preferCmux: false, hasCmux: async () => true, wrapperPath: WRAPPER })).kind).toBe('detached');
+  });
+
+  it('falls back to detached when opted in but cmux is unavailable', async () => {
+    expect((await pickHost({ preferCmux: true, hasCmux: async () => false, wrapperPath: WRAPPER })).kind).toBe('detached');
   });
 });

@@ -91,8 +91,12 @@ export function cmuxHost(wrapperPath: string, run: ArgvRunner = defaultRun): Run
 
     async isAlive(ref: HostRef): Promise<boolean> {
       if (ref.kind !== 'cmux') return false;
-      const { stdout } = await run(['cmux', 'list-workspaces']);
-      return stdout.includes(ref.workspace);
+      try {
+        const { stdout } = await run(['cmux', 'list-workspaces']);
+        return stdout.includes(ref.workspace);
+      } catch {
+        return false;
+      }
     },
 
     async stop(ref: HostRef): Promise<void> {
@@ -116,8 +120,9 @@ export const hasCmux = async (run: ArgvRunner = defaultRun): Promise<boolean> =>
 export interface PickHostDeps {
   hasCmux: () => Promise<boolean>;
   wrapperPath: string;
+  preferCmux: boolean;
 }
 
 export async function pickHost(deps: PickHostDeps): Promise<RunHost> {
-  return (await deps.hasCmux()) ? cmuxHost(deps.wrapperPath) : detachedHost(deps.wrapperPath);
+  return deps.preferCmux && (await deps.hasCmux()) ? cmuxHost(deps.wrapperPath) : detachedHost(deps.wrapperPath);
 }

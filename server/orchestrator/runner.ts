@@ -133,6 +133,7 @@ function pumpRemaining(logPath: string, fromOffset: number, onLine: (line: strin
         buffer = buffer.slice(nl + 1);
         nl = buffer.indexOf('\n');
       }
+      if (buffer.length > 0) onLine(buffer);
     }
   } catch {
     void 0;
@@ -224,6 +225,24 @@ async function finalizeRun(p: FinalizeParams): Promise<void> {
   }
 }
 
+async function resolvePrNumber(
+  repo: string,
+  branch: string,
+  prNumber: number | null,
+  ok: boolean,
+  deps: RunnerDeps,
+  onEvent: OnEvent,
+): Promise<number | null> {
+  if (prNumber != null || !ok || !deps.findPrNumber) return prNumber;
+  try {
+    return await deps.findPrNumber(repo, branch);
+  } catch (err) {
+    const text: string = err instanceof Error ? err.message : String(err);
+    onEvent({ kind: 'log', text: `find PR failed (non-fatal): ${text}` });
+    return prNumber;
+  }
+}
+
 async function completeRun(runId: string, repo: string, worktreePath: string | null, deps: RunnerDeps): Promise<void> {
   if (worktreePath) await deps.removeWorktree(repo, worktreePath);
   const finalRow: RunRow | null = deps.db.getRun(runId);
@@ -279,7 +298,10 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
         totalCost = (totalCost ?? 0) + e.costUsd;
         deps.db.updateRun(runId, { costUsd: totalCost });
       }
-      if (e.prNumber != null) prNumber = e.prNumber;
+      if (e.prNumber != null) {
+        prNumber = e.prNumber;
+        deps.db.updateRun(runId, { prNumber });
+      }
       onEvent(e);
     };
 
@@ -291,13 +313,14 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
       const { cmd, args } = deps.adapter.buildCommand(task);
       let outcome: number | 'stopped' | 'capped' = 1;
+      let ref: HostRef | null = null;
       if (cmd === '') {
         onEvent({ kind: 'error', text: 'adapter produced no command' });
       } else {
         resetAttemptFiles(logPath, exitPath);
-        const ref: HostRef = await deps.host.launch({ runId, cmd, args, cwd: worktree.path, logPath, exitPath, specPath });
+        ref = await deps.host.launch({ runId, cmd, args, cwd: worktree.path, logPath, exitPath, specPath });
         deps.db.updateRun(runId, { hostKind: ref.kind, hostRef: JSON.stringify(ref) });
-        deps.onLaunch?.(runId, () => deps.host.stop(ref));
+        deps.onLaunch?.(runId, () => deps.host.stop(ref!));
         outcome = await tailUntilExit(runId, logPath, exitPath, 0, deps, consume, {
           pollIntervalMs: deps.pollIntervalMs ?? 250,
           isStopped: () => deps.isStopped?.() ?? false,
@@ -314,19 +337,13 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
         break;
       }
       if (outcome === 'capped' || (deps.maxCostUsd != null && totalCost != null && totalCost >= deps.maxCostUsd)) {
+        if (ref) await deps.host.stop(ref);
         onEvent({ kind: 'log', text: 'cost cap reached, no further attempts' });
         break;
       }
     }
 
-    if (prNumber == null && ok && deps.findPrNumber) {
-      try {
-        prNumber = await deps.findPrNumber(task.repo, worktree.branch);
-      } catch (err) {
-        const text: string = err instanceof Error ? err.message : String(err);
-        onEvent({ kind: 'log', text: `find PR failed (non-fatal): ${text}` });
-      }
-    }
+    prNumber = await resolvePrNumber(task.repo, worktree.branch, prNumber, ok, deps, onEvent);
 
     await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped, ok, worktreePath: worktree.path, onEvent });
   } catch (err) {
@@ -356,6 +373,8 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
     let totalCost: number | null = row.costUsd ?? null;
     let prNumber: number | null = row.prNumber ?? null;
 
+    const branch: string = task.prBranch ?? `agent/${runId}`;
+
     const consume = (line: string): void => {
       const e: AgentEvent | null = deps.adapter.parseLine(line);
       if (!e) return;
@@ -363,7 +382,10 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
         totalCost = (totalCost ?? 0) + e.costUsd;
         deps.db.updateRun(runId, { costUsd: totalCost });
       }
-      if (e.prNumber != null) prNumber = e.prNumber;
+      if (e.prNumber != null) {
+        prNumber = e.prNumber;
+        deps.db.updateRun(runId, { prNumber });
+      }
       onEvent(e);
     };
 
@@ -371,6 +393,7 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
     if (existingCode != null) {
       pumpRemaining(logPath, row.logOffset ?? 0, consume);
       const ok: boolean = existingCode === 0;
+      prNumber = await resolvePrNumber(row.repo, branch, prNumber, ok, deps, onEvent);
       await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped: false, ok, worktreePath: worktreePath ?? '', onEvent });
       return;
     }
@@ -384,8 +407,10 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
         isStopped: () => deps.isStopped?.() ?? false,
         isCostCapped: () => deps.maxCostUsd != null && totalCost != null && totalCost >= deps.maxCostUsd,
       });
+      if (outcome === 'capped') await deps.host.stop(ref);
       const ok: boolean = typeof outcome === 'number' && outcome === 0;
-      const stopped: boolean = outcome === 'stopped';
+      const stopped: boolean = outcome === 'stopped' || (deps.isStopped?.() ?? false);
+      prNumber = await resolvePrNumber(row.repo, branch, prNumber, ok, deps, onEvent);
       await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped, ok, worktreePath: worktreePath ?? '', onEvent });
       return;
     }

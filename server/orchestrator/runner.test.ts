@@ -742,6 +742,46 @@ describe('reattachRun', () => {
     db.close();
   });
 
+  it('finalizes with markInReview when the PR number was already persisted pre-crash', async () => {
+    const db: Db = openDb(':memory:');
+    const runsDir = freshRunsDir();
+    const row = baseRow(runsDir);
+    row.prNumber = 7;
+    writeFileSync(row.logPath!, JSON.stringify({ kind: 'result', text: 'done' }) + '\n');
+    writeFileSync(row.exitPath!, '0');
+    db.insertRun(row);
+    const jira = fakeJira();
+    const d: RunnerDeps = { ...deps(db, jsonAdapter(), fakeHost(() => ({ events: [], ok: true })), runsDir), jira, botAccountId: 'bot-acc' };
+
+    await reattachRun(row, d);
+
+    const updated = db.getRun('run-1');
+    expect(updated?.status).toBe('succeeded');
+    expect(updated?.prNumber).toBe(7);
+    expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Review' });
+    db.close();
+  });
+
+  it('falls back to findPrNumber when a reattached run finalizes successfully with no PR number', async () => {
+    const db: Db = openDb(':memory:');
+    const runsDir = freshRunsDir();
+    const row = baseRow(runsDir);
+    writeFileSync(row.logPath!, JSON.stringify({ kind: 'result', text: 'done' }) + '\n');
+    writeFileSync(row.exitPath!, '0');
+    db.insertRun(row);
+    const jira = fakeJira();
+    const findPrNumber = vi.fn(async (_repo: string, _branch: string) => 55);
+    const d: RunnerDeps = { ...deps(db, jsonAdapter(), fakeHost(() => ({ events: [], ok: true })), runsDir), jira, botAccountId: 'bot-acc', findPrNumber };
+
+    await reattachRun(row, d);
+
+    expect(findPrNumber).toHaveBeenCalledWith('o/r', `agent/${row.id}`);
+    const updated = db.getRun('run-1');
+    expect(updated?.prNumber).toBe(55);
+    expect(jira.transitionCalls).toContainEqual({ ticketId: 'LEKA-1', statusName: 'In Review' });
+    db.close();
+  });
+
   it('finalizes as failed with an interrupted error event when the host is dead and no exit file exists', async () => {
     const db: Db = openDb(':memory:');
     const runsDir = freshRunsDir();

@@ -54,7 +54,8 @@ function ensureCmuxWatch(): void {
   });
 }
 
-const host: RunHost = await pickHost({ hasCmux, wrapperPath: WRAPPER });
+const preferCmux: boolean = process.env.RUN_HOST === 'cmux';
+const host: RunHost = await pickHost({ hasCmux, wrapperPath: WRAPPER, preferCmux });
 process.stdout.write(`run host: ${host.kind}\n`);
 
 function adapterFor(id: string, cfg: AppConfig): AgentAdapter {
@@ -102,16 +103,17 @@ function dispatchReattach(row: RunRow): Promise<void> {
   const cfg: AppConfig = configStore.current();
   const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
+  pm.add(row.id, row.repo, () => {
+    control.stopped = true;
+    void control.stop?.();
+  });
   const deps: RunnerDeps = {
     ...baseRunnerDeps(cfg, jira),
     adapter: adapterFor(row.adapter, cfg),
     genId: () => row.id,
-    onLaunch: (runId: string, stop: () => Promise<void>) => {
+    onLaunch: (_runId: string, stop: () => Promise<void>) => {
       control.stop = stop;
-      pm.add(runId, row.repo, () => {
-        control.stopped = true;
-        void control.stop?.();
-      });
+      if (control.stopped) void stop();
     },
     isStopped: () => control.stopped,
   };

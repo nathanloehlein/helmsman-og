@@ -9,7 +9,7 @@ export async function recoverRuns(db: Db, deps: RecoverDeps): Promise<{ reattach
   const reattached: string[] = [];
   for (const row of rows) {
     try {
-      await deps.reattach(row);
+      void deps.reattach(row).catch(() => {});
       reattached.push(row.id);
     } catch {
       continue;
