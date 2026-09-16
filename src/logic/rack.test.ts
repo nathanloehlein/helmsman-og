@@ -60,21 +60,21 @@ describe('rack layout', () => {
   });
 
   it('toggleCollapse flips the containing slot', () => {
-    const l = toggleCollapse(defaultLayout(), 'config');
-    const slot = l.flat().find((s) => s.panels.includes('config'))!;
+    const l = toggleCollapse(defaultLayout(), 'shipped');
+    const slot = l.flat().find((s) => s.panels.includes('shipped'))!;
     expect(slot.collapsed).toBe(true);
   });
 
   it('does not mutate the input layout', () => {
     const l = defaultLayout();
     const snapshot = serialize(l);
-    movePanel(l, 'config', 0, 0);
+    movePanel(l, 'shipped', 0, 0);
     stackOnto(l, 'pr', 'backlog');
     expect(serialize(l)).toBe(snapshot);
   });
 
   it('serialize/deserialize round-trips', () => {
-    const l = toggleCollapse(stackOnto(defaultLayout(), 'running', 'backlog'), 'config');
+    const l = toggleCollapse(stackOnto(defaultLayout(), 'running', 'backlog'), 'shipped');
     expect(deserialize(serialize(l))).toEqual(l);
   });
 

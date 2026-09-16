@@ -27,7 +27,7 @@ describe('getConfig', () => {
 
     const result: UiConfig = await getConfig();
 
-    expect(result).toEqual({ config: {}, overridden: [] });
+    expect(result).toEqual({ config: {}, overridden: [], jiraTokenSet: false });
   });
 
   it('returns an empty config when fetch throws', async () => {
@@ -37,7 +37,7 @@ describe('getConfig', () => {
 
     const result: UiConfig = await getConfig();
 
-    expect(result).toEqual({ config: {}, overridden: [] });
+    expect(result).toEqual({ config: {}, overridden: [], jiraTokenSet: false });
   });
 });
 

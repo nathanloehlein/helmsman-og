@@ -1,15 +1,16 @@
 export interface UiConfig {
   config: Record<string, unknown>;
   overridden: string[];
+  jiraTokenSet?: boolean;
 }
 
 export async function getConfig(): Promise<UiConfig> {
   try {
     const res: Response = await fetch('/api/config');
-    if (!res.ok) return { config: {}, overridden: [] };
+    if (!res.ok) return { config: {}, overridden: [], jiraTokenSet: false };
     return (await res.json()) as UiConfig;
   } catch {
-    return { config: {}, overridden: [] };
+    return { config: {}, overridden: [], jiraTokenSet: false };
   }
 }
 

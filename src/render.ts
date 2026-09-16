@@ -186,13 +186,14 @@ function buildSparkline(values: number[]): string {
     </svg>`;
 }
 
-export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs';
+export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'config';
 
 const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'dashboard', label: 'Bench' },
   { view: 'triage', label: 'Triage' },
   { view: 'cmux', label: 'cmux' },
   { view: 'bugs', label: 'Bugs' },
+  { view: 'config', label: 'Config' },
 ];
 
 const PANEL_TITLE: Record<PanelId, string> = {
@@ -204,7 +205,6 @@ const PANEL_TITLE: Record<PanelId, string> = {
   myprs: 'My open PRs',
   shipped: 'Recently shipped',
   activity: 'Activity feed',
-  config: 'Config',
 };
 
 interface PanelDef {
@@ -311,7 +311,6 @@ export function renderDashboard(
   runs: RunSummary[] = [],
   autoClaimRepos: string[] = [],
   caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
-  uiConfig: UiConfig = { config: {}, overridden: [] },
   themeId: string = DEFAULT_THEME_ID,
   layout: RackLayout = defaultLayout(),
   jiraBaseUrl: string | null = null,
@@ -450,26 +449,6 @@ export function renderDashboard(
         .join('')
     : '<li class="empty-note">No open pull requests.</li>';
 
-  const configEntries: [string, unknown][] = Object.entries(uiConfig.config ?? {});
-  const configRows: string = configEntries.length
-    ? configEntries
-        .map(([key, value]) => {
-          const isOverridden: boolean = (uiConfig.overridden ?? []).includes(key);
-          const help: string = CONFIG_HELP[key] ?? '';
-          const hint: string = help
-            ? ` <span class="config-hint" tabindex="0" role="img" aria-label="${esc(help)}" title="${esc(help)}">${ICON_INFO}</span>`
-            : '';
-          return `
-      <div class="config-row" data-key="${esc(key)}"${help ? ` title="${esc(help)}"` : ''}>
-        <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}${hint}</span>
-        <input class="config-input" type="text" value="${esc(String(value ?? ''))}">
-        <button class="config-save" data-key="${esc(key)}">Save</button>
-        <span class="config-error" role="alert"></span>
-      </div>`;
-        })
-        .join('')
-    : '<div class="empty-note">No configuration keys.</div>';
-
   const panelDefs: Record<PanelId, PanelDef> = {
     newrun: {
       lamp: 'idle',
@@ -540,13 +519,6 @@ export function renderDashboard(
           <div class="spark-wrap">${buildSparkline(data.throughput7d)}</div>
         </div>
         <div class="feed">${activityLines}</div>`,
-    },
-    config: {
-      lamp: 'idle',
-      count: null,
-      body: `
-        <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
-        <div class="config-list">${configRows}</div>`,
     },
   };
 
@@ -834,6 +806,61 @@ export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
       </div>
       ${banner}
       ${bugsBody}
+    </div>`;
+}
+
+export interface ConfigViewOpts {
+  repos: string[];
+  selectedRepo: string | null;
+  themeId: string;
+}
+
+function configRowsHtml(uiConfig: UiConfig): string {
+  const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {});
+  if (entries.length === 0) return '<div class="empty-note">No configuration keys.</div>';
+  return entries
+    .map(([key, value]) => {
+      const isOverridden: boolean = (uiConfig.overridden ?? []).includes(key);
+      const help: string = CONFIG_HELP[key] ?? '';
+      const hint: string = help
+        ? ` <span class="config-hint" tabindex="0" role="img" aria-label="${esc(help)}" title="${esc(help)}">${ICON_INFO}</span>`
+        : '';
+      return `
+      <div class="config-row" data-key="${esc(key)}"${help ? ` title="${esc(help)}"` : ''}>
+        <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}${hint}</span>
+        <input class="config-input" type="text" value="${esc(String(value ?? ''))}">
+        <button class="config-save" data-key="${esc(key)}">Save</button>
+        <span class="config-error" role="alert"></span>
+      </div>`;
+    })
+    .join('');
+}
+
+function jiraTokenRowHtml(tokenSet: boolean): string {
+  const status: string = tokenSet
+    ? '<span class="config-secret-status is-set">set ✓</span>'
+    : '<span class="config-secret-status is-unset">not set</span>';
+  return `
+      <div class="config-row config-secret-row" data-key="JIRA_API_TOKEN">
+        <span class="config-key mono">JIRA_API_TOKEN ${status}<span class="config-hint" tabindex="0" role="img" aria-label="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed." title="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed.">${ICON_INFO}</span></span>
+        <input class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste new token to update">
+        <button class="config-save" data-key="JIRA_API_TOKEN">Update</button>
+        <span class="config-error" role="alert"></span>
+      </div>`;
+}
+
+export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
+  return `
+    <div class="bench config-view" data-page="config">
+      ${renderBenchHead({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
+      <section class="panel config-panel">
+        <div class="panel-head"><span class="panel-title">Config</span></div>
+        <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
+        <div class="config-list">
+          ${jiraTokenRowHtml(uiConfig.jiraTokenSet === true)}
+          ${configRowsHtml(uiConfig)}
+        </div>
+      </section>
     </div>`;
 }
 

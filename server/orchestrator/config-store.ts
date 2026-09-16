@@ -17,6 +17,8 @@ export const EDITABLE_KEYS: readonly string[] = [
 
 export const SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'GITHUB_TOKEN', 'JIRA_EMAIL'];
 
+export const WRITABLE_SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN'];
+
 export function publicConfig(cfg: AppConfig): Record<string, unknown> {
   return {
     AGENT_ADAPTER: cfg.agentAdapter,
@@ -59,5 +61,19 @@ export class ConfigStore {
       throw new Error(`not an editable config key: ${key}`);
     }
     this.db.setConfigOverride(key, value, now());
+  }
+
+  setSecret(key: string, value: string, now: () => string): void {
+    if (!WRITABLE_SECRET_KEYS.includes(key)) {
+      throw new Error(`not a writable secret key: ${key}`);
+    }
+    if (value.trim() === '') {
+      throw new Error(`refusing to set empty secret: ${key}`);
+    }
+    this.db.setConfigOverride(key, value, now());
+  }
+
+  hasJiraToken(): boolean {
+    return Boolean(this.current().jira?.apiToken);
   }
 }

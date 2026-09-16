@@ -114,6 +114,14 @@ export async function fetchActiveIssues(jira: JiraConfig): Promise<JiraIssue[]> 
   );
 }
 
+export async function verifyJiraAuth(jira: JiraConfig): Promise<void> {
+  const url: URL = new URL('/rest/api/3/myself', jira.baseUrl);
+  const res: Response = await fetch(url, {
+    headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`Jira auth ${res.status}: ${await res.text()}`);
+}
+
 export async function fetchApproxCount(jira: JiraConfig, jql: string): Promise<number> {
   const url: URL = new URL('/rest/api/3/search/approximate-count', jira.baseUrl);
   const res: Response = await fetch(url, {

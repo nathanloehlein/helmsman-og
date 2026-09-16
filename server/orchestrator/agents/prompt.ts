@@ -8,6 +8,7 @@ export function buildPrompt(task: AgentTask): string {
       `You are running fully unattended: there is no human to ask, so never pause for confirmation or approval — carry out every step yourself.`,
       `Do a thorough code review of this PR.`,
       `Review the whole change path, not just the diff: caller contracts, feature-flag states, error paths, observability, tests, migrations, and deletion fallout.`,
+      `First read the existing review comments and review threads already on the PR (use the gh CLI, e.g. "gh pr view ${task.prNumber} --comments" and "gh api repos/{owner}/{repo}/pulls/${task.prNumber}/comments"). Take them into account: do not repeat findings that have already been raised, note when a prior comment is now resolved or outdated, and focus your new findings on issues not already covered.`,
       `Write your review as GitHub-flavored markdown to a file named .agent-review.md in the repo root — this file is the only output that is used, so it must be written; do not print the review to stdout instead.`,
       `Do NOT modify code, commit, push, open a pull request, merge, or approve — produce ONLY the review file.`,
     ].join(' ');
