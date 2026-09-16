@@ -55,7 +55,7 @@ describe('buildDashboardResponse', () => {
   });
 
   it('re-scopes Jira to the mapped project and filters shipped to the selected repo', async () => {
-    const prA = { number: 1, title: 'a', headRef: '', authorLogin: 'bot', mergedAt: null, createdAt: NOW.toISOString(), reviewDecision: null, repo: 'o/a' };
+    const prA = { number: 1, title: 'a', headRef: '', authorLogin: 'bot', state: 'open' as const, mergedAt: null, createdAt: NOW.toISOString(), reviewDecision: null, repo: 'o/a' };
     const prB = { ...prA, number: 2, repo: 'o/b' };
     let seenProject = '';
     const r = await buildDashboardResponse(

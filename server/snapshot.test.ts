@@ -21,6 +21,7 @@ function pr(over: Partial<GithubPr> = {}): GithubPr {
     title: 'AIROBUILD-482 add retry',
     headRef: 'feature/AIROBUILD-482-retry',
     authorLogin: 'bot',
+    state: 'open',
     mergedAt: null,
     createdAt: '2026-08-17T00:00:00.000Z',
     reviewDecision: null,
@@ -88,6 +89,12 @@ describe('mapPrStatus', () => {
   it('changes requested', () => {
     expect(mapPrStatus(pr({ reviewDecision: 'CHANGES_REQUESTED' }))).toBe('changes-requested');
   });
+  it('maps a closed (unmerged) PR to closed, not in-review', () => {
+    expect(mapPrStatus(pr({ state: 'closed' }))).toBe('closed');
+  });
+  it('merged wins over closed (a merged PR is also state=closed)', () => {
+    expect(mapPrStatus(pr({ state: 'closed', mergedAt: '2026-08-17T01:00:00.000Z' }))).toBe('merged');
+  });
   it('defaults to in-review', () => {
     expect(mapPrStatus(pr())).toBe('in-review');
   });
@@ -129,7 +136,7 @@ const CURRENT: JiraIssue = {
 describe('buildActivity', () => {
   it('merges status transitions and PR events, newest first', () => {
     const prs: GithubPr[] = [
-      { number: 7, title: 'AIROBUILD-482 retry', headRef: 'f/AIROBUILD-482', authorLogin: 'bot', mergedAt: '2026-08-17T03:00:00.000Z', createdAt: '2026-08-17T01:00:00.000Z', reviewDecision: null },
+      { number: 7, title: 'AIROBUILD-482 retry', headRef: 'f/AIROBUILD-482', authorLogin: 'bot', state: 'closed', mergedAt: '2026-08-17T03:00:00.000Z', createdAt: '2026-08-17T01:00:00.000Z', reviewDecision: null },
     ];
     const feed = buildActivity([CURRENT], prs);
     expect(feed[0].time).toBe('2026-08-17T03:00:00.000Z');
@@ -172,7 +179,7 @@ describe('buildSteps', () => {
 
   it('adds a step for a linked PR', () => {
     const prs: GithubPr[] = [
-      { number: 9, title: 'AIROBUILD-482 retry', headRef: 'f/AIROBUILD-482', authorLogin: 'bot', mergedAt: null, createdAt: '2026-08-17T02:00:00.000Z', reviewDecision: null },
+      { number: 9, title: 'AIROBUILD-482 retry', headRef: 'f/AIROBUILD-482', authorLogin: 'bot', state: 'open', mergedAt: null, createdAt: '2026-08-17T02:00:00.000Z', reviewDecision: null },
     ];
     const steps = buildSteps(CURRENT, prs);
     expect(steps.some((s) => s.text.includes('#9'))).toBe(true);

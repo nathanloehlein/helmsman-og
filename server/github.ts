@@ -5,6 +5,7 @@ interface SearchItem {
   number: number;
   title: string;
   created_at: string;
+  state?: string;
   user: { login: string } | null;
   repository_url: string;
   draft?: boolean;
@@ -159,6 +160,7 @@ async function searchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]> {
         title: item.title,
         headRef: '',
         authorLogin: item.user?.login ?? github.author,
+        state: item.state === 'closed' ? 'closed' : 'open',
         mergedAt,
         createdAt: item.created_at,
         reviewDecision: mergedAt ? null : await latestReviewDecision(github, repo, item.number),
@@ -192,6 +194,7 @@ async function repoAuthoredPrs(github: GithubConfig, repo: string): Promise<Gith
         title: item.title,
         headRef: item.head?.ref ?? '',
         authorLogin: github.author,
+        state: item.state === 'closed' ? 'closed' : 'open',
         mergedAt,
         createdAt: item.created_at,
         reviewDecision: mergedAt ? null : await latestReviewDecision(github, repo, item.number).catch((): PrReviewDecision => 'REVIEW_REQUIRED'),
@@ -226,6 +229,7 @@ interface PullListItem {
   number: number;
   title: string;
   draft?: boolean;
+  state?: string;
   created_at: string;
   merged_at?: string | null;
   head?: { ref: string };

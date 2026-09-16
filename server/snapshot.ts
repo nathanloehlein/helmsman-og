@@ -32,6 +32,7 @@ export function parseTicketId(pr: GithubPr): string | null {
 
 export function mapPrStatus(pr: GithubPr): PrStatus {
   if (pr.mergedAt) return 'merged';
+  if (pr.state === 'closed') return 'closed';
   if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes-requested';
   return 'in-review';
 }

@@ -18,7 +18,7 @@ export interface WorkStep {
   text: string;
 }
 
-export type PrStatus = 'in-review' | 'merged' | 'changes-requested';
+export type PrStatus = 'in-review' | 'merged' | 'changes-requested' | 'closed';
 
 export interface ShippedPr {
   number: number;
