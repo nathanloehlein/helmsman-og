@@ -821,8 +821,33 @@ export class DashboardView {
       return;
     }
 
+    const recentRerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.recent-rerun');
+    if (recentRerunBtn) {
+      void this.handleRecentRerun(recentRerunBtn);
+      return;
+    }
+
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
+  }
+
+  private async handleRecentRerun(btn: HTMLButtonElement): Promise<void> {
+    const ticketId: string | undefined = btn.dataset.ticket;
+    const repo: string | undefined = btn.dataset.repo;
+    if (!ticketId || !repo) return;
+    const seq: number = ++this.launchSeq;
+    btn.disabled = true;
+    try {
+      const result: LaunchResult = await launchRun({ ticketId, repo, mode: 'ticket' });
+      if (seq !== this.launchSeq) return;
+      this.openRunTab(result.runId, ticketId);
+    } catch (err: unknown) {
+      if (seq !== this.launchSeq) return;
+      const message: string = err instanceof Error ? err.message : 'Re-run failed';
+      this.openErrorTab(ticketId, message);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   private prTarget(btn: HTMLElement): { panel: HTMLElement; repo: string; number: number } | null {

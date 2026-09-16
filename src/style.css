@@ -323,6 +323,10 @@ html, body {
 .agent-elapsed, .agent-attempt, .agent-cost { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 .recent-run-pr { font-family: var(--mono); font-size: 11px; color: var(--accent); text-decoration: none; white-space: nowrap; }
 .recent-run-pr:hover { color: var(--accent-bright); text-decoration: underline; }
+.recent-rerun { flex: 0 0 auto; padding: 3px 6px; line-height: 0; background: none; border: 1px solid var(--line-faint); border-radius: var(--radius); color: var(--text-faint); cursor: pointer; }
+.recent-rerun:hover:not(:disabled) { color: var(--accent); border-color: var(--line-strong); }
+.recent-rerun:disabled { opacity: 0.3; cursor: not-allowed; }
+.recent-rerun svg { width: 13px; height: 13px; }
 .agent-row, .recent-run { cursor: pointer; }
 
 /* the amber link rail: grows to fill, ends in a ring; state by stroke pattern */

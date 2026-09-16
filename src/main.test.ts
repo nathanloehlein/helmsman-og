@@ -1517,6 +1517,33 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(configPlate()!.classList.contains('is-collapsed')).toBe(false);
   });
 
+  it('re-runs a recent ticket run: launches mode=ticket with the run ticket/repo', async () => {
+    const response: DashboardResponse = await buildResponse();
+    let launchBody: { ticketId?: string; repo?: string; mode?: string } | null = null;
+    const terminalRun = { id: 'run-9', ticketId: 'TICK-9', repo: 'acme/widgets', status: 'succeeded', attempt: 1, prNumber: 55, startedAt: new Date().toISOString(), costUsd: 1 };
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url: string = String(input);
+      if (url.includes('/api/agents/launch')) {
+        launchBody = JSON.parse(String(init?.body ?? '{}'));
+        return { ok: true, status: 200, json: async () => ({ runId: 'run-new' }) } as unknown as Response;
+      }
+      if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [terminalRun] }) } as unknown as Response;
+      if (url.includes('/api/config')) return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => response } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
+    const view: DashboardView = new DashboardView(root);
+    await view.refresh();
+
+    const rerunBtn: HTMLButtonElement | null = root.querySelector<HTMLButtonElement>('.recent-run .recent-rerun');
+    expect(rerunBtn).not.toBeNull();
+    expect(rerunBtn!.disabled).toBe(false);
+    rerunBtn!.click();
+    await vi.waitFor(() => expect(launchBody).not.toBeNull());
+    expect(launchBody).toMatchObject({ ticketId: 'TICK-9', repo: 'acme/widgets', mode: 'ticket' });
+  });
+
   it('collapses a triage group, persists it, and survives a repaint', async () => {
     const response: DashboardResponse = await buildResponse();
     const triagePayload = {
