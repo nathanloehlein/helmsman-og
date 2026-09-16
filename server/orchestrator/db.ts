@@ -14,13 +14,13 @@ export interface RunRow {
   endedAt: string | null;
   costUsd: number | null;
   worktreePath: string | null;
-  hostKind: string | null;
-  hostRef: string | null;
-  logPath: string | null;
-  exitPath: string | null;
-  specPath: string | null;
-  logOffset: number | null;
-  taskJson: string | null;
+  hostKind?: string | null;
+  hostRef?: string | null;
+  logPath?: string | null;
+  exitPath?: string | null;
+  specPath?: string | null;
+  logOffset?: number | null;
+  taskJson?: string | null;
 }
 
 export interface RunEventRow {
@@ -73,7 +73,8 @@ export function openDb(path: string): Db {
 
   return {
     insertRun(r: RunRow): void {
-      sql.prepare(`INSERT INTO runs (${COLS.join(',')}) VALUES (${COLS.map((c) => '@' + c).join(',')})`).run(r);
+      const full = { hostKind: null, hostRef: null, logPath: null, exitPath: null, specPath: null, logOffset: null, taskJson: null, ...r };
+      sql.prepare(`INSERT INTO runs (${COLS.join(',')}) VALUES (${COLS.map((c) => '@' + c).join(',')})`).run(full);
     },
     updateRun(id: string, patch: Partial<RunRow>): void {
       const keys: string[] = Object.keys(patch).filter((k) => COLS.includes(k));
