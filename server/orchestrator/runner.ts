@@ -275,7 +275,10 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     const consume = (line: string): void => {
       const e: AgentEvent | null = deps.adapter.parseLine(line);
       if (!e) return;
-      if (e.costUsd != null) totalCost = (totalCost ?? 0) + e.costUsd;
+      if (e.costUsd != null) {
+        totalCost = (totalCost ?? 0) + e.costUsd;
+        deps.db.updateRun(runId, { costUsd: totalCost });
+      }
       if (e.prNumber != null) prNumber = e.prNumber;
       onEvent(e);
     };
@@ -356,7 +359,10 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
     const consume = (line: string): void => {
       const e: AgentEvent | null = deps.adapter.parseLine(line);
       if (!e) return;
-      if (e.costUsd != null) totalCost = (totalCost ?? 0) + e.costUsd;
+      if (e.costUsd != null) {
+        totalCost = (totalCost ?? 0) + e.costUsd;
+        deps.db.updateRun(runId, { costUsd: totalCost });
+      }
       if (e.prNumber != null) prNumber = e.prNumber;
       onEvent(e);
     };

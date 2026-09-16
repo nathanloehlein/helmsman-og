@@ -126,6 +126,33 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('fails with "adapter produced no command" and never launches the host when buildCommand returns an empty cmd', async () => {
+    const db: Db = openDb(':memory:');
+    const emptyCmdAdapter: AgentAdapter = {
+      id: 'empty',
+      buildCommand(): { cmd: string; args: string[] } {
+        return { cmd: '', args: [] };
+      },
+      parseLine(): AgentEvent | null {
+        return null;
+      },
+    };
+    const launch = vi.fn(async (): Promise<HostRef> => ({ kind: 'detached', pid: 1 }));
+    const host: RunHost = {
+      kind: 'detached',
+      launch,
+      async isAlive(): Promise<boolean> { return false; },
+      async stop(): Promise<void> { return undefined; },
+    };
+    const id = await startRun(task, deps(db, emptyCmdAdapter, host, freshRunsDir()));
+
+    const row = db.getRun(id);
+    expect(row?.status).toBe('failed');
+    expect(launch).not.toHaveBeenCalled();
+    expect(db.listEvents(id).some((e) => e.kind === 'error' && e.text === 'adapter produced no command')).toBe(true);
+    db.close();
+  });
+
   it('persists a failed run row and error event, and does not remove a worktree, when createWorktree rejects', async () => {
     const db: Db = openDb(':memory:');
     const remove = vi.fn(async () => undefined);
@@ -687,6 +714,31 @@ describe('reattachRun', () => {
     expect(updated?.prNumber).toBe(9);
     expect(updated?.costUsd).toBeCloseTo(0.3);
     expect(db.listEvents('run-1').some((e) => e.text === 'before crash')).toBe(true);
+    db.close();
+  });
+
+  it('resumes from a non-zero logOffset and only replays lines not yet consumed', async () => {
+    const db: Db = openDb(':memory:');
+    const runsDir = freshRunsDir();
+    const row = baseRow(runsDir);
+    const firstLine = JSON.stringify({ kind: 'phase', text: 'already seen' }) + '\n';
+    const secondLine = JSON.stringify({ kind: 'result', text: 'done', prNumber: 11, costUsd: 0.4 }) + '\n';
+    writeFileSync(row.logPath!, firstLine + secondLine);
+    writeFileSync(row.exitPath!, '0');
+    row.logOffset = Buffer.byteLength(firstLine, 'utf8');
+    db.insertRun(row);
+    const d = deps(db, jsonAdapter(), fakeHost(() => ({ events: [], ok: true })), runsDir);
+
+    const events: AgentEvent[] = [];
+    d.bus.subscribe('run-1', (e: AgentEvent): void => { events.push(e); });
+
+    await reattachRun(row, d);
+
+    expect(events.some((e) => e.text === 'already seen')).toBe(false);
+    expect(events.some((e) => e.text === 'done')).toBe(true);
+    const updated = db.getRun('run-1');
+    expect(updated?.prNumber).toBe(11);
+    expect(updated?.costUsd).toBeCloseTo(0.4);
     db.close();
   });
 
