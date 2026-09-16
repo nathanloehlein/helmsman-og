@@ -8,12 +8,57 @@
     <meta name="theme-color" content="#05070a" />
     <title>GoMaestro</title>
     <style>
-      html {
-        background: #04060a;
+      html { background: #08090c; }
+      body { margin: 0; }
+      /* Critical: cover instantly so the power-on ground paints before the bundle CSS.
+         The full self-test sequence is styled in style.css. */
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: radial-gradient(120% 90% at 50% 42%, #101319 0%, #08090c 60%, #050506 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
     </style>
   </head>
   <body>
+    <div id="boot" role="status" aria-label="GoMaestro powering on">
+      <div class="boot-stage">
+        <svg class="boot-scope" viewBox="0 0 340 96" fill="none" aria-hidden="true" preserveAspectRatio="none">
+          <g class="boot-graticule" stroke="currentColor" stroke-width="1">
+            <line x1="0" y1="48" x2="340" y2="48" />
+            <line x1="0" y1="24" x2="340" y2="24" />
+            <line x1="0" y1="72" x2="340" y2="72" />
+            <line x1="68" y1="0" x2="68" y2="96" />
+            <line x1="136" y1="0" x2="136" y2="96" />
+            <line x1="204" y1="0" x2="204" y2="96" />
+            <line x1="272" y1="0" x2="272" y2="96" />
+          </g>
+          <path class="boot-trace" d="M0,48 L40,48 54,20 68,76 82,34 96,60 110,44 124,52 140,48 L340,48"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <circle class="boot-beam" r="3.2" cx="0" cy="48" fill="currentColor" />
+        </svg>
+        <div class="boot-brand">
+          <span class="boot-mark">GM</span>
+          <span class="boot-word" aria-hidden="true"><b>G</b><b>o</b><b>M</b><b>a</b><b>e</b><b>s</b><b>t</b><b>r</b><b>o</b></span>
+        </div>
+        <div class="boot-meta">
+          <span class="boot-pct seg7">0</span>
+          <span class="boot-lamps" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span class="boot-tag">FLEET CONSOLE · POWER-ON SELF-TEST</span>
+        </div>
+        <div class="boot-rail" aria-hidden="true"><i></i></div>
+        <ul class="boot-log mono" aria-hidden="true">
+          <li>power-on self-test</li>
+          <li>segments · ok</li>
+          <li>lamps · ok</li>
+          <li>scope · lock</li>
+          <li>fleet · online</li>
+        </ul>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
