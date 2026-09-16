@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchAuthoredPrs, fetchOpenAuthoredPrs, fetchPrStatus, requestCopilotReview, submitReview } from './github';
+import { fetchAuthoredPrs, fetchOpenAuthoredPrs, fetchPrDiff, fetchPrStatus, requestCopilotReview, submitReview } from './github';
 import type { GithubConfig } from './config';
 import type { PrStatus } from './github';
 
@@ -292,5 +292,40 @@ describe('requestCopilotReview', () => {
     const result = await requestCopilotReview(github, 'octo/repo', 5);
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('fetchPrDiff', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('maps per-file patches and paginates until a short page', async () => {
+    const page1: unknown[] = Array.from({ length: 100 }, (_, i) => ({
+      filename: `f${i}.ts`, status: 'modified', additions: 1, deletions: 0, patch: `@@ p${i} @@` }));
+    const page2 = [{ filename: 'bin.png', status: 'added', additions: 0, deletions: 0 }];
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const href: string = url.toString();
+      if (href.includes('/pulls/5/files')) {
+        return jsonResponse(true, href.includes('page=2') ? page2 : page1);
+      }
+      return jsonResponse(false, {});
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const diff = await fetchPrDiff(github, 'octo/repo', 5);
+    expect(diff).not.toBeNull();
+    expect(diff!.length).toBe(101);
+    expect(diff![0]).toEqual({ filename: 'f0.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ p0 @@' });
+    expect(diff![100]).toEqual({ filename: 'bin.png', status: 'added', additions: 0, deletions: 0, patch: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null when the first page is not ok', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(false, {})) as unknown as typeof fetch);
+    expect(await fetchPrDiff(github, 'octo/repo', 5)).toBeNull();
+  });
+
+  it('returns null when fetch throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch);
+    expect(await fetchPrDiff(github, 'octo/repo', 5)).toBeNull();
   });
 });

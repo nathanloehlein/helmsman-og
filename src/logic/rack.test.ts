@@ -69,7 +69,7 @@ describe('rack layout', () => {
     const l = defaultLayout();
     const snapshot = serialize(l);
     movePanel(l, 'shipped', 0, 0);
-    stackOnto(l, 'pr', 'backlog');
+    stackOnto(l, 'activity', 'backlog');
     expect(serialize(l)).toBe(snapshot);
   });
 

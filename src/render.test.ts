@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderRunsDrawer, renderTriageView } from './render';
+import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRunsDrawer, renderTriageView } from './render';
 import { EDITABLE_KEYS } from '../server/orchestrator/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
@@ -432,12 +432,18 @@ describe('renderDashboard', () => {
     expect(el.querySelector('.config-secret-row .config-secret-status')?.textContent).toContain('not set');
   });
 
-  it('renders a PR lookup panel for reviewing any PR', () => {
+  it('renders the PR lookup panel in the PR view, not the dashboard', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
+    expect(el.querySelector('.pr-lookup-input')).toBeNull();
+    el.innerHTML = renderPrView(
+      { repo: null, number: null, pr: null, diff: null, loading: false },
+      { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID },
+    );
     expect(el.querySelector('.pr-lookup-input')).not.toBeNull();
     expect(el.querySelector('.pr-lookup-go')).not.toBeNull();
     expect(el.querySelector('.pr-lookup-result')).not.toBeNull();
+    expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('prs');
   });
 });
 
@@ -779,8 +785,9 @@ describe('renderDashboard bench rack', () => {
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
     expect(el.querySelector('.bench-head .nameplate')).not.toBeNull();
-    expect(el.querySelectorAll('.page-tab')).toHaveLength(5);
+    expect(el.querySelectorAll('.page-tab')).toHaveLength(6);
     expect(el.querySelector('.page-tab[data-view="config"]')).not.toBeNull();
+    expect(el.querySelector('.page-tab[data-view="prs"]')).not.toBeNull();
     expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('dashboard');
   });
 
@@ -788,10 +795,11 @@ describe('renderDashboard bench rack', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     const panels: string[] = Array.from(el.querySelectorAll<HTMLElement>('.faceplate')).map((f) => f.dataset.panel ?? '');
-    ['newrun', 'backlog', 'running', 'recent', 'pr', 'shipped', 'activity'].forEach((id) =>
+    ['newrun', 'backlog', 'running', 'recent', 'shipped', 'activity'].forEach((id) =>
       expect(panels).toContain(id),
     );
     expect(panels).not.toContain('config');
+    expect(panels).not.toContain('pr');
     expect(el.querySelector('.rack-handle[draggable="true"]')).not.toBeNull();
     expect(el.querySelector('.panel-collapse')).not.toBeNull();
   });
@@ -921,5 +929,51 @@ describe('renderBugsView', () => {
   it('falls back to the raw value when generatedAt is malformed', () => {
     const el = mount(renderBugsView({ ...res, generatedAt: 'not-a-date' }, opts));
     expect(el.textContent).toContain('Generated not-a-date');
+  });
+});
+
+describe('renderPrView + renderPrDiff', () => {
+  function mount(html: string): HTMLElement {
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    return el;
+  }
+  const opts = { repos: ['org/alpha'], selectedRepo: null, themeId: DEFAULT_THEME_ID };
+  const pr = {
+    number: 42, repo: 'org/alpha', state: 'open', draft: false, merged: false,
+    headRefName: 'feat/x', reviewDecision: 'REVIEW_REQUIRED', comments: 1,
+    checks: { passed: 1, failed: 0, pending: 0 }, url: 'https://github.com/org/alpha/pull/42',
+  };
+
+  it('renders the lookup form and marks the PR tab active', () => {
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, opts));
+    expect(el.querySelector('.pr-lookup-input')).not.toBeNull();
+    expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('prs');
+    expect(el.querySelector('.pr-diff-panel')).toBeNull();
+  });
+
+  it('renders the PR panel and a per-file diff when loaded', () => {
+    const diff = [
+      { filename: 'a.ts', status: 'modified', additions: 2, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new\n ctx' },
+      { filename: 'img.png', status: 'added', additions: 0, deletions: 0, patch: null },
+    ];
+    const el = mount(renderPrView({ repo: 'org/alpha', number: 42, pr, diff, loading: false }, opts));
+    expect(el.querySelector('.pr-lookup-result .pr-panel')).not.toBeNull();
+    const files = el.querySelectorAll('.diff-file');
+    expect(files.length).toBe(2);
+    expect(el.querySelector('.diff-patch .diff-add')?.textContent).toContain('+new');
+    expect(el.querySelector('.diff-patch .diff-del')?.textContent).toContain('-old');
+    expect(el.querySelector('.diff-hunk')).not.toBeNull();
+    expect(el.querySelector('.diff-nopatch')).not.toBeNull();
+  });
+
+  it('renders an empty-note when the PR has no file changes', () => {
+    const el = mount(renderPrView({ repo: 'org/alpha', number: 42, pr, diff: [], loading: false }, opts));
+    expect(el.querySelector('.pr-diff-panel')?.textContent).toContain('No file changes');
+  });
+
+  it('renderPrPanel shows an "Open in PR tab" control only when requested', () => {
+    expect(mount(renderPrPanel(pr, false, true)).querySelector('.pr-open-in-tab')).not.toBeNull();
+    expect(mount(renderPrPanel(pr, false, false)).querySelector('.pr-open-in-tab')).toBeNull();
   });
 });

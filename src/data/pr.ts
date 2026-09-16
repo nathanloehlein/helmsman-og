@@ -1,3 +1,5 @@
+import type { PrFileDiff } from '../types';
+
 export interface ReviewTallyView {
   requested: number;
   approved: number;
@@ -50,6 +52,17 @@ export async function submitReview(
     return { ok: true };
   } catch {
     return { ok: false };
+  }
+}
+
+export async function getPrDiff(repo: string, prNumber: number): Promise<PrFileDiff[] | null> {
+  try {
+    const res: Response = await fetch(`/api/pr/diff?repo=${encodeURIComponent(repo)}&number=${prNumber}`);
+    if (!res.ok) return null;
+    const data: { files?: PrFileDiff[] } = await res.json();
+    return Array.isArray(data.files) ? data.files : null;
+  } catch {
+    return null;
   }
 }
 

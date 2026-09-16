@@ -1,7 +1,7 @@
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
 import type { TriageResponse } from '../triage-endpoint';
-import type { BugsResponse } from '../../src/types';
+import type { BugsResponse, PrFileDiff } from '../../src/types';
 import type { CmuxTab } from './cmux/model';
 import { isAllowedKey } from './cmux/keys';
 
@@ -48,6 +48,7 @@ export interface RouterDeps {
   getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean };
   setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
   prStatus: (repo: string, prNumber: number) => Promise<PrStatus | null>;
+  prDiff: (repo: string, prNumber: number) => Promise<PrFileDiff[] | null>;
   submitReview: (
     repo: string,
     prNumber: number,
@@ -138,6 +139,16 @@ export async function handleApi(
     }
     const s: PrStatus | null = await deps.prStatus(repo, n);
     return s ? { status: 200, json: s } : { status: 404, json: { error: 'PR not found or GitHub not configured' } };
+  }
+  if (path === '/api/pr/diff' && method === 'GET') {
+    const repo: string | null = query.get('repo');
+    const numRaw: string | null = query.get('number');
+    const n: number = Number(numRaw);
+    if (!repo || !numRaw || !Number.isFinite(n)) {
+      return { status: 400, json: { error: 'repo and number required' } };
+    }
+    const files: PrFileDiff[] | null = await deps.prDiff(repo, n);
+    return files ? { status: 200, json: { files } } : { status: 404, json: { error: 'PR diff not found or GitHub not configured' } };
   }
   if (path === '/api/pr/review' && method === 'POST') {
     const b: { repo?: string; number?: number; event?: string; body?: string } | null = _body as

@@ -39,6 +39,7 @@ const deps: RouterDeps = {
   getConfig: () => ({ config: { agentAdapter: 'claude-code', maxAttempts: 1 }, overridden: ['AGENT_MAX_ATTEMPTS'], jiraTokenSet: true }),
   setConfig: (_key: string, _value: string) => ({ ok: true }),
   prStatus: async (_repo: string, _prNumber: number) => samplePrStatus,
+  prDiff: async (_repo: string, _prNumber: number) => [{ filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ x @@' }],
   submitReview: async (_repo: string, _prNumber: number, _event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', _body: string) => ({ ok: true as const }),
   cmuxListTabs: async () => ({ connected: true, tabs: [] }),
   cmuxReadScreen: async (_surface: string, _lines: number) => ({ ok: true as const, text: '' }),
@@ -308,6 +309,19 @@ describe('GET /api/pr', () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=5'), null, notFoundDeps);
     expect(r?.status).toBe(404);
     expect(r?.json).toEqual({ error: 'PR not found or GitHub not configured' });
+  });
+
+  it('GET /api/pr/diff returns the per-file diff', async () => {
+    const r = await handleApi('GET', '/api/pr/diff', new URLSearchParams('repo=o/r&number=5'), null, deps);
+    expect(r?.status).toBe(200);
+    expect(r?.json).toEqual({ files: [{ filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ x @@' }] });
+  });
+
+  it('GET /api/pr/diff validates params and 404s when unavailable', async () => {
+    expect((await handleApi('GET', '/api/pr/diff', new URLSearchParams('repo=o/r'), null, deps))?.status).toBe(400);
+    const nullDeps = { ...deps, prDiff: async (_r: string, _n: number) => null } as unknown as RouterDeps;
+    const r = await handleApi('GET', '/api/pr/diff', new URLSearchParams('repo=o/r&number=5'), null, nullDeps);
+    expect(r?.status).toBe(404);
   });
 
   it('never leaks the GitHub token in the response', async () => {

@@ -1,5 +1,6 @@
 import type { GithubConfig } from './config';
 import type { GithubPr, PrReviewDecision } from './types';
+import type { PrFileDiff } from '../src/types';
 
 interface SearchItem {
   number: number;
@@ -486,5 +487,49 @@ export async function requestCopilotReview(
     return { ok: false, error: errorBody.message ?? `GitHub ${res.status}` };
   } catch (err) {
     return { ok: false, error: String(err) };
+  }
+}
+
+const PR_DIFF_PAGE_CAP: number = 3;
+const PR_DIFF_FILE_CAP: number = 300;
+
+interface RawPrFile {
+  filename: string;
+  status: string;
+  additions?: number;
+  deletions?: number;
+  patch?: string;
+}
+
+export async function fetchPrDiff(
+  github: GithubConfig,
+  repo: string,
+  prNumber: number,
+): Promise<PrFileDiff[] | null> {
+  try {
+    const out: PrFileDiff[] = [];
+    for (let page = 1; page <= PR_DIFF_PAGE_CAP && out.length < PR_DIFF_FILE_CAP; page++) {
+      const url: URL = new URL(`${API}/repos/${repo}/pulls/${prNumber}/files`);
+      url.searchParams.set('per_page', '100');
+      url.searchParams.set('page', String(page));
+      const res: Response = await fetch(url, { headers: headers(github) });
+      if (!res.ok) return page === 1 ? null : out;
+      const items: RawPrFile[] = await res.json().catch((): RawPrFile[] => []);
+      if (!Array.isArray(items) || items.length === 0) break;
+      for (const f of items) {
+        if (out.length >= PR_DIFF_FILE_CAP) break;
+        out.push({
+          filename: f.filename,
+          status: f.status,
+          additions: f.additions ?? 0,
+          deletions: f.deletions ?? 0,
+          patch: f.patch ?? null,
+        });
+      }
+      if (items.length < 100) break;
+    }
+    return out;
+  } catch {
+    return null;
   }
 }

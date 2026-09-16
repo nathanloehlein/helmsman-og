@@ -2,7 +2,7 @@ import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
-import type { BugCard, BugsResponse, PrStatus, Priority, Ticket, TicketStatus } from './types';
+import type { BugCard, BugsResponse, PrFileDiff, PrStatus, Priority, Ticket, TicketStatus } from './types';
 import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
@@ -186,13 +186,14 @@ function buildSparkline(values: number[]): string {
     </svg>`;
 }
 
-export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'config';
+export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'config';
 
 const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'dashboard', label: 'Bench' },
   { view: 'triage', label: 'Triage' },
   { view: 'cmux', label: 'cmux' },
   { view: 'bugs', label: 'Bugs' },
+  { view: 'prs', label: 'PR' },
   { view: 'config', label: 'Config' },
 ];
 
@@ -201,7 +202,6 @@ const PANEL_TITLE: Record<PanelId, string> = {
   backlog: 'Backlog queue',
   running: 'Agents running',
   recent: 'Recent runs',
-  pr: 'Review a PR',
   myprs: 'My open PRs',
   shipped: 'Recently shipped',
   activity: 'Activity feed',
@@ -490,16 +490,6 @@ export function renderDashboard(
       count: terminalRuns.length,
       body: `<ul class="recent-runs-list lane-list">${recentRunItems}</ul>`,
     },
-    pr: {
-      lamp: 'idle',
-      count: null,
-      body: `
-        <div class="pr-lookup-form">
-          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" />
-          <button class="pr-lookup-go">Load PR</button>
-        </div>
-        <div class="pr-lookup-result"></div>`,
-    },
     myprs: {
       lamp: data.myOpenPrs.length ? 'queued' : 'idle',
       count: data.myOpenPrs.length,
@@ -587,7 +577,7 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
     <div class="run-drawer-pr"></div>`;
 }
 
-export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): string {
+export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false): string {
   if (!pr) return '<div class="pr-panel empty-note">No PR found.</div>';
   const stateLabel: string = pr.merged ? 'Merged' : pr.draft ? 'Draft' : pr.state === 'closed' ? 'Closed' : 'Open';
   const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
@@ -614,6 +604,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
         <span class="pr-branch mono">${esc(pr.headRefName)}</span>
         <span class="pr-comments mono">${pr.comments} comments</span>
         <a class="pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">#${pr.number}</a>
+        ${showOpenInTab ? `<button class="pr-open-in-tab" type="button" data-repo="${esc(pr.repo)}" data-number="${pr.number}">Open in PR tab ↗</button>` : ''}
       </div>
       <div class="pr-review">
         <textarea class="pr-review-body" placeholder="Review comment"></textarea>
@@ -624,6 +615,76 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean): strin
         </div>
       </div>
       ${rerun}
+    </div>`;
+}
+
+export interface PrViewState {
+  repo: string | null;
+  number: number | null;
+  pr: PrStatusView | null;
+  diff: PrFileDiff[] | null;
+  loading: boolean;
+}
+
+export interface PrViewOpts {
+  repos: string[];
+  selectedRepo: string | null;
+  themeId: string;
+}
+
+function diffLineClass(line: string): string {
+  if (line.startsWith('@@')) return 'diff-hunk';
+  if (line.startsWith('+')) return 'diff-add';
+  if (line.startsWith('-')) return 'diff-del';
+  return 'diff-ctx';
+}
+
+export function renderPrDiff(files: PrFileDiff[] | null): string {
+  if (files === null) return '';
+  if (files.length === 0) return '<div class="empty-note">No file changes in this PR.</div>';
+  const fileBlocks: string = files.map((f) => {
+    const body: string = f.patch
+      ? `<pre class="diff-patch">${f.patch.split('\n').map((l) => `<span class="diff-line ${diffLineClass(l)}">${esc(l)}</span>`).join('\n')}</pre>`
+      : '<div class="empty-note diff-nopatch">No inline diff (binary or too large).</div>';
+    return `
+      <details class="diff-file">
+        <summary class="diff-file-head">
+          <span class="diff-file-name mono">${esc(f.filename)}</span>
+          <span class="diff-file-stat mono"><span class="diff-add">+${f.additions}</span> <span class="diff-del">-${f.deletions}</span></span>
+        </summary>
+        ${body}
+      </details>`;
+  }).join('');
+  return `<div class="pr-diff">${fileBlocks}</div>`;
+}
+
+export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
+  const value: string = state.repo && state.number ? `${state.repo}#${state.number}` : '';
+  const canRerun: boolean = Boolean(state.pr && opts.repos.includes(state.pr.repo));
+  const panel: string = state.loading
+    ? '<div class="pr-panel empty-note">Loading PR…</div>'
+    : state.number
+      ? renderPrPanel(state.pr, canRerun)
+      : '<div class="pr-panel empty-note">Enter a PR above to review it.</div>';
+  const diffSection: string = state.pr && !state.loading
+    ? `<section class="panel pr-diff-panel">
+        <div class="panel-head"><span class="panel-title">Diff</span></div>
+        ${renderPrDiff(state.diff)}
+      </section>`
+    : '';
+  return `
+    <div class="bench prs-view" data-page="prs">
+      ${renderBenchHead({ active: 'prs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
+      <section class="panel pr-lookup-panel">
+        <div class="panel-head"><span class="panel-title">Review a PR</span></div>
+        <div class="pr-lookup-form">
+          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" value="${esc(value)}" />
+          <button class="pr-lookup-go">Load PR</button>
+        </div>
+        <div class="pr-lookup-result">${panel}</div>
+      </section>
+      ${diffSection}
+      <div class="runs-drawer-slot"></div>
     </div>`;
 }
 
