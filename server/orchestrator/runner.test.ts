@@ -466,7 +466,7 @@ describe('startRun', () => {
     db.close();
   });
 
-  it('logs a non-fatal message and posts nothing when the agent produced no .agent-review.md', async () => {
+  it('fails the review run (not silent success) when the agent produced no .agent-review.md', async () => {
     const db: Db = openDb(':memory:');
     const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
     const readReview = vi.fn(async (_worktreePath: string) => null);
@@ -485,12 +485,12 @@ describe('startRun', () => {
     const id = await startRun(reviewTask, d);
 
     expect(postReview).not.toHaveBeenCalled();
-    expect(events.some((e) => e.kind === 'log' && e.text.includes('agent produced no .agent-review.md; nothing posted'))).toBe(true);
-    expect(db.getRun(id)?.status).toBe('succeeded');
+    expect(events.some((e) => e.kind === 'error' && e.text.includes('no .agent-review.md'))).toBe(true);
+    expect(db.getRun(id)?.status).toBe('failed');
     db.close();
   });
 
-  it('logs a non-fatal error and still succeeds when postReview fails', async () => {
+  it('fails the review run when postReview fails', async () => {
     const db: Db = openDb(':memory:');
     const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
     const readReview = vi.fn(async (_worktreePath: string) => 'body');
@@ -508,7 +508,27 @@ describe('startRun', () => {
 
     const id = await startRun(reviewTask, d);
 
-    expect(events.some((e) => e.kind === 'log' && e.text.includes('boom'))).toBe(true);
+    expect(events.some((e) => e.kind === 'error' && e.text.includes('boom'))).toBe(true);
+    expect(db.getRun(id)?.status).toBe('failed');
+    db.close();
+  });
+
+  it('posts the review and succeeds even when the adapter exits non-zero, as long as .agent-review.md was written', async () => {
+    const db: Db = openDb(':memory:');
+    const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
+    const readReview = vi.fn(async (_worktreePath: string) => '## Review\nfindings');
+    const postReview = vi.fn(async (_repo: string, _prNumber: number, _body: string) => ({ ok: true as const }));
+    const reviewTask: AgentTask = { ticketId: 'review', title: '', repo: 'o/r', jiraBaseUrl: '', prBranch: 'fix/x', prNumber: 12, review: true };
+    const d: RunnerDeps = {
+      ...deps(db, fakeAdapter([{ kind: 'result', text: 'done' }], false)),
+      createWorktreeFromBranch,
+      readReview,
+      postReview,
+    };
+
+    const id = await startRun(reviewTask, d);
+
+    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nfindings');
     expect(db.getRun(id)?.status).toBe('succeeded');
     db.close();
   });
