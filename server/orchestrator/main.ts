@@ -1,19 +1,21 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import { buildTriageResponse } from '../triage-endpoint';
 import { buildBugsResponse } from '../bugs-endpoint';
 import type { AppConfig } from '../config';
 import { openDb } from './db';
-import { recoverOrphanedRuns } from './recovery';
+import { recoverRuns } from './recovery';
 import { handleApi } from './router';
 import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
-import { startRun } from './runner';
+import { startRun, reattachRun, type RunnerDeps } from './runner';
+import { hasCmux, pickHost, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
@@ -25,7 +27,7 @@ import { ConfigStore, publicConfig } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
 import { createBridge } from './cmux/bridge';
 import { keysFor } from './cmux/actions';
-import type { AgentAdapter, AgentEvent, AgentHandle, AgentTask } from './agents/adapter';
+import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import type { RunEventRow, RunRow } from './db';
 import type { JiraIssue } from '../types';
 
@@ -37,6 +39,9 @@ const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.gomaestro
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
+const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.gomaestro-runs');
+mkdirSync(RUNS_DIR, { recursive: true });
+const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const startupCfg: AppConfig = configStore.current();
 const cmux = createBridge();
@@ -49,12 +54,71 @@ function ensureCmuxWatch(): void {
   });
 }
 
-try {
-  const recovered: string[] = recoverOrphanedRuns(db, () => new Date().toISOString());
-  if (recovered.length > 0) process.stdout.write(`recovered ${recovered.length} interrupted run(s)\n`);
-} catch (err: unknown) {
-  process.stderr.write(`run recovery failed: ${String(err)}\n`);
+const host: RunHost = await pickHost({ hasCmux, wrapperPath: WRAPPER });
+process.stdout.write(`run host: ${host.kind}\n`);
+
+function adapterFor(id: string, cfg: AppConfig): AgentAdapter {
+  if (id === 'command') return commandAdapter(cfg.agentCmd ?? '');
+  if (id === 'claude-code') return claudeCodeAdapter;
+  return codexAdapter;
 }
+
+function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDeps, 'adapter' | 'genId' | 'onLaunch' | 'isStopped'> {
+  return {
+    db,
+    bus,
+    host,
+    runsDir: RUNS_DIR,
+    createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
+    createWorktreeFromBranch: (repo: string, id: string, branch: string) => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch),
+    removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
+    now: () => new Date().toISOString(),
+    jira,
+    botAccountId: cfg.botAccountId ?? undefined,
+    statusInProgress: cfg.statusInProgress,
+    statusInReview: cfg.statusInReview,
+    findPrNumber: (repo: string, branch: string) =>
+      cfg.github ? findPrNumberByBranch(cfg.github, repo, branch) : Promise.resolve(null),
+    maxAttempts: cfg.maxAttempts,
+    maxCostUsd: cfg.maxCostUsd,
+    readReview: (worktreePath: string) =>
+      readFile(join(worktreePath, '.agent-review.md'), 'utf8').catch((): null => null),
+    postReview: (repo: string, prNumber: number, reviewBody: string) => {
+      const g: AppConfig['github'] = configStore.current().github;
+      return g
+        ? ghSubmitReview(g, repo, prNumber, 'COMMENT', reviewBody)
+        : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
+    },
+    requestCopilotReview: (repo: string, prNumber: number) => {
+      const g: AppConfig['github'] = configStore.current().github;
+      return g
+        ? ghRequestCopilotReview(g, repo, prNumber)
+        : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
+    },
+  };
+}
+
+function dispatchReattach(row: RunRow): Promise<void> {
+  const cfg: AppConfig = configStore.current();
+  const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
+  const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
+  const deps: RunnerDeps = {
+    ...baseRunnerDeps(cfg, jira),
+    adapter: adapterFor(row.adapter, cfg),
+    genId: () => row.id,
+    onLaunch: (runId: string, stop: () => Promise<void>) => {
+      control.stop = stop;
+      pm.add(runId, row.repo, () => {
+        control.stopped = true;
+        void control.stop?.();
+      });
+    },
+    isStopped: () => control.stopped,
+  };
+  return reattachRun(row, deps).finally(() => pm.remove(row.id));
+}
+
+const reattachIds: string[] = db.reattachableRuns().map((r: RunRow) => r.id);
 
 try {
   const repos: string[] = [...Object.keys(startupCfg.repoProjectMap), ...(startupCfg.github?.repo ? [startupCfg.github.repo] : [])];
@@ -65,7 +129,7 @@ try {
     const removed: string[] = await sweepOrphanedWorktrees({
       listAgentWorktrees,
       remove: removeWorktreeAt,
-      isActiveRunId: (id: string) => pm.hasRun(id),
+      isActiveRunId: (id: string) => pm.hasRun(id) || reattachIds.includes(id),
       repoDirs,
     });
     if (removed.length > 0) process.stdout.write(`swept ${removed.length} orphaned worktree(s)\n`);
@@ -74,15 +138,21 @@ try {
   process.stderr.write(`worktree sweep failed: ${String(err)}\n`);
 }
 
+void recoverRuns(db, { reattach: (row: RunRow) => dispatchReattach(row) })
+  .then((result: { reattached: string[]; failed: string[] }) => {
+    if (result.reattached.length > 0) process.stdout.write(`reattached ${result.reattached.length} run(s)\n`);
+  })
+  .catch((err: unknown) => process.stderr.write(`run recovery failed: ${String(err)}\n`));
+
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
 function launch(body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }): string {
   const runId: string = randomUUID();
   const cfg: AppConfig = configStore.current();
-  const control: { stopped: boolean; handle: AgentHandle | null } = { stopped: false, handle: null };
+  const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(runId, body.repo, () => {
     control.stopped = true;
-    control.handle?.stop();
+    void control.stop?.();
   });
   const adapter: AgentAdapter =
     cfg.agentAdapter === 'command' && cfg.agentCmd
@@ -155,41 +225,14 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
       taskObj.model = body.model;
       taskObj.effort = body.effort;
       await startRun(taskObj, {
-        db,
-        bus,
+        ...baseRunnerDeps(cfg, jira),
         adapter,
-        createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
-        createWorktreeFromBranch: (repo: string, id: string, branch: string) => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch),
-        removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
-        now: () => new Date().toISOString(),
         genId: () => runId,
-        onStart: (handle: AgentHandle) => {
-          control.handle = handle;
-          if (control.stopped) handle.stop();
+        onLaunch: (_runId: string, stop: () => Promise<void>) => {
+          control.stop = stop;
+          if (control.stopped) void stop();
         },
-        jira,
-        botAccountId: cfg.botAccountId ?? undefined,
-        statusInProgress: cfg.statusInProgress,
-        statusInReview: cfg.statusInReview,
-        findPrNumber: (repo: string, branch: string) =>
-          cfg.github ? findPrNumberByBranch(cfg.github, repo, branch) : Promise.resolve(null),
-        maxAttempts: cfg.maxAttempts,
-        maxCostUsd: cfg.maxCostUsd,
         isStopped: () => control.stopped,
-        readReview: (worktreePath: string) =>
-          readFile(join(worktreePath, '.agent-review.md'), 'utf8').catch((): null => null),
-        postReview: (repo: string, prNumber: number, reviewBody: string) => {
-          const g: AppConfig['github'] = configStore.current().github;
-          return g
-            ? ghSubmitReview(g, repo, prNumber, 'COMMENT', reviewBody)
-            : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
-        },
-        requestCopilotReview: (repo: string, prNumber: number) => {
-          const g: AppConfig['github'] = configStore.current().github;
-          return g
-            ? ghRequestCopilotReview(g, repo, prNumber)
-            : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
-        },
       });
     } finally {
       pm.remove(runId);
