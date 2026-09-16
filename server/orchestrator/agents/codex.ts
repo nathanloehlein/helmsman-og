@@ -29,7 +29,11 @@ export const codexAdapter: AgentAdapter = {
   id: 'codex',
   start(task: AgentTask, workdir: string, onEvent: (e: AgentEvent) => void): AgentHandle {
     const { JIRA_API_TOKEN, JIRA_EMAIL, ...agentEnv } = process.env;
-    const child: ChildProcess = spawn('codex', codexArgs(task), { cwd: workdir, env: agentEnv });
+    const child: ChildProcess = spawn('codex', codexArgs(task), {
+      cwd: workdir,
+      env: agentEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
     let prNumber: number | undefined;
 
