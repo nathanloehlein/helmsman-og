@@ -85,6 +85,9 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('approve');
     expect(prompt).toContain('existing');
     expect(prompt).toContain('comments');
+    expect(prompt).toContain('## Do');
+    expect(prompt).toContain('## Do NOT');
+    expect(prompt).toContain('\n- ');
     expect(prompt).not.toContain('Address this review feedback');
   });
 });
