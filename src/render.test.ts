@@ -369,6 +369,22 @@ describe('renderDashboard', () => {
     expect(link).not.toBeNull();
   });
 
+  it('puts an enabled re-run button on ticket runs and a disabled one on non-ticket runs', () => {
+    const el: HTMLDivElement = root();
+    const runs: RunSummary[] = [
+      { id: 'r1', ticketId: 'ABC-2', repo: 'org/beta', status: 'succeeded', attempt: 1, prNumber: 42, startedAt: NOW.toISOString(), costUsd: 1 },
+      { id: 'r2', ticketId: 'freeform', repo: 'org/beta', status: 'failed', attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null },
+    ];
+    renderDashboard(el, snapshot(), NOW, [], [], null, runs);
+    const rows = el.querySelectorAll<HTMLElement>('.recent-run');
+    const ticketBtn = rows[0]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
+    const freeformBtn = rows[1]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
+    expect(ticketBtn.disabled).toBe(false);
+    expect(ticketBtn.dataset.ticket).toBe('ABC-2');
+    expect(ticketBtn.dataset.repo).toBe('org/beta');
+    expect(freeformBtn.disabled).toBe(true);
+  });
+
   it('shows the empty note in the recent-runs panel when there are none', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW, [], [], null, []);

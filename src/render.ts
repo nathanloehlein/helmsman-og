@@ -97,6 +97,9 @@ const ICON_REQUEST: string =
 const ICON_PENCIL: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 3.5l2 2L6 12l-2.6.6L4 10z"/></svg>'
 
+const ICON_REDO: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 3.5v3h-3"/><path d="M12.2 6.4A5 5 0 1 0 13 9.6"/></svg>'
+
 const ICON_KNOB: string =
   '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.4" fill="currentColor" stroke="none"/><path d="M10 2.8v1.8M10 15.4v1.8M2.8 10h1.8M15.4 10h1.8M4.9 4.9l1.3 1.3M13.8 13.8l1.3 1.3M15.1 4.9l-1.3 1.3M6.2 13.8l-1.3 1.3" stroke-linecap="round"/></svg>'
 
@@ -412,6 +415,10 @@ export function renderDashboard(
             run.prNumber != null
               ? `<a class="recent-run-pr" href="https://github.com/${esc(run.repo)}/pull/${run.prNumber}" target="_blank" rel="noopener">#${run.prNumber}</a>`
               : '';
+          const canRerun: boolean = TICKET_RE.test(run.ticketId);
+          const rerunBtn: string = canRerun
+            ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Re-run ${esc(run.ticketId)}" title="Re-run ${esc(run.ticketId)}">${ICON_REDO}</button>`
+            : `<button class="recent-rerun" type="button" disabled aria-label="Cannot re-run" title="Can't re-run — original task not stored for this run">${ICON_REDO}</button>`;
           return `
       <li class="lane recent-run" data-runid="${esc(run.id)}">
         <span class="lane-no mono">${laneNo(i)}</span>
@@ -421,6 +428,7 @@ export function renderDashboard(
         <span class="agent-cost mono">${costText}</span>
         ${prLink}
         <span class="chip ${statusInfo.chipClass}">${statusInfo.label}</span>
+        ${rerunBtn}
       </li>`;
         })
         .join('')
