@@ -261,7 +261,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
   const initial: RunRow = {
     id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
-    status: 'running', attempt: 1, prNumber: null, startedAt: deps.now(),
+    status: 'running', attempt: 1, prNumber: task.prNumber ?? null, startedAt: deps.now(),
     endedAt: null, costUsd: null, worktreePath: null,
     logPath, exitPath, specPath, logOffset: 0, taskJson: JSON.stringify(task),
   };

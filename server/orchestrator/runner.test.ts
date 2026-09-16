@@ -167,6 +167,17 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('persists the target prNumber on a failed review run so the recent-runs row still links the PR', async () => {
+    const db: Db = openDb(':memory:');
+    const reviewTask: AgentTask = { ticketId: 'review', title: '', repo: 'o/r', jiraBaseUrl: '', prBranch: 'fix/x', prNumber: 4310, review: true };
+    const d: RunnerDeps = { ...deps(db, jsonAdapter(), singleAttemptHost([], true), freshRunsDir()), createWorktree: async () => { throw new Error('git fail'); } };
+    const id = await startRun(reviewTask, d);
+    const row = db.getRun(id);
+    expect(row?.status).toBe('failed');
+    expect(row?.prNumber).toBe(4310);
+    db.close();
+  });
+
   it('assigns the bot and transitions to In Progress before the adapter runs', async () => {
     const db: Db = openDb(':memory:');
     const jira = fakeJira();
