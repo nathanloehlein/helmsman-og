@@ -16,6 +16,7 @@ function bug(over: Partial<BugIssue['fields']> = {}, key = 'AB-1'): BugIssue {
 
 function okDeps(over: Partial<BugsDeps> = {}): BugsDeps {
   return {
+    verifyAuth: async () => {},
     fetchApproxCount: async () => 5,
     fetchOpenBugs: async () => [bug()],
     fetchOldestOpenBug: async () => ({ key: 'AB-1', created: '2026-06-25T00:00:00Z' }),
@@ -44,6 +45,18 @@ describe('buildBugsResponse', () => {
   it('scopes to a single project when repo is given', async () => {
     const res = await buildBugsResponse(ENV, NOW, okDeps(), 'o/a');
     expect(res.cards.map((c) => c.project)).toEqual(['AIROBUILD']);
+  });
+
+  it('degrades globally (no fake zeros) when auth fails', async () => {
+    let counted = false;
+    const deps = okDeps({
+      verifyAuth: async () => { throw new Error('Jira 401'); },
+      fetchApproxCount: async () => { counted = true; return 0; },
+    });
+    const res = await buildBugsResponse(ENV, NOW, deps);
+    expect(res.degraded).toBe(true);
+    expect(res.cards).toEqual([]);
+    expect(counted).toBe(false);
   });
 
   it('degrades only the failing project card', async () => {
