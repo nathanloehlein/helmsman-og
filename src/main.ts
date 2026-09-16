@@ -1204,11 +1204,53 @@ export class DashboardView {
 
 }
 
+function armBootScreen(boot: HTMLElement): () => void {
+  const reduce: boolean = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const MIN_MS: number = reduce ? 350 : 2000;
+  const CAP_MS: number = 4200;
+  const start: number = performance.now();
+  const pctEl: HTMLElement | null = boot.querySelector<HTMLElement>('.boot-pct');
+  let dismissed: boolean = false;
+  let raf: number = 0;
+
+  const tick = (): void => {
+    if (dismissed) return;
+    const t: number = Math.min(1, (performance.now() - start) / MIN_MS);
+    if (pctEl) pctEl.textContent = String(Math.min(99, Math.round(t * 100)));
+    if (t < 1) raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+
+  const dismiss = (): void => {
+    if (dismissed) return;
+    dismissed = true;
+    cancelAnimationFrame(raf);
+    if (pctEl) pctEl.textContent = '100';
+    boot.removeEventListener('click', skip);
+    window.removeEventListener('keydown', skip);
+    boot.classList.add('boot-out');
+    window.setTimeout(() => boot.remove(), 520);
+  };
+  function skip(): void {
+    if (performance.now() - start > 400) dismiss();
+  }
+  boot.addEventListener('click', skip);
+  window.addEventListener('keydown', skip);
+  window.setTimeout(dismiss, CAP_MS);
+
+  return (): void => {
+    const elapsed: number = performance.now() - start;
+    window.setTimeout(dismiss, Math.max(0, MIN_MS - elapsed));
+  };
+}
+
 export function bootstrap(): void {
   const root: HTMLDivElement | null = document.querySelector<HTMLDivElement>('#app');
   if (!root) throw new Error('missing #app root element');
   const view: DashboardView = new DashboardView(root);
-  void view.refresh();
+  const boot: HTMLElement | null = document.getElementById('boot');
+  const finishBoot: () => void = boot ? armBootScreen(boot) : (): void => {};
+  void view.refresh().then(finishBoot, finishBoot);
   setInterval(() => void view.refresh(), POLL_MS);
 }
 
