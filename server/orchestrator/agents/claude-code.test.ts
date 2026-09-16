@@ -83,6 +83,8 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('push');
     expect(prompt).toContain('merge');
     expect(prompt).toContain('approve');
+    expect(prompt).toContain('existing');
+    expect(prompt).toContain('comments');
     expect(prompt).not.toContain('Address this review feedback');
   });
 });
