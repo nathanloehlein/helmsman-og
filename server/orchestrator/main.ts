@@ -254,7 +254,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       req.on('close', () => cmuxClients.delete(res));
       return;
     }
-    const body: unknown = req.method === 'POST' ? await readBody(req) : null;
+    const hasBody: boolean = req.method === 'POST' || req.method === 'PUT';
+    const body: unknown = hasBody ? await readBody(req) : null;
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
       dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       triage: (repo) => buildTriageResponse(configStore.effectiveEnv(), undefined, repo),
