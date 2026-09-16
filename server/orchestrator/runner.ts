@@ -58,6 +58,37 @@ async function markInReview(
   }
 }
 
+async function postReviewDerivingStatusFromReviewNotExitCode(
+  task: AgentTask,
+  worktreePath: string,
+  prNumber: number | null,
+  stopped: boolean,
+  deps: RunnerDeps,
+  onEvent: (e: AgentEvent) => void,
+): Promise<RunStatus> {
+  if (stopped) return 'stopped';
+  if (prNumber == null) {
+    onEvent({ kind: 'error', text: 'code review: no PR number to post the review to' });
+    return 'failed';
+  }
+  if (!deps.readReview || !deps.postReview) {
+    onEvent({ kind: 'error', text: 'code review: review reading/posting not configured' });
+    return 'failed';
+  }
+  const body: string | null = await deps.readReview(worktreePath);
+  if (!body || !body.trim()) {
+    onEvent({ kind: 'error', text: 'code review failed: agent produced no .agent-review.md — nothing to post' });
+    return 'failed';
+  }
+  const r: { ok: true } | { ok: false; error: string } = await deps.postReview(task.repo, prNumber, body);
+  if (!r.ok) {
+    onEvent({ kind: 'error', text: `code review failed: posting comment on PR #${prNumber} failed: ${r.error}` });
+    return 'failed';
+  }
+  onEvent({ kind: 'log', text: `posted code-review comment on PR #${prNumber}` });
+  return 'succeeded';
+}
+
 export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<string> {
   const runId: string = deps.genId();
   const maxAttempts: number = Math.max(1, deps.maxAttempts ?? 1);
@@ -123,38 +154,25 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       }
     }
 
-    const status: RunStatus = stopped ? 'stopped' : result.ok ? 'succeeded' : 'failed';
-    deps.db.updateRun(runId, {
-      status,
-      prNumber,
-      costUsd: totalCost,
-      endedAt: deps.now(),
-    });
+    let status: RunStatus = stopped ? 'stopped' : result.ok ? 'succeeded' : 'failed';
 
-    if (result.ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
-      await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
-    }
+    if (task.review) {
+      status = await postReviewDerivingStatusFromReviewNotExitCode(task, worktree.path, prNumber, stopped, deps, onEvent);
+      deps.db.updateRun(runId, { status, prNumber, costUsd: totalCost, endedAt: deps.now() });
+    } else {
+      deps.db.updateRun(runId, { status, prNumber, costUsd: totalCost, endedAt: deps.now() });
 
-    if (result.ok && prNumber != null && !task.prBranch && !task.review && deps.requestCopilotReview) {
-      const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
-      if (r.ok) {
-        onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
-      } else {
-        onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
+      if (result.ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
+        await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
       }
-    }
 
-    if (task.review && result.ok && prNumber != null && deps.readReview && deps.postReview) {
-      const body: string | null = await deps.readReview(worktree.path);
-      if (body && body.trim()) {
-        const r: { ok: true } | { ok: false; error: string } = await deps.postReview(task.repo, prNumber, body);
+      if (result.ok && prNumber != null && !task.prBranch && deps.requestCopilotReview) {
+        const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
         if (r.ok) {
-          onEvent({ kind: 'log', text: `posted code-review comment on PR #${prNumber}` });
+          onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
         } else {
-          onEvent({ kind: 'log', text: `posting code-review comment failed (non-fatal): ${r.error}` });
+          onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
         }
-      } else {
-        onEvent({ kind: 'log', text: 'agent produced no .agent-review.md; nothing posted' });
       }
     }
   } catch (err) {
