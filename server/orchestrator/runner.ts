@@ -339,7 +339,6 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
 export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> {
   const runId: string = row.id;
-  const task: AgentTask = JSON.parse(row.taskJson ?? '{}') as AgentTask;
   const logPath: string = row.logPath ?? join(deps.runsDir, `${runId}.log`);
   const exitPath: string = row.exitPath ?? join(deps.runsDir, `${runId}.exit`);
   const worktreePath: string | null = row.worktreePath ?? null;
@@ -349,18 +348,19 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
     deps.bus.publish(runId, e);
   };
 
-  let totalCost: number | null = row.costUsd ?? null;
-  let prNumber: number | null = row.prNumber ?? null;
-
-  const consume = (line: string): void => {
-    const e: AgentEvent | null = deps.adapter.parseLine(line);
-    if (!e) return;
-    if (e.costUsd != null) totalCost = (totalCost ?? 0) + e.costUsd;
-    if (e.prNumber != null) prNumber = e.prNumber;
-    onEvent(e);
-  };
-
   try {
+    const task: AgentTask = JSON.parse(row.taskJson ?? '{}') as AgentTask;
+    let totalCost: number | null = row.costUsd ?? null;
+    let prNumber: number | null = row.prNumber ?? null;
+
+    const consume = (line: string): void => {
+      const e: AgentEvent | null = deps.adapter.parseLine(line);
+      if (!e) return;
+      if (e.costUsd != null) totalCost = (totalCost ?? 0) + e.costUsd;
+      if (e.prNumber != null) prNumber = e.prNumber;
+      onEvent(e);
+    };
+
     const existingCode: number | null = readExitCode(exitPath);
     if (existingCode != null) {
       pumpRemaining(logPath, row.logOffset ?? 0, consume);
@@ -386,7 +386,12 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
 
     onEvent({ kind: 'error', text: 'run interrupted: host gone' });
     deps.db.updateRun(runId, { status: 'failed', endedAt: deps.now() });
+  } catch (err) {
+    const text: string = err instanceof Error ? err.message : String(err);
+    deps.db.appendEvent(runId, 'error', text, deps.now());
+    deps.bus.publish(runId, { kind: 'error', text });
+    deps.db.updateRun(runId, { status: 'failed', endedAt: deps.now() });
   } finally {
-    await completeRun(runId, task.repo, worktreePath, deps);
+    await completeRun(runId, row.repo, worktreePath, deps);
   }
 }
