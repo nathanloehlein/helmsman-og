@@ -366,6 +366,7 @@ html, body {
 .chip-review { color: var(--review); border-color: var(--review); }
 .chip-blocked { border-color: var(--bad); color: var(--bad); }
 .chip-queued { color: var(--text-dim); border-color: var(--line-strong); }
+.chip-closed { color: var(--text-faint); border-color: var(--line-faint); }
 .pri-chip { padding: 1px 5px; }
 .pri-p1 { border-color: var(--bad); color: var(--bad); }
 .pri-p2 { border-color: var(--accent); }

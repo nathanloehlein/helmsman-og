@@ -67,4 +67,25 @@ describe('codexAdapter.start', () => {
       process.env.PATH = originalPath;
     }
   });
+
+  it('does not block on stdin (codex exec reads stdin; the child must get EOF, not an open pipe)', async () => {
+    const binDir: string = mkdtempSync(join(tmpdir(), 'codex-bin-'));
+    const bin: string = join(binDir, 'codex');
+    writeFileSync(
+      bin,
+      '#!/usr/bin/env node\nprocess.stdin.on("data", () => {});\nprocess.stdin.on("end", () => { console.log("opened https://github.com/o/r/pull/7"); process.exit(0); });\nprocess.stdin.resume();\n',
+    );
+    chmodSync(bin, 0o755);
+
+    const originalPath: string | undefined = process.env.PATH;
+    process.env.PATH = `${binDir}${originalPath ? `:${originalPath}` : ''}`;
+    try {
+      const handle = codexAdapter.start(task(), process.cwd(), () => {});
+      const result = await handle.exit;
+      expect(result.ok).toBe(true);
+      expect(result.prNumber).toBe(7);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  }, 5000);
 });

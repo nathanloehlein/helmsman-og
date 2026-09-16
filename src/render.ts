@@ -42,6 +42,7 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
   'in-review': { label: 'In review', chipClass: 'chip-review' },
   merged: { label: 'Merged', chipClass: 'chip-done' },
   'changes-requested': { label: 'Changes requested', chipClass: 'chip-blocked' },
+  closed: { label: 'Closed', chipClass: 'chip-closed' },
 }
 
 function reviewChip(decision: string): { cls: string; label: string } {

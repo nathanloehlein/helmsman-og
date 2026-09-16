@@ -27,6 +27,7 @@ export interface GithubPr {
   title: string;
   headRef: string;
   authorLogin: string;
+  state: 'open' | 'closed';
   mergedAt: string | null;
   createdAt: string;
   reviewDecision: PrReviewDecision;
