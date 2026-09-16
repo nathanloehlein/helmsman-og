@@ -1,6 +1,6 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView } from './render';
+import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView, renderConfigView } from './render';
 import type { RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import { fetchTriage, type TriageGroupsView } from './data/triage';
@@ -98,7 +98,7 @@ export class DashboardView {
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
-  private view: 'dashboard' | 'cmux' | 'triage' | 'bugs' = 'dashboard';
+  private view: 'dashboard' | 'cmux' | 'triage' | 'bugs' | 'config' = 'dashboard';
   private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
   private triageDegraded: boolean = false;
   private bugsResponse: BugsResponse | null = null;
@@ -156,6 +156,10 @@ export class DashboardView {
       this.paintBugs();
       return;
     }
+    if (this.view === 'config') {
+      this.paintConfig();
+      return;
+    }
     if (!this.snapshot) return;
     const preBody: HTMLElement | null =
       this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
@@ -170,7 +174,6 @@ export class DashboardView {
       this.runs,
       this.autoClaimRepos,
       this.caps,
-      this.uiConfig,
       this.themeId,
       this.rackLayout,
       this.jiraBaseUrl,
@@ -311,6 +314,21 @@ export class DashboardView {
   private async enterBugsView(): Promise<void> {
     this.view = 'bugs';
     await this.loadBugs();
+    this.paint();
+  }
+
+  private paintConfig(): void {
+    this.root.innerHTML = renderConfigView(this.uiConfig, {
+      repos: this.repos,
+      selectedRepo: this.selectedRepo,
+      themeId: this.themeId,
+    });
+    this.bindHeadControls();
+  }
+
+  private async enterConfigView(): Promise<void> {
+    this.view = 'config';
+    this.uiConfig = await getConfig();
     this.paint();
   }
 
@@ -684,6 +702,7 @@ export class DashboardView {
       if (targetView === 'cmux') void this.enterCmuxView();
       else if (targetView === 'triage') void this.enterTriageView();
       else if (targetView === 'bugs') void this.enterBugsView();
+      else if (targetView === 'config') void this.enterConfigView();
       else this.leaveCmuxView();
       return;
     }
@@ -1222,6 +1241,10 @@ export class DashboardView {
         return;
       }
       await this.refresh();
+      if (this.view === 'config') {
+        this.uiConfig = await getConfig();
+        this.paint();
+      }
     } finally {
       btn.disabled = false;
     }

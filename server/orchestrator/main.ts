@@ -21,7 +21,7 @@ import { createWorktree, createWorktreeFromBranch, discoverRepoDirs, listAgentWo
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
 import { AutoClaimScheduler } from './scheduler';
-import { ConfigStore, publicConfig } from './config-store';
+import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
 import { createBridge } from './cmux/bridge';
 import { keysFor } from './cmux/actions';
@@ -270,10 +270,15 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         const c: AppConfig = configStore.current();
         return { maxAttempts: c.maxAttempts, maxCostUsd: c.maxCostUsd };
       },
-      getConfig: () => ({ config: publicConfig(configStore.current()), overridden: Object.keys(configStore.overrides()) }),
+      getConfig: () => ({
+        config: publicConfig(configStore.current()),
+        overridden: Object.keys(configStore.overrides()),
+        jiraTokenSet: configStore.hasJiraToken(),
+      }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {
-          configStore.setOverride(key, value, () => new Date().toISOString());
+          if (WRITABLE_SECRET_KEYS.includes(key)) configStore.setSecret(key, value, () => new Date().toISOString());
+          else configStore.setOverride(key, value, () => new Date().toISOString());
           return { ok: true as const };
         } catch (err: unknown) {
           return { ok: false as const, error: err instanceof Error ? err.message : 'invalid config key' };

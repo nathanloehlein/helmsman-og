@@ -408,6 +408,9 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="config"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.config-row[data-key="AGENT_ADAPTER"]')).not.toBeNull());
+
     const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(row).not.toBeNull();
     const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
@@ -463,6 +466,10 @@ describe('DashboardView drawer survives polling', () => {
     await view.refresh();
     expect(configGetCalls).toBe(1);
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="config"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.config-row[data-key="AGENT_ADAPTER"]')).not.toBeNull());
+    const afterEnter: number = configGetCalls;
+
     const row: HTMLElement | null = root.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(row).not.toBeNull();
     const input: HTMLInputElement = row!.querySelector<HTMLInputElement>('.config-input')!;
@@ -472,7 +479,7 @@ describe('DashboardView drawer survives polling', () => {
     await vi.waitFor(() => {
       expect(row!.querySelector<HTMLElement>('.config-error')?.textContent).toBe('invalid adapter');
     });
-    expect(configGetCalls).toBe(1);
+    expect(configGetCalls).toBe(afterEnter);
   });
 
   it('posts to the auto-claim endpoint when the toggle is switched off', async () => {
@@ -1508,13 +1515,13 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
-    const configPlate = (): HTMLElement | null => root.querySelector<HTMLElement>('.faceplate[data-panel="config"]');
-    expect(configPlate()!.classList.contains('is-collapsed')).toBe(false);
-    configPlate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
-    expect(configPlate()!.classList.contains('is-collapsed')).toBe(true);
+    const plate = (): HTMLElement | null => root.querySelector<HTMLElement>('.faceplate[data-panel="shipped"]');
+    expect(plate()!.classList.contains('is-collapsed')).toBe(false);
+    plate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
+    expect(plate()!.classList.contains('is-collapsed')).toBe(true);
     expect(localStorage.getItem('gomaestro.rackLayout')).toContain('"collapsed":true');
-    configPlate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
-    expect(configPlate()!.classList.contains('is-collapsed')).toBe(false);
+    plate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
+    expect(plate()!.classList.contains('is-collapsed')).toBe(false);
   });
 
   it('re-runs a recent ticket run: launches mode=ticket with the run ticket/repo', async () => {

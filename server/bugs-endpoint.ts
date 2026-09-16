@@ -1,18 +1,19 @@
 import type { AppConfig, JiraConfig } from './config';
 import { loadConfig, buildCreatedSinceJql, buildResolvedSinceJql, buildPastSlaJql, buildOpenBugsJql } from './config';
 import type { BugIssue } from './jira';
-import { fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations } from './jira';
+import { verifyJiraAuth, fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations } from './jira';
 import { assembleCard, slaLabel } from '../src/logic/bugMetrics';
 import type { BugCard, BugRow, BugsResponse } from '../src/types';
 
 export interface BugsDeps {
+  verifyAuth: (jira: JiraConfig) => Promise<void>;
   fetchApproxCount: (jira: JiraConfig, jql: string) => Promise<number>;
   fetchOpenBugs: (jira: JiraConfig, project: string) => Promise<BugIssue[]>;
   fetchOldestOpenBug: (jira: JiraConfig, project: string) => Promise<{ key: string; created: string } | null>;
   fetchResolvedDurations: (jira: JiraConfig, project: string, days: number) => Promise<number[]>;
 }
 
-const DEFAULT_DEPS: BugsDeps = { fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations };
+const DEFAULT_DEPS: BugsDeps = { verifyAuth: verifyJiraAuth, fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations };
 
 function toRow(issue: BugIssue, now: Date): BugRow {
   return {
@@ -72,6 +73,11 @@ export async function buildBugsResponse(
   const previousWindow: string = windowLabel(now, 13, 7);
 
   if (!config.jira) {
+    return { cards: [], degraded: true, generatedAt, latestWindow, previousWindow };
+  }
+  try {
+    await deps.verifyAuth(config.jira);
+  } catch {
     return { cards: [], degraded: true, generatedAt, latestWindow, previousWindow };
   }
   const jiraBaseUrl: string = config.jira.baseUrl;

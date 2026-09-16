@@ -36,7 +36,7 @@ const deps: RouterDeps = {
   setAutoClaim: (_repo: string, _enabled: boolean) => {},
   autoClaimRepos: () => ['o/r'],
   caps: () => ({ maxAttempts: 3, maxCostUsd: 5 }),
-  getConfig: () => ({ config: { agentAdapter: 'claude-code', maxAttempts: 1 }, overridden: ['AGENT_MAX_ATTEMPTS'] }),
+  getConfig: () => ({ config: { agentAdapter: 'claude-code', maxAttempts: 1 }, overridden: ['AGENT_MAX_ATTEMPTS'], jiraTokenSet: true }),
   setConfig: (_key: string, _value: string) => ({ ok: true }),
   prStatus: async (_repo: string, _prNumber: number) => samplePrStatus,
   submitReview: async (_repo: string, _prNumber: number, _event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', _body: string) => ({ ok: true as const }),
@@ -246,6 +246,7 @@ describe('config routes', () => {
     expect(r?.json).toEqual({
       config: { agentAdapter: 'claude-code', maxAttempts: 1 },
       overridden: ['AGENT_MAX_ATTEMPTS'],
+      jiraTokenSet: true,
     });
     const serialized = JSON.stringify(r?.json);
     expect(serialized).not.toContain('JIRA_API_TOKEN');

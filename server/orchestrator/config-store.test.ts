@@ -29,6 +29,38 @@ describe('ConfigStore', () => {
     expect(() => store.setOverride('JIRA_API_TOKEN', 'x', now)).toThrow();
   });
 
+  it('setSecret writes JIRA_API_TOKEN live without exposing it in publicConfig', () => {
+    db = openDb(':memory:');
+    const store: ConfigStore = new ConfigStore(
+      { JIRA_BASE_URL: 'https://x.atlassian.net', JIRA_EMAIL: 'e@x', JIRA_API_TOKEN: 'old', JIRA_PROJECT: 'AB' },
+      db,
+    );
+    const now: () => string = () => '2026-08-24T00:00:00.000Z';
+    store.setSecret('JIRA_API_TOKEN', 'fresh-token', now);
+    expect(store.current().jira?.apiToken).toBe('fresh-token');
+    expect(publicConfig(store.current())).not.toHaveProperty('JIRA_API_TOKEN');
+    expect(Object.values(publicConfig(store.current()))).not.toContain('fresh-token');
+  });
+
+  it('setSecret refuses non-writable secrets and non-secret keys', () => {
+    db = openDb(':memory:');
+    const store: ConfigStore = new ConfigStore({}, db);
+    const now: () => string = () => '2026-08-24T00:00:00.000Z';
+    expect(() => store.setSecret('GITHUB_TOKEN', 'x', now)).toThrow();
+    expect(() => store.setSecret('JIRA_EMAIL', 'x', now)).toThrow();
+    expect(() => store.setSecret('AGENT_MAX_ATTEMPTS', '3', now)).toThrow();
+  });
+
+  it('reports whether a Jira token is present without revealing it', () => {
+    db = openDb(':memory:');
+    const store: ConfigStore = new ConfigStore(
+      { JIRA_BASE_URL: 'https://x.atlassian.net', JIRA_EMAIL: 'e@x', JIRA_API_TOKEN: 't', JIRA_PROJECT: 'AB' },
+      db,
+    );
+    expect(store.hasJiraToken()).toBe(true);
+    expect(new ConfigStore({}, db).hasJiraToken()).toBe(false);
+  });
+
   it('throws when setting a key that is not editable', () => {
     db = openDb(':memory:');
     const store: ConfigStore = new ConfigStore({}, db);
