@@ -976,4 +976,21 @@ describe('renderPrView + renderPrDiff', () => {
     expect(mount(renderPrPanel(pr, false, true)).querySelector('.pr-open-in-tab')).not.toBeNull();
     expect(mount(renderPrPanel(pr, false, false)).querySelector('.pr-open-in-tab')).toBeNull();
   });
+
+  it('marks the PR panel decision chip when changes are requested', () => {
+    const el = mount(renderPrPanel({ ...pr, reviewDecision: 'CHANGES_REQUESTED' }, false));
+    const chip = el.querySelector('.pr-decision-chip');
+    expect(chip).not.toBeNull();
+    expect(chip!.classList.contains('chip-blocked')).toBe(true);
+    expect(chip!.textContent).toContain('Changes requested');
+  });
+
+  it('marks the PR panel decision chip as approved / review', () => {
+    const approved = mount(renderPrPanel({ ...pr, reviewDecision: 'APPROVED' }, false)).querySelector('.pr-decision-chip');
+    expect(approved!.classList.contains('chip-done')).toBe(true);
+    expect(approved!.textContent).toContain('Approved');
+    const review = mount(renderPrPanel({ ...pr, reviewDecision: 'REVIEW_REQUIRED' }, false)).querySelector('.pr-decision-chip');
+    expect(review!.classList.contains('chip-review')).toBe(true);
+    expect(review!.textContent).toContain('Review required');
+  });
 });
