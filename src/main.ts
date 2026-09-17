@@ -1,7 +1,7 @@
 import './style.css';
 import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView, renderConfigView } from './render';
-import type { RunTabView } from './render';
+import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView, renderConfigView, renderPrView } from './render';
+import type { RunTabView, PrViewState } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import { fetchTriage, type TriageGroupsView } from './data/triage';
 import { fetchBugs } from './data/bugs';
@@ -22,7 +22,7 @@ import {
   type RunSummary,
 } from './data/agents';
 import { getConfig, setConfig, type UiConfig } from './data/config';
-import { getPrStatus, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
+import { getPrStatus, getPrDiff, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
 import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
 import { mapKeyEvent, type CmuxKeyIntent } from './logic/cmuxKeys';
 import { applyTheme, loadThemeId, saveThemeId } from './data/themes';
@@ -98,7 +98,8 @@ export class DashboardView {
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
-  private view: 'dashboard' | 'cmux' | 'triage' | 'bugs' | 'config' = 'dashboard';
+  private view: 'dashboard' | 'cmux' | 'triage' | 'bugs' | 'prs' | 'config' = 'dashboard';
+  private prView: PrViewState = { repo: null, number: null, pr: null, diff: null, loading: false };
   private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
   private triageDegraded: boolean = false;
   private bugsResponse: BugsResponse | null = null;
@@ -158,6 +159,10 @@ export class DashboardView {
     }
     if (this.view === 'config') {
       this.paintConfig();
+      return;
+    }
+    if (this.view === 'prs') {
+      this.paintPrView();
       return;
     }
     if (!this.snapshot) return;
@@ -324,6 +329,16 @@ export class DashboardView {
       themeId: this.themeId,
     });
     this.bindHeadControls();
+  }
+
+  private paintPrView(): void {
+    this.root.innerHTML = renderPrView(this.prView, {
+      repos: this.repos,
+      selectedRepo: this.selectedRepo,
+      themeId: this.themeId,
+    });
+    this.bindHeadControls();
+    this.rehomeRunDrawer();
   }
 
   private async enterConfigView(): Promise<void> {
@@ -702,6 +717,7 @@ export class DashboardView {
       if (targetView === 'cmux') void this.enterCmuxView();
       else if (targetView === 'triage') void this.enterTriageView();
       else if (targetView === 'bugs') void this.enterBugsView();
+      else if (targetView === 'prs') void this.enterPrView();
       else if (targetView === 'config') void this.enterConfigView();
       else this.leaveCmuxView();
       return;
@@ -840,6 +856,14 @@ export class DashboardView {
       return;
     }
 
+    const openInTab: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-open-in-tab');
+    if (openInTab) {
+      const repo: string | undefined = openInTab.dataset.repo;
+      const number: number = Number(openInTab.dataset.number);
+      if (repo && Number.isFinite(number)) void this.enterPrView(repo, number);
+      return;
+    }
+
     const recentRerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.recent-rerun');
     if (recentRerunBtn) {
       void this.handleRecentRerun(recentRerunBtn);
@@ -932,30 +956,38 @@ export class DashboardView {
 
   private async handlePrLookup(): Promise<void> {
     const input: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.pr-lookup-input');
-    const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
-    if (!input || !result) return;
+    if (!input) return;
     const parsed: { repo: string; number: number } | null = parsePrUrl(input.value);
+    const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
     if (!parsed) {
-      result.innerHTML = '<div class="pr-panel empty-note">Enter a PR URL or owner/repo#number.</div>';
+      if (result) result.innerHTML = '<div class="pr-panel empty-note">Enter a PR URL or owner/repo#number.</div>';
       return;
     }
-    await this.loadPr(parsed.repo, parsed.number);
+    await this.loadPrView(parsed.repo, parsed.number);
   }
 
-  private async loadPr(repo: string, number: number): Promise<void> {
-    const input: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.pr-lookup-input');
-    const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
-    if (input) input.value = `${repo}#${number}`;
-    if (!result) return;
-    const pr: PrStatusView | null = await getPrStatus(repo, number);
-    result.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+  private async loadPrView(repo: string, number: number): Promise<void> {
+    this.prView = { repo, number, pr: null, diff: null, loading: true };
+    if (this.view === 'prs') this.paint();
+    const [pr, diff] = await Promise.all([getPrStatus(repo, number), getPrDiff(repo, number)]);
+    this.prView = { repo, number, pr, diff, loading: false };
+    if (this.view === 'prs') this.paint();
+  }
+
+  private async enterPrView(repo?: string, number?: number): Promise<void> {
+    this.view = 'prs';
+    if (repo && Number.isFinite(number)) {
+      await this.loadPrView(repo, number as number);
+    } else {
+      this.paint();
+    }
   }
 
   private handleMyPrClick(row: HTMLElement): void {
     const repo: string | undefined = row.dataset.repo;
     const number: number = Number(row.dataset.number);
     if (!repo || !Number.isFinite(number)) return;
-    void this.loadPr(repo, number);
+    void this.enterPrView(repo, number);
   }
 
   private async handleStopClick(btn: HTMLButtonElement): Promise<void> {
@@ -1076,7 +1108,7 @@ export class DashboardView {
     const pr: PrStatusView | null = await getPrStatus(repo, prNumber);
     if (runId !== this.activeTabId) return;
     const prEl: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
-    if (prEl) prEl.innerHTML = renderPrPanel(pr, this.repos.includes(repo));
+    if (prEl) prEl.innerHTML = renderPrPanel(pr, this.repos.includes(repo), true);
   }
 
   private rehomeRunDrawer(): void {

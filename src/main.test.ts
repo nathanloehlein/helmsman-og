@@ -549,6 +549,8 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-input')).not.toBeNull());
     const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
     const goBtn: HTMLButtonElement | null = root.querySelector<HTMLButtonElement>('.pr-lookup-go');
     expect(input).not.toBeNull();
@@ -607,6 +609,8 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-input')).not.toBeNull());
     const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
     const goBtn: HTMLButtonElement | null = root.querySelector<HTMLButtonElement>('.pr-lookup-go');
     input!.value = 'org/alpha#42';
@@ -658,6 +662,8 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-input')).not.toBeNull());
     const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
     input!.value = 'o/r#7';
     root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
@@ -730,6 +736,8 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-input')).not.toBeNull());
     const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
     input!.value = 'o/r#7';
     root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
@@ -787,6 +795,8 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-input')).not.toBeNull());
     const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
     input!.value = 'https://github.com/org/beta/pull/99';
     root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
@@ -826,6 +836,8 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    root.querySelector<HTMLButtonElement>('.page-tab[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-input')).not.toBeNull());
     const input: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.pr-lookup-input');
     input!.value = 'org/beta#5';
     root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();

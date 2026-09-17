@@ -38,6 +38,14 @@ export interface OpenPr {
   createdAt: string;
 }
 
+export interface PrFileDiff {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch: string | null;
+}
+
 export interface ActivityEvent {
   time: string;
   text: string;

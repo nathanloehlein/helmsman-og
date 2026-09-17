@@ -21,7 +21,8 @@ import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
 import { createWorktree, createWorktreeFromBranch, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
-import { findPrNumberByBranch, fetchPrStatus, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
+import { findPrNumberByBranch, fetchPrStatus, fetchPrDiff, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
+import type { PrFileDiff } from '../../src/types';
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
@@ -332,6 +333,10 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       prStatus: (repo: string, prNumber: number): Promise<PrStatus | null> => {
         const g: AppConfig['github'] = configStore.current().github;
         return g ? fetchPrStatus(g, repo, prNumber) : Promise.resolve(null);
+      },
+      prDiff: (repo: string, prNumber: number): Promise<PrFileDiff[] | null> => {
+        const g: AppConfig['github'] = configStore.current().github;
+        return g ? fetchPrDiff(g, repo, prNumber) : Promise.resolve(null);
       },
       submitReview: (
         repo: string,
