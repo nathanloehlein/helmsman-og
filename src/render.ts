@@ -591,6 +591,14 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
     `<span class="${ciClass}">${tally(ICON_CHECK, checks.passed, 'Checks passed')}${tally(ICON_X_MARK, checks.failed, 'Checks failed')}${tally(ICON_DOTS, checks.pending, 'Checks pending')}</span>`;
   const reviewersBadge: string =
     `<span class="pr-reviewers mono" aria-label="Reviewers requested ${reviews.requested}, approved ${reviews.approved}, changes requested ${reviews.changesRequested}, commented ${reviews.commented}">${tally(ICON_REQUEST, reviews.requested, 'Requested')}${tally(ICON_CHECK, reviews.approved, 'Approved')}${tally(ICON_X_MARK, reviews.changesRequested, 'Changes requested')}${tally(ICON_PENCIL, reviews.commented, 'Commented')}</span>`;
+  const decisionLabel: string = pr.reviewDecision === 'CHANGES_REQUESTED'
+    ? 'Changes requested'
+    : pr.reviewDecision === 'APPROVED'
+      ? 'Approved'
+      : pr.reviewDecision === 'REVIEW_REQUIRED'
+        ? 'Review required'
+        : pr.reviewDecision;
+  const decisionChip: { cls: string; label: string } = { cls: reviewChip(pr.reviewDecision).cls, label: decisionLabel };
   const rerun: string = canRerun
     ? `<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea>${tuningSelects('pr')}<button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>`
     : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
@@ -599,7 +607,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
       <div class="pr-panel-head">
         <span class="chip ${stateChipClass}">${stateLabel}</span>
         ${ciBadge}
-        <span class="chip chip-review">${esc(pr.reviewDecision)}</span>
+        <span class="chip pr-decision-chip ${decisionChip.cls}">${esc(decisionChip.label)}</span>
         ${reviewersBadge}
         <span class="pr-branch mono">${esc(pr.headRefName)}</span>
         <span class="pr-comments mono">${pr.comments} comments</span>
