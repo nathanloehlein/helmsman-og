@@ -646,6 +646,7 @@ select { text-transform: none; }
 .triage-list { display: flex; flex-direction: column; }
 .triage-row { min-width: 0; flex-wrap: wrap; }
 .triage-row .queue-title { order: 1; flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; }
+.underway-list .launch-btn, .triage-group[data-triage-column="mine"] .launch-btn { margin-inline-start: auto; }
 .triage-hint { padding: 4px 14px 0; font-size: 11px; color: var(--text-faint); }
 .cmux-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; flex: 1; min-height: 0; }
 .cmux-list { display: flex; flex-direction: column; padding: 6px 0; overflow-y: auto; }
