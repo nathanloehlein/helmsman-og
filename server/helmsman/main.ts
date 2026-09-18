@@ -16,7 +16,7 @@ import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
-import { hasCmux, pickHost, type RunHost } from './run-host';
+import { hasCmux, hasWezTerm, pickHost, type HostRef, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
@@ -75,8 +75,10 @@ function ensureCmuxWatch(): void {
   });
 }
 
-const preferCmux: boolean = process.env.RUN_HOST === 'cmux';
-const host: RunHost = await pickHost({ hasCmux, wrapperPath: WRAPPER, preferCmux });
+// RUN_HOST opts a run into a visible terminal instead of a detached process.
+const RUN_HOSTS: ReadonlyArray<HostRef['kind']> = ['cmux', 'wezterm', 'detached'];
+const runHost = RUN_HOSTS.find((k) => k === process.env.RUN_HOST) ?? null;
+const host: RunHost = await pickHost({ hasCmux, hasWezTerm, wrapperPath: WRAPPER, prefer: runHost });
 process.stdout.write(`run host: ${host.kind}\n`);
 
 function adapterFor(id: string, cfg: AppConfig): AgentAdapter {

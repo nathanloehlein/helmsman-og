@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { detachedHost, cmuxHost, pickHost, parseCmuxWorkspaceRef, type LaunchSpec } from './run-host';
+import { detachedHost, cmuxHost, weztermHost, pickHost, parseCmuxWorkspaceRef, parseWezPaneId, type LaunchSpec } from './run-host';
 
 const WRAPPER = join(__dirname, 'run-wrapper.mjs');
 
@@ -77,16 +77,83 @@ describe('cmuxHost argv', () => {
   });
 });
 
+describe('parseWezPaneId', () => {
+  it('parses the pane id wezterm cli spawn prints', () => {
+    expect(parseWezPaneId('7\n')).toBe('7');
+    expect(parseWezPaneId('0')).toBe('0');
+  });
+
+  it('throws when no pane id is present', () => {
+    expect(() => parseWezPaneId('some unrelated output')).toThrow();
+  });
+});
+
+describe('weztermHost argv', () => {
+  it('spawns the wrapper into its own window and workspace, no untrusted shell data', async () => {
+    const calls: string[][] = [];
+    const run = async (argv: string[]) => { calls.push(argv); return { stdout: '7\n', code: 0 }; };
+    const dir = mkdtempSync(join(tmpdir(), 'host-'));
+    const ref = await weztermHost(WRAPPER, run).launch(spec(dir, 'codex', ['exec', 'title with spaces']));
+    expect(ref).toEqual({ kind: 'wezterm', paneId: '7' });
+    const argv = calls[0]!;
+    expect(argv.slice(0, 3)).toEqual(['wezterm', 'cli', 'spawn']);
+    // --workspace is only honoured alongside --new-window
+    expect(argv).toContain('--new-window');
+    expect(argv[argv.indexOf('--workspace') + 1]).toBe('helmsman-runs');
+    // the program is passed as argv after --, never as a shell string
+    expect(argv.slice(argv.indexOf('--'))).toEqual(['--', 'node', WRAPPER, join(dir, 'r1.json')]);
+    expect(argv.join(' ')).not.toContain('title with spaces');
+  });
+
+  it('reports liveness by looking for the pane in the list', async () => {
+    const run = async () => ({ stdout: JSON.stringify([{ pane_id: 7 }, { pane_id: 2 }]), code: 0 });
+    const host = weztermHost(WRAPPER, run);
+    expect(await host.isAlive({ kind: 'wezterm', paneId: '7' })).toBe(true);
+    expect(await host.isAlive({ kind: 'wezterm', paneId: '99' })).toBe(false);
+  });
+
+  it('stops via kill-pane', async () => {
+    const calls: string[][] = [];
+    const run = async (argv: string[]) => { calls.push(argv); return { stdout: '', code: 0 }; };
+    await weztermHost(WRAPPER, run).stop({ kind: 'wezterm', paneId: '7' });
+    expect(calls[0]).toEqual(['wezterm', 'cli', 'kill-pane', '--pane-id', '7']);
+  });
+
+  it('swallows errors from stop', async () => {
+    const run = async () => { throw new Error('socket down'); };
+    await expect(weztermHost(WRAPPER, run).stop({ kind: 'wezterm', paneId: '7' })).resolves.toBeUndefined();
+  });
+
+  it('ignores a ref belonging to another host', async () => {
+    const run = async () => { throw new Error('should not run'); };
+    expect(await weztermHost(WRAPPER, run).isAlive({ kind: 'detached', pid: 1 })).toBe(false);
+  });
+});
+
 describe('pickHost', () => {
+  const both = { hasCmux: async () => true, hasWezTerm: async () => true, wrapperPath: WRAPPER };
+
   it('uses cmux only when explicitly opted in and cmux is present', async () => {
-    expect((await pickHost({ preferCmux: true, hasCmux: async () => true, wrapperPath: WRAPPER })).kind).toBe('cmux');
+    expect((await pickHost({ ...both, prefer: 'cmux' })).kind).toBe('cmux');
   });
 
-  it('defaults to detached when not opted into cmux, even if cmux is present', async () => {
-    expect((await pickHost({ preferCmux: false, hasCmux: async () => true, wrapperPath: WRAPPER })).kind).toBe('detached');
+  it('uses wezterm only when explicitly opted in and wezterm is present', async () => {
+    expect((await pickHost({ ...both, prefer: 'wezterm' })).kind).toBe('wezterm');
   });
 
-  it('falls back to detached when opted in but cmux is unavailable', async () => {
-    expect((await pickHost({ preferCmux: true, hasCmux: async () => false, wrapperPath: WRAPPER })).kind).toBe('detached');
+  it('defaults to detached when not opted in, even if both are present', async () => {
+    expect((await pickHost({ ...both, prefer: null })).kind).toBe('detached');
+    expect((await pickHost({ ...both, prefer: 'detached' })).kind).toBe('detached');
+  });
+
+  it('falls back to detached when opted in but the terminal is unavailable', async () => {
+    expect((await pickHost({ ...both, hasCmux: async () => false, prefer: 'cmux' })).kind).toBe('detached');
+    expect((await pickHost({ ...both, hasWezTerm: async () => false, prefer: 'wezterm' })).kind).toBe('detached');
+  });
+
+  it('never probes the terminal it was not asked for', async () => {
+    const boom = async (): Promise<boolean> => { throw new Error('probed'); };
+    expect((await pickHost({ ...both, hasWezTerm: boom, prefer: 'cmux' })).kind).toBe('cmux');
+    expect((await pickHost({ ...both, hasCmux: boom, prefer: 'wezterm' })).kind).toBe('wezterm');
   });
 });
