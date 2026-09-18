@@ -90,6 +90,9 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('verdict is a recommendation only');
     expect(prompt).toContain('do not submit a GitHub approval, request-changes review, or comment yourself');
     expect(prompt).toContain('Review the complete diff');
+    expect(prompt).toContain('independent adversarial reviewer');
+    expect(prompt).toContain('actively seek counterevidence');
+    expect(prompt).toContain('not mean a finding quota or automatic rejection');
     expect(prompt).toContain('REQUEST_CHANGES requires an evidenced material problem');
     expect(prompt).toContain('Never request changes solely because tests could not run');
     expect(prompt).toContain('no remaining material issues');

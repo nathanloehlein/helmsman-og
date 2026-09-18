@@ -276,6 +276,81 @@ describe('startRun', () => {
     db.close();
   });
 
+  it.each([['ticket', task], ['freeform', freeformTask]] as const)('queues an own review before completing a %s run and requesting Copilot', async (_label, codingTask) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn(({ parentRunId }: { parentRunId: string }) => {
+      expect(db.getRun(parentRunId)?.status).toBe('running');
+    });
+    const requestCopilotReview = vi.fn(async () => {
+      expect(enqueueCreatedPrReview).toHaveBeenCalledOnce();
+      return { ok: true as const };
+    });
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()),
+      enqueueCreatedPrReview, requestCopilotReview,
+    };
+
+    const id = await startRun(codingTask, d);
+
+    expect(enqueueCreatedPrReview).toHaveBeenCalledExactlyOnceWith({ parentRunId: id, repo: 'o/r', prNumber: 42 });
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    expect(db.listEvents(id)).toContainEqual(expect.objectContaining({ kind: 'log', text: 'Queued Helmsman review for PR #42' }));
+    expect(requestCopilotReview).toHaveBeenCalledOnce();
+    db.close();
+  });
+
+  it.each([
+    { label: 'rerun', input: { ...freeformTask, prBranch: 'fix/x', prNumber: 42 }, ok: true, stopped: false, prNumber: 42 },
+    { label: 'review', input: { ...task, review: true, prNumber: 42 }, ok: true, stopped: false, prNumber: 42 },
+    { label: 'failed', input: task, ok: false, stopped: false, prNumber: 42 },
+    { label: 'stopped', input: task, ok: true, stopped: true, prNumber: 42 },
+    { label: 'without PR', input: task, ok: true, stopped: false, prNumber: undefined },
+  ])('does not queue an own review for a $label run', async ({ input, ok, stopped, prNumber }) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn();
+    const requestCopilotReview = vi.fn(async () => ({ ok: true as const }));
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], ok, prNumber), freshRunsDir()),
+      createWorktreeFromBranch: async () => ({ path: '/tmp/wt', branch: 'fix/x' }),
+      enqueueCreatedPrReview, requestCopilotReview, isStopped: () => stopped,
+    };
+
+    const id = await startRun(input, d);
+
+    expect(enqueueCreatedPrReview).not.toHaveBeenCalled();
+    expect(requestCopilotReview).not.toHaveBeenCalled();
+    if (stopped) expect(db.getRun(id)?.status).toBe('stopped');
+    db.close();
+  });
+
+  it.each(['enqueue', 'copilot'] as const)('keeps a successful coding run succeeded when %s throws', async (failure) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn(() => {
+      if (failure === 'enqueue') throw new Error('queue unavailable');
+    });
+    const requestCopilotReview = vi.fn(async () => {
+      if (failure === 'copilot') throw new Error('GitHub unavailable');
+      return { ok: true as const };
+    });
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()),
+      enqueueCreatedPrReview, requestCopilotReview,
+    };
+
+    const id = await startRun(task, d);
+
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    expect(enqueueCreatedPrReview).toHaveBeenCalledOnce();
+    expect(requestCopilotReview).toHaveBeenCalledOnce();
+    expect(db.listEvents(id)).toContainEqual(expect.objectContaining({
+      kind: failure === 'enqueue' ? 'error' : 'log',
+      text: failure === 'enqueue'
+        ? 'Queuing Helmsman review for PR #42 failed: queue unavailable'
+        : 'requesting Copilot review failed (non-fatal): GitHub unavailable',
+    }));
+    db.close();
+  });
+
   it('does not request a Copilot review on a rerun (the PR already exists)', async () => {
     const db: Db = openDb(':memory:');
     const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt', branch: 'fix/x' }));
@@ -815,6 +890,7 @@ describe('reattachRun', () => {
     writeFileSync(row.exitPath!, '0');
     db.insertRun(row);
     const d = deps(db, jsonAdapter(), fakeHost(() => ({ events: [], ok: true })), runsDir);
+    d.enqueueCreatedPrReview = vi.fn();
 
     await reattachRun(row, d);
 
@@ -822,6 +898,7 @@ describe('reattachRun', () => {
     expect(updated?.status).toBe('succeeded');
     expect(updated?.prNumber).toBe(7);
     expect(updated?.costUsd).toBeCloseTo(0.2);
+    expect(d.enqueueCreatedPrReview).toHaveBeenCalledExactlyOnceWith({ parentRunId: row.id, repo: 'o/r', prNumber: 7 });
     expect(d.removeWorktree).toHaveBeenCalledOnce();
     db.close();
   });

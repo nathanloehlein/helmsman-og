@@ -222,9 +222,24 @@ transition — the run row is labelled `freeform`). Both stream into the same li
 
 ### Recent voyages
 
-After a coding voyage opens a PR, Helmsman requests only a Copilot review. The
-PR-creation agent must not request code owners, teams, or human reviewers, including
-through review mentions. GitHub's automatic CODEOWNERS rules can still add reviewers.
+After a successful coding voyage opens a PR, Helmsman requests Copilot and queues
+its own independent adversarial review as a separate voyage. The durable queue
+waits for repository capacity, survives restarts, and reuses a running or successful
+review of the same revision. It runs on completion and retries pending work on the
+existing five-minute cadence, with no external reads when idle or busy. This does
+not require either Slack or requested-review polling to be enabled. Closed, merged,
+or draft PRs are blocked with a notification; transient lookup failures stay queued.
+Review failures are visible and do not trigger an automatic retry loop.
+
+The review challenges the author's claims and checks realistic failure paths while
+retaining the material-defect threshold, inline findings, complexity-based model
+selection, and COMMENT-only publication. Persistent notifications link the review
+and original coding voyage. Review voyages and feedback reruns do not recursively
+queue more reviews. Existing historical PRs are not backfilled.
+
+The PR-creation agent must not request code owners, teams, or human reviewers,
+including through review mentions. GitHub's automatic CODEOWNERS rules can still
+add reviewers.
 
 Opening a voyage shows a bounded preview of its latest 300 log entries. Updates
 are batched to keep the browser responsive; long entries are shortened in the
@@ -243,7 +258,7 @@ for live runs.
 
 Voyage rows and log tabs show a stable short ID derived from the persisted run ID.
 UUIDs use their first 12 hexadecimal characters; automatic reviews retain their
-`slack-` or `github-` prefix followed by 12 hexadecimal characters. Hover the ID
+`slack-`, `github-`, or `created-` prefix followed by 12 hexadecimal characters. Hover the ID
 to see the full value. Links and log downloads continue to use the full run ID.
 
 ### PR controls

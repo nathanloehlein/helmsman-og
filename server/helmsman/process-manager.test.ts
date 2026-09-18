@@ -16,6 +16,17 @@ describe('ProcessManager', () => {
     expect(pm.canStart('o/b').ok).toBe(false);
   });
 
+  it('treats repository names as case-insensitive while preserving checkout casing', () => {
+    const pm = new ProcessManager(4);
+    pm.add('r1', 'Org/MyRepo', () => undefined);
+    expect(pm.canStart('org/myrepo')).toMatchObject({ ok: false });
+    expect(pm.canStart('ORG/MYREPO')).toMatchObject({ ok: false });
+    expect(pm.canStart('org/another-repo')).toMatchObject({ ok: true });
+    expect(pm.activeRepos()).toEqual(['Org/MyRepo']);
+    pm.remove('r1');
+    expect(pm.canStart('org/myrepo')).toMatchObject({ ok: true });
+  });
+
   it('frees the slot on remove', () => {
     const pm = new ProcessManager(1);
     pm.add('r1', 'o/a', () => undefined);

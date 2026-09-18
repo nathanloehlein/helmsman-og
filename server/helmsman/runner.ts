@@ -35,6 +35,7 @@ export interface RunnerDeps {
   readReviewComments?: (worktreePath: string) => Promise<string | null>;
   postReview?: (repo: string, prNumber: number, body: string, input?: { headSha?: string; comments: InlineReviewComment[] }) => Promise<{ ok: true } | { ok: false; error: string }>;
   requestCopilotReview?: (repo: string, prNumber: number) => Promise<{ ok: true } | { ok: false; error: string }>;
+  enqueueCreatedPrReview?: (input: { parentRunId: string; repo: string; prNumber: number }) => void;
 }
 
 type OnEvent = (e: AgentEvent) => void;
@@ -208,7 +209,8 @@ interface FinalizeParams {
 }
 
 async function finalizeRun(p: FinalizeParams): Promise<void> {
-  const { runId, task, deps, prNumber, totalCost, stopped, ok, worktreePath, onEvent } = p;
+  const { runId, task, deps, prNumber, totalCost, ok, worktreePath, onEvent } = p;
+  const stopped = p.stopped || (deps.isStopped?.() ?? false);
   const statusInReview: string = deps.statusInReview ?? 'In Review';
   const status: RunStatus = stopped ? 'stopped' : ok ? 'succeeded' : 'failed';
 
@@ -218,18 +220,34 @@ async function finalizeRun(p: FinalizeParams): Promise<void> {
     return;
   }
 
+  const createdPr = status === 'succeeded' && prNumber != null && !task.prBranch;
+  if (createdPr && deps.enqueueCreatedPrReview) {
+    try {
+      deps.enqueueCreatedPrReview({ parentRunId: runId, repo: task.repo, prNumber });
+      onEvent({ kind: 'log', text: `Queued Helmsman review for PR #${prNumber}` });
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      onEvent({ kind: 'error', text: `Queuing Helmsman review for PR #${prNumber} failed: ${text}` });
+    }
+  }
+
   deps.db.updateRun(runId, { status, prNumber, costUsd: totalCost, endedAt: deps.now() });
 
-  if (ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
+  if (createdPr && deps.jira && !task.task) {
     await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
   }
 
-  if (ok && prNumber != null && !task.prBranch && deps.requestCopilotReview) {
-    const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
-    if (r.ok) {
-      onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
-    } else {
-      onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
+  if (createdPr && deps.requestCopilotReview) {
+    try {
+      const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
+      if (r.ok) {
+        onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
+      } else {
+        onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
+      }
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${text}` });
     }
   }
 }

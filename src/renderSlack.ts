@@ -14,15 +14,18 @@ function renderNotification(item: SlackNotification, now: Date): string {
   const prUrl = safePrUrl(item.prUrl, item.repo, item.prNumber);
   const pr = `${esc(item.repo)} #${item.prNumber}`;
   const github = item.channelName === 'GitHub requested reviews';
+  const created = item.channelName === 'Helmsman created PRs';
+  const parentRunId = created ? /^\/runs\?run=([a-z\d_-]{1,128})$/i.exec(item.sourceUrl)?.[1] : null;
   const routing = [item.complexity ? `${item.complexity} complexity` : null, item.model, item.effort ? `${item.effort} effort` : null].filter(Boolean).join(' · ');
   return `<li class="slack-notification${item.readAt ? '' : ' is-unread'}" data-notification-id="${esc(item.id)}">
     <div class="slack-notification-top"><strong class="slack-status slack-status--${item.status}">${labels[item.status]}</strong><time datetime="${esc(item.createdAt)}" title="${esc(new Date(item.createdAt).toLocaleString())}">${esc(formatRelativeTime(item.createdAt, now))}</time></div>
     <div class="slack-pr">${prUrl ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer">${pr}</a>` : pr}</div>
-    <div class="slack-author">${github ? `GitHub review request · ${esc(item.author || 'Unknown author')}` : `${esc(item.author || 'Someone')} posted in #${esc(item.channelName.replace(/^#/, ''))}`}</div>
+    <div class="slack-author">${created ? 'Helmsman review · newly opened PR' : github ? `GitHub review request · ${esc(item.author || 'Unknown author')}` : `${esc(item.author || 'Someone')} posted in #${esc(item.channelName.replace(/^#/, ''))}`}</div>
     ${routing ? `<div class="slack-routing" aria-label="Review model selection">${esc(routing)}</div>` : ''}
     ${item.error ? `<p class="slack-error">${esc(item.error)}</p>` : ''}
     <div class="slack-notification-actions">
       ${item.runId && (item.status === 'launched' || item.status === 'failed') ? `<a class="app-link" href="${esc(routeHref({ view: 'runs', repo: item.repo, run: item.runId }))}">View run</a>` : ''}
+      ${parentRunId ? `<a class="app-link" href="${esc(routeHref({ view: 'runs', repo: item.repo, run: parentRunId }))}">Original voyage</a>` : ''}
       ${source ? `<a href="${esc(source)}" target="_blank" rel="noopener noreferrer">${slackSource ? 'Slack message' : 'GitHub request'}</a>` : ''}
       ${item.readAt ? '<span class="slack-read">Read</span>' : `<button type="button" data-slack-read="${esc(item.id)}">Mark read</button>`}
     </div>

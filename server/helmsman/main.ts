@@ -36,6 +36,7 @@ import { createSlackBrowserReader } from './slack/browser';
 import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS } from './slack/config';
 import type { SlackState } from '../../src/data/slack';
 import { createGithubReviewWatcher } from './github-review-watcher';
+import { createCreatedPrReviews } from './created-pr-reviews';
 import { fetchReviewHead, fetchReviewScope, selectReviewModel } from './review-policy';
 import { publishInlineReview } from './inline-review';
 import { createOutboundMeter } from './outbound-meter';
@@ -118,7 +119,36 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
         ? ghRequestCopilotReview(g, repo, prNumber)
         : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
     },
+    enqueueCreatedPrReview: (input) => { createdPrReviews.enqueue(input); },
   };
+}
+
+function findExistingReview(repo: string, number: number, headSha: string): string | null {
+  for (const run of db.listRuns(1000)) {
+    if (run.repo.toLowerCase() !== repo.toLowerCase() || run.prNumber !== number || !['running', 'succeeded'].includes(run.status)) continue;
+    try {
+      const task: unknown = run.taskJson ? JSON.parse(run.taskJson) : null;
+      if (task && typeof task === 'object' && 'review' in task && task.review === true && 'prHeadSha' in task && task.prHeadSha === headSha) return run.id;
+    } catch { continue; }
+  }
+  return null;
+}
+
+const createdPrReviews = createCreatedPrReviews({
+  store: slackStore,
+  getRun: (id) => db.getRun(id),
+  isRunActive: (id) => pm.hasRun(id),
+  canLaunch: (repo) => Boolean(configStore.current().github) && pm.canStart(repo).ok,
+  fetchPr: (repo, number) => {
+    const github = configStore.current().github;
+    return github ? fetchReviewHead(github, repo, number) : Promise.resolve(null);
+  },
+  findExistingReview,
+  launch,
+});
+
+function pollCreatedPrReviews(): Promise<void> {
+  return createdPrReviews.poll().catch((error: unknown) => { process.stderr.write(`Created PR review queue failed: ${String(error)}\n`); });
 }
 
 function dispatchReattach(row: RunRow): Promise<void> {
@@ -139,7 +169,10 @@ function dispatchReattach(row: RunRow): Promise<void> {
     },
     isStopped: () => control.stopped,
   };
-  return reattachRun(row, deps).finally(() => pm.remove(row.id));
+  return reattachRun(row, deps).finally(() => {
+    pm.remove(row.id);
+    void pollCreatedPrReviews();
+  });
 }
 
 const reattachIds: string[] = db.reattachableRuns().map((r: RunRow) => r.id);
@@ -232,9 +265,9 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           bus.publish(runId, { kind: 'run-complete', text: 'failed' });
           return;
         }
-        if (body.headSha && pr.headSha !== body.headSha) throw new Error('PR changed before review launch; the next poll will discover the new revision');
+        if (body.headSha && pr.headSha !== body.headSha) throw new Error('PR changed before review launch; a new review is needed for the latest revision');
         const scope = cfg.github ? await fetchReviewScope(cfg.github, body.repo, pr.number) : null;
-        if (body.headSha && scope?.headSha && scope.headSha !== body.headSha) throw new Error('PR changed during review preparation; the next poll will discover the new revision');
+        if (body.headSha && scope?.headSha && scope.headSha !== body.headSha) throw new Error('PR changed during review preparation; a new review is needed for the latest revision');
         const choice = selectReviewModel(scope?.headSha === pr.headSha ? scope : null, adapter.id, body);
         taskObj = {
           ticketId: 'review', title: `review #${pr.number}`, repo: body.repo,
@@ -279,6 +312,7 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
       bus.publish(runId, { kind: 'run-complete', text: 'failed' });
     } finally {
       pm.remove(runId);
+      void pollCreatedPrReviews();
     }
   })();
   return runId;
@@ -377,21 +411,16 @@ const githubReviewWatcher = createGithubReviewWatcher({
   },
   canLaunch: (repo) => githubReviewEnabled() && pm.canStart(repo).ok,
   getRun: (id) => db.getRun(id), isRunActive: (id) => pm.hasRun(id), launch,
-  findExistingReview: (repo, number, headSha) => {
-    for (const run of db.listRuns(1000)) {
-      if (run.repo.toLowerCase() !== repo.toLowerCase() || run.prNumber !== number || !['running', 'succeeded'].includes(run.status)) continue;
-      try {
-        const task: unknown = run.taskJson ? JSON.parse(run.taskJson) : null;
-        if (task && typeof task === 'object' && 'review' in task && task.review === true && 'prHeadSha' in task && task.prHeadSha === headSha) return run.id;
-      } catch { continue; }
-    }
-    return null;
-  },
+  findExistingReview,
   intervalMs: SLACK_INTERVAL_MS,
 });
 
 const pollGithubReviews = () => githubReviewWatcher.poll().catch((error: unknown) => process.stderr.write(`GitHub review watcher failed: ${String(error)}\n`));
-setInterval(() => void pollGithubReviews(), SLACK_INTERVAL_MS);
+setInterval(() => {
+  void pollCreatedPrReviews();
+  void pollGithubReviews();
+}, SLACK_INTERVAL_MS);
+void pollCreatedPrReviews();
 void pollSlack();
 void pollGithubReviews();
 

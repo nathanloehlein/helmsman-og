@@ -59,6 +59,8 @@ describe('codexArgs', () => {
     expect(args.at(-1)).toContain('if there are no new inline findings');
     expect(args.at(-1)).toContain('report that limitation and use COMMENT');
     expect(args.at(-1)).toContain('Helmsman publishes');
+    expect(args.at(-1)).toContain('independent adversarial reviewer');
+    expect(args.at(-1)).toContain('realistic supported inputs');
   });
 
   it('does not enable review delegation or its skill for coding and feedback runs', () => {
