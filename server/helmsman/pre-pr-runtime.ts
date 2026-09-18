@@ -9,6 +9,7 @@ import { codexAdapter } from './agents/codex';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { runPrePrWorkflow, type PrePrReviewerId } from './pre-pr-workflow';
 import { selectReviewModel, type ReviewScope } from './review-policy';
+import { agentAttribution, appendAgentByline } from './agent-attribution';
 import { DEFAULT_PRE_PR_SETTINGS, normalizePrePrSettings, type PrePrSettings } from '../../src/logic/prePrSettings';
 
 const exec = promisify(execFile);
@@ -248,26 +249,34 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
           if (remoteRevision !== `${expected.headSha}\trefs/heads/${branch}`) throw new Error('Remote branch does not match the approved revision; PR publication blocked');
         };
         await assertRemoteApproved();
-        const findPr = async (): Promise<number | null> => {
-          const value: unknown = JSON.parse(await command('gh', ['pr', 'list', '--repo', input.task.repo, '--head', branch, '--state', 'open', '--json', 'number,headRefOid,baseRefName']));
+        const findPr = async (): Promise<{ number: number; body: string } | null> => {
+          const value: unknown = JSON.parse(await command('gh', ['pr', 'list', '--repo', input.task.repo, '--head', branch, '--state', 'open', '--json', 'number,headRefOid,baseRefName,body']));
           if (!Array.isArray(value)) throw new Error('Invalid GitHub PR list response');
           for (const pr of value) {
             if (!pr || typeof pr !== 'object') throw new Error('Invalid GitHub PR response');
             if (pr.headRefOid !== expected.headSha || pr.baseRefName !== baseBranch) throw new Error('Existing PR does not match the approved revision and base');
-            if (Number.isSafeInteger(pr.number) && pr.number > 0) return pr.number;
+            if (Number.isSafeInteger(pr.number) && pr.number > 0) {
+              if (typeof pr.body !== 'string') throw new Error('Existing PR body could not be read');
+              return { number: pr.number, body: pr.body };
+            }
           }
           return null;
         };
         const existing = await findPr();
-        if (existing) return existing;
         const bodyFile = join(artifactDir, 'pr-body.md');
-        await writeFile(bodyFile, metadata.body, { mode: 0o600 });
+        const body = appendAgentByline(existing?.body ?? metadata.body, agentAttribution(input.writerId, input.task, 'PR author'));
+        if (existing && existing.body === body) return existing.number;
+        await writeFile(bodyFile, body, { mode: 0o600 });
         await assertApproved();
         await assertRemoteApproved();
+        if (existing) {
+          await command('gh', ['pr', 'edit', String(existing.number), '--repo', input.task.repo, '--body-file', bodyFile]);
+          return existing.number;
+        }
         await command('gh', ['pr', 'create', '--repo', input.task.repo, '--head', branch, '--base', baseBranch, '--title', metadata.title, '--body-file', bodyFile]);
         const created = await findPr();
         if (!created) throw new Error('Created PR could not be verified');
-        return created;
+        return created.number;
       },
     });
   } finally {

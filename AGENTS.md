@@ -1,5 +1,6 @@
 # Repository workflow
 
+- Helmsman review agents and PR authors must end every PR description, review summary, inline comment, and comment/reply they publish with a short byline identifying their role, model, and effort: `_Helmsman review agent · model: <model> · effort: <effort>_` or `_Helmsman PR author · model: <model> · effort: <effort>_`. Use the actual execution settings; explicitly mark unavailable values as not reported instead of guessing. Keep the byline outside code/suggestion fences and avoid duplicate footers.
 - The user has authorized committing and pushing completed Helmsman changes to GitHub. After each completed change, run appropriate validation, commit, review the commit as a Senior Software Architect, fix any material findings, and push to the branch's upstream. Do not ask for push permission again unless the user revokes this authorization.
 - The canonical remote is `godaddy` (`https://github.com/nloehlein-godaddy/helmsman.git`); `master` tracks `godaddy/master`. For a branch without an upstream, push that branch to `godaddy` and set its upstream.
 - Verify the push succeeded and report the commit. Do not claim GitHub is updated while changes remain local. If validation or pushing is blocked, report the blocker.

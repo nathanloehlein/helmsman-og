@@ -10,6 +10,7 @@ import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import type { HostRef, LaunchSpec, RunHost } from './run-host';
 
 const task: AgentTask = { ticketId: 'LEKA-1', title: 'do it', repo: 'o/r', jiraBaseUrl: 'https://x' };
+const unknownAttribution = { role: 'review agent', model: 'not reported', effort: 'not reported' };
 const freeformTask: AgentTask = { ticketId: 'freeform', title: '', repo: 'o/r', jiraBaseUrl: '', task: 'do X' };
 
 function freshRunsDir(): string {
@@ -709,7 +710,7 @@ describe('startRun', () => {
     await startRun(reviewTask, d);
 
     expect(readReview).toHaveBeenCalledWith('/tmp/wt-review');
-    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nlooks fine');
+    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nlooks fine', { headSha: undefined, comments: [], attribution: unknownAttribution });
     expect(readReview.mock.invocationCallOrder[0]).toBeLessThan(removeWorktree.mock.invocationCallOrder[0]);
     expect(events.some((e) => e.kind === 'log' && e.text.includes('posted code-review comment on PR #12'))).toBe(true);
     db.close();
@@ -730,9 +731,34 @@ describe('startRun', () => {
         postReview, removeWorktree,
       };
       await startRun({ ...task, review: true, prNumber: 12, prHeadSha: headSha }, d);
-      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: REQUEST_CHANGES — Handle missing input.', { headSha, comments });
+      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: REQUEST_CHANGES — Handle missing input.', { headSha, comments, attribution: unknownAttribution });
       expect(postReview.mock.invocationCallOrder[0]).toBeLessThan(removeWorktree.mock.invocationCallOrder[0]);
       expect(db.getRun('run-1')?.status).toBe('succeeded');
+    } finally { db.close(); }
+  });
+
+  it.each([
+    { adapter: 'codex', model: undefined, effort: undefined, expectedModel: 'gpt-6-astra', expectedEffort: 'medium' },
+    { adapter: 'codex', model: 'gpt-5.5', effort: 'high', expectedModel: 'gpt-5.5', expectedEffort: 'high' },
+    { adapter: 'claude-code', model: 'sonnet', effort: 'low', expectedModel: 'sonnet', expectedEffort: 'low' },
+  ])('passes effective $adapter model $expectedModel and effort $expectedEffort without modifying verdict text', async ({ adapter, model, effort, expectedModel, expectedEffort }) => {
+    const db = openDb(':memory:');
+    try {
+      const body = 'Verdict: APPROVE — Looks good.';
+      const postReview = vi.fn(async () => ({ ok: true as const }));
+      const d: RunnerDeps = {
+        ...deps(db, jsonAdapter(adapter), singleAttemptHost([], true), freshRunsDir()),
+        createWorktreeFromBranch: async () => ({ path: '/tmp/attributed-review', branch: 'fix/x' }),
+        readReview: async () => body,
+        postReview,
+      };
+      await startRun({ ...task, review: true, prNumber: 12, prBranch: 'fix/x', model, effort }, d);
+      expect(postReview).toHaveBeenCalledExactlyOnceWith('o/r', 12, body, {
+        headSha: undefined,
+        comments: [],
+        attribution: { role: 'review agent', model: expectedModel, effort: expectedEffort },
+      });
+      expect(db.listEvents('run-1').find(event => event.kind === 'review-verdict')?.text).toBe('Verdict: Approve — Looks good.');
     } finally { db.close(); }
   });
 
@@ -764,7 +790,7 @@ describe('startRun', () => {
         readReviewComments: async () => null, postReview,
       };
       await startRun({ ...task, review: true, prNumber: 12, prBranch: 'fix/x' }, d);
-      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: APPROVE — Looks good.', { headSha: undefined, comments: [] });
+      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: APPROVE — Looks good.', { headSha: undefined, comments: [], attribution: unknownAttribution });
       expect(db.getRun('run-1')?.status).toBe('succeeded');
     } finally { db.close(); }
   });
@@ -791,7 +817,7 @@ describe('startRun', () => {
     ];
     expect(events.slice(-2)).toEqual(expected);
     expect(db.listEvents('run-1').slice(-2).map(({ kind, text }) => ({ kind, text }))).toEqual(expected);
-    expect(d.postReview).toHaveBeenCalledWith('o/r', 12, body);
+    expect(d.postReview).toHaveBeenCalledWith('o/r', 12, body, { headSha: undefined, comments: [], attribution: unknownAttribution });
     db.close();
   });
 
@@ -859,7 +885,7 @@ describe('startRun', () => {
 
     const id = await startRun(reviewTask, d);
 
-    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nfindings');
+    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nfindings', { headSha: undefined, comments: [], attribution: unknownAttribution });
     expect(db.getRun(id)?.status).toBe('succeeded');
     db.close();
   });
@@ -978,6 +1004,32 @@ describe('reattachRun', () => {
       { kind: 'run-complete', text: 'succeeded' },
     ]);
     db.close();
+  });
+
+  it('reattaches reviews with attribution from the persisted execution settings', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = {
+        ...baseRow(runsDir), adapter: 'codex', prNumber: 12,
+        taskJson: JSON.stringify({ ...task, prNumber: 12, prBranch: 'fix/x', review: true, model: 'gpt-5.5', effort: 'xhigh' }),
+      };
+      writeFileSync(row.logPath!, '');
+      writeFileSync(row.exitPath!, '0');
+      db.insertRun(row);
+      const postReview = vi.fn(async () => ({ ok: true as const }));
+      await reattachRun(row, {
+        ...deps(db, jsonAdapter(row.adapter), singleAttemptHost([], true), runsDir),
+        readReview: async () => 'Verdict: COMMENT — Naming suggestion.',
+        postReview,
+      });
+      expect(postReview).toHaveBeenCalledExactlyOnceWith('o/r', 12, 'Verdict: COMMENT — Naming suggestion.', {
+        headSha: undefined,
+        comments: [],
+        attribution: { role: 'review agent', model: 'gpt-5.5', effort: 'xhigh' },
+      });
+      expect(db.getRun(row.id)?.status).toBe('succeeded');
+    } finally { db.close(); }
   });
 
   it('tails remaining log and awaits the exit file when the host is still alive, then finalizes', async () => {

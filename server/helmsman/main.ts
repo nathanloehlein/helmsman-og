@@ -124,7 +124,7 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
     postReview: (repo, prNumber, reviewBody, input) => {
       const g: AppConfig['github'] = configStore.current().github;
       return g
-        ? publishInlineReview(g, repo, prNumber, reviewBody, input ?? { comments: [] })
+        ? publishInlineReview(g, repo, prNumber, reviewBody, input)
         : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
     },
     requestCopilotReview: (repo: string, prNumber: number) => {

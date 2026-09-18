@@ -7,12 +7,15 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { PrePrSettings } from '../../src/logic/prePrSettings';
+import type { AgentTask } from './agents/adapter';
+import type { PrePrReviewerId } from './pre-pr-workflow';
 
 const exec = promisify(execFile);
 const cliPath = fileURLToPath(new URL('./pre-pr-cli.ts', import.meta.url));
 const tsx = import.meta.resolve('tsx');
 
-async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote', settings?: PrePrSettings) {
+async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote' | 'existing', settings?: PrePrSettings,
+  options: { task?: Partial<AgentTask>; writerId?: PrePrReviewerId; body?: string; existingBody?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'helmsman-runtime-'));
   const cwd = join(root, 'author');
   const bin = join(root, 'bin');
@@ -47,15 +50,31 @@ if(id === 'git') {
   if(args[0] === 'ls-remote' && env.TEST_MODE === 'remote-moved') {
     console.log('a'.repeat(40)+'\trefs/heads/voyage/test'); process.exit(0);
   }
-  if(args[0] === 'push') { log({stage:'push',remote:args[1]}); args[args.indexOf(env.TEST_REMOTE)] = env.TEST_BARE; }
+  if(args[0] === 'push') {
+    log({stage:'push',remote:args[1]}); args[args.indexOf(env.TEST_REMOTE)] = env.TEST_BARE;
+    if(fs.existsSync(env.TEST_STATE)) {
+      const prs=JSON.parse(fs.readFileSync(env.TEST_STATE,'utf8'));
+      for(const pr of prs) pr.headRefOid=runGit(['rev-parse','HEAD']);
+      fs.writeFileSync(env.TEST_STATE,JSON.stringify(prs));
+    }
+  }
   process.stdout.write(cp.execFileSync('/usr/bin/git', args, {encoding:'utf8'}));
 } else if(id === 'gh') {
   if(args[0] === 'repo') process.stdout.write(JSON.stringify({nameWithOwner:'example/project',defaultBranchRef:{name:'main'}}));
   else if(args[1] === 'list') process.stdout.write(fs.existsSync(env.TEST_STATE) ? fs.readFileSync(env.TEST_STATE) : '[]');
   else if(args[1] === 'create') {
-    log({stage:'publish'});
-    fs.writeFileSync(env.TEST_STATE, JSON.stringify([{number:42,headRefOid:runGit(['rev-parse','HEAD']),baseRefName:'main'}]));
+    const body=fs.readFileSync(args[args.indexOf('--body-file')+1],'utf8');
+    log({stage:'publish',body});
+    fs.writeFileSync(env.TEST_STATE, JSON.stringify([{number:42,headRefOid:runGit(['rev-parse','HEAD']),baseRefName:'main',body}]));
     console.log('https://github.com/example/project/pull/42');
+  } else if(args[1] === 'edit') {
+    const body=fs.readFileSync(args[args.indexOf('--body-file')+1],'utf8');
+    const prs=JSON.parse(fs.readFileSync(env.TEST_STATE,'utf8'));
+    const pr=prs.find(pr=>pr.number===Number(args[2]));
+    if(!pr) process.exit(6);
+    pr.body=body;
+    fs.writeFileSync(env.TEST_STATE,JSON.stringify(prs));
+    log({stage:'edit-pr',body});
   } else process.exit(5);
 } else {
   const prompt = args.find(value => value.startsWith('# '));
@@ -74,7 +93,10 @@ if(id === 'git') {
   } else {
     fs.appendFileSync('code.txt',fix?'fixed\n':'implemented\n');
     runGit(['add','code.txt']); runGit(['commit','-m',fix?'fix':'implement']);
-    fs.writeFileSync(reportPath,JSON.stringify({title:env.TEST_MODE==='ticket-title'?'Implement task':'T-1 Implement task',body:'Implemented and checked.'}));
+    fs.writeFileSync(reportPath,JSON.stringify({title:env.TEST_MODE==='ticket-title'?'Implement task':'T-1 Implement task',body:env.TEST_BODY}));
+    if(env.TEST_MODE==='existing'&&!fs.existsSync(env.TEST_STATE)) {
+      fs.writeFileSync(env.TEST_STATE,JSON.stringify([{number:42,headRefOid:runGit(['rev-parse','HEAD']),baseRefName:'main',body:env.TEST_EXISTING_BODY}]));
+    }
   }
   console.log(JSON.stringify({type:'result',result:'saw https://github.com/example/project/pull/999',total_cost_usd:1}));
 }
@@ -82,11 +104,12 @@ if(id === 'git') {
   for (const executable of ['git', 'gh', ...(mode === 'unavailable' ? [] : ['codex']), 'claude']) {
     await writeFile(join(bin, executable), script); await chmod(join(bin, executable), 0o755);
   }
-  const input = { task: { ticketId: 'T-1', title: 'Fix issue', repo: 'example/project', jiraBaseUrl: '', model: 'author-model', effort: 'medium' }, writerId: 'codex', runsDir: join(root, 'runs'), settings };
+  const input = { task: { ticketId: 'T-1', title: 'Fix issue', repo: 'example/project', jiraBaseUrl: '', model: 'author-model', effort: 'medium', ...options.task }, writerId: options.writerId ?? 'codex', runsDir: join(root, 'runs'), settings };
   return { root, cwd, state, transcript, async run() {
     try {
       const output = await exec(process.execPath, ['--import', tsx, cliPath, JSON.stringify(input)], {
-        cwd, timeout: 30_000, env: { ...process.env, PATH: bin, TEST_MODE: mode, TEST_REMOTE: mode==='named-remote'?'godaddy':'origin', TEST_BARE: bare, TEST_STATE: state, TEST_TRANSCRIPT: transcript },
+        cwd, timeout: 30_000, env: { ...process.env, PATH: bin, TEST_MODE: mode, TEST_REMOTE: mode==='named-remote'?'godaddy':'origin', TEST_BARE: bare, TEST_STATE: state, TEST_TRANSCRIPT: transcript,
+          TEST_BODY: options.body ?? 'Implemented and checked.', TEST_EXISTING_BODY: options.existingBody ?? 'Human-maintained PR description.' },
       });
       return { code: 0, output: output.stdout };
     } catch (error) {
@@ -97,6 +120,54 @@ if(id === 'git') {
 }
 
 describe('pre-PR runtime with real git and fake CLIs', () => {
+  it.each(['codex', 'claude-code'] as const)('enforces the %s writer byline while preserving code and suggestions', async writerId => {
+    const body = '## Outcome\n\n```ts\nconst value = "unchanged";\n```\n\n```suggestion\nreturn value;\n```';
+    const env = await fixture('named-remote', undefined, { writerId, body, task: { model: 'author-model', effort: 'high' } });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(0);
+      const prs = JSON.parse(await readFile(env.state, 'utf8'));
+      expect(prs[0]?.body).toBe(`${body}\n\n_Helmsman PR author · model: author-model · effort: high_`);
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      const author = steps.find(step => step.stage === 'implement');
+      expect(author.id).toBe(writerId === 'codex' ? 'codex' : 'claude');
+      expect(author.args).toContain('author-model');
+      expect(author.args).toContain(writerId === 'codex' ? 'model_reasoning_effort="high"' : 'high');
+      expect(prs[0]?.body).not.toContain('gpt-5.6-terra');
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('uses the actual Codex defaults when writer settings are omitted', async () => {
+    const env = await fixture('named-remote', undefined, { task: { model: undefined, effort: undefined } });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(0);
+      const prs = JSON.parse(await readFile(env.state, 'utf8'));
+      expect(prs[0]?.body).toBe('Implemented and checked.\n\n_Helmsman PR author · model: gpt-6-astra · effort: medium_');
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      const author = steps.find(step => step.stage === 'implement');
+      expect(author.args).toContain('gpt-6-astra');
+      expect(author.args).toContain('model_reasoning_effort="medium"');
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('updates only the managed footer of an existing PR and does not repeat an unchanged edit', async () => {
+    const content = 'Human-maintained description.\n\n```suggestion\nkeepThis();\n```';
+    const existingBody = `${content}\n\n_Helmsman PR author · model: old-model · effort: low_`;
+    const env = await fixture('existing', undefined, { existingBody, body: 'Do not replace the human description.' });
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await env.run();
+        expect(result.code, result.output).toBe(0);
+        const prs = JSON.parse(await readFile(env.state, 'utf8'));
+        expect(prs[0]?.body).toBe(`${content}\n\n_Helmsman PR author · model: author-model · effort: medium_`);
+      }
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.filter(step => step.stage === 'edit-pr')).toHaveLength(1);
+      expect(steps.filter(step => step.stage === 'publish')).toHaveLength(0);
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
   it('uses only the writer CLI when one reviewer is configured, even with another installed', async () => {
     const env = await fixture('auth', { reviewerCount: 1, maxRounds: 2, stageTimeoutMinutes: 10 });
     try {

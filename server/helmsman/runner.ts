@@ -7,7 +7,8 @@ import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import { tailLog, type Tail } from './log-tail';
 import type { HostRef, RunHost } from './run-host';
 import { reviewVerdictLine } from './review-verdict';
-import { parseInlineReviewComments, type InlineReviewComment } from './inline-review';
+import { parseInlineReviewComments, type InlineReviewInput } from './inline-review';
+import { agentAttribution } from './agent-attribution';
 
 export interface RunnerDeps {
   db: Db;
@@ -34,7 +35,7 @@ export interface RunnerDeps {
   isStopped?: () => boolean;
   readReview?: (worktreePath: string) => Promise<string | null>;
   readReviewComments?: (worktreePath: string) => Promise<string | null>;
-  postReview?: (repo: string, prNumber: number, body: string, input?: { headSha?: string; comments: InlineReviewComment[] }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  postReview?: (repo: string, prNumber: number, body: string, input: InlineReviewInput) => Promise<{ ok: true } | { ok: false; error: string }>;
   requestCopilotReview?: (repo: string, prNumber: number) => Promise<{ ok: true } | { ok: false; error: string }>;
   enqueueCreatedPrReview?: (input: { parentRunId: string; repo: string; prNumber: number }) => void;
 }
@@ -97,9 +98,11 @@ async function postReviewDerivingStatusFromReviewNotExitCode(
   }
   const comments = parseInlineReviewComments(await deps.readReviewComments?.(worktreePath) ?? null);
   if (deps.isStopped?.()) return 'stopped';
-  const r = deps.readReviewComments
-    ? await deps.postReview(task.repo, prNumber, body, { headSha: task.prHeadSha, comments })
-    : await deps.postReview(task.repo, prNumber, body);
+  const r = await deps.postReview(task.repo, prNumber, body, {
+    headSha: task.prHeadSha,
+    comments,
+    attribution: agentAttribution(deps.adapter.id, task, 'review agent'),
+  });
   if (!r.ok) {
     onEvent({ kind: 'error', text: `code review failed: posting comment on PR #${prNumber} failed: ${r.error}` });
     return 'failed';

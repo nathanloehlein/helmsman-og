@@ -222,6 +222,16 @@ transition — the run row is labelled `freeform`). Both stream into the same li
 
 ### Review before PR creation
 
+Agent-authored PR descriptions, review summaries, inline findings, and replies end
+with a short attribution line, for example:
+`_Helmsman review agent · model: gpt-5.6-sol · effort: medium_`.
+Authors use `Helmsman PR author`. Helmsman appends the footer when publishing PRs
+and reviews; agent prompts require it on direct comments and replies too. Bylines
+use the effective execution settings, including Codex defaults. Unreported provider
+defaults and custom-command settings are explicitly marked rather than guessed.
+The footer stays outside code and suggestion blocks, and repeated publication does
+not duplicate it. Human-written reviews submitted through the UI keep their own text.
+
 Every new coding voyage implements and commits locally, then passes an adversarial
 review before Helmsman pushes the branch or opens a PR. A fresh reviewer session
 uses the writer's CLI; by default, if the other supported CLI is installed, a second
