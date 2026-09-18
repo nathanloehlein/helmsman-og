@@ -10,6 +10,7 @@ import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import type { HostRef, LaunchSpec, RunHost } from './run-host';
 
 const task: AgentTask = { ticketId: 'LEKA-1', title: 'do it', repo: 'o/r', jiraBaseUrl: 'https://x' };
+const unknownAttribution = { role: 'review agent', model: 'not reported', effort: 'not reported' };
 const freeformTask: AgentTask = { ticketId: 'freeform', title: '', repo: 'o/r', jiraBaseUrl: '', task: 'do X' };
 
 function freshRunsDir(): string {
@@ -105,6 +106,47 @@ function deps(db: Db, adapter: AgentAdapter, host: RunHost, runsDir: string): Ru
 }
 
 describe('startRun', () => {
+  it('retains original launch intent when worktree preparation fails before agent execution', async () => {
+    const db = openDb(':memory:');
+    try {
+      const launchJson = JSON.stringify({ repo: task.repo, ticketId: task.ticketId, mode: 'ticket' });
+      const host = singleAttemptHost([], true);
+      const launch = vi.spyOn(host, 'launch');
+      await startRun(task, {
+        ...deps(db, jsonAdapter(), host, freshRunsDir()), launchJson,
+        createWorktree: async () => { throw new Error('Checkout unavailable'); },
+      });
+      expect(db.getRun('run-1')).toMatchObject({ status: 'failed', launchJson, taskJson: JSON.stringify(task), worktreePath: null });
+      expect(launch).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
+  it('preserves a failed pre-PR worktree and reports its location without queuing publication side effects', async () => {
+    const db = openDb(':memory:');
+    try {
+      const enqueueCreatedPrReview = vi.fn();
+      const d = { ...deps(db, jsonAdapter('pre-pr:codex'), singleAttemptHost([{ kind: 'error', text: 'Unresolved findings' }], false), freshRunsDir()),
+        preserveWorktreeOnFailure: true, enqueueCreatedPrReview };
+      const id = await startRun(task, d);
+      expect(db.getRun(id)?.status).toBe('failed');
+      expect(d.removeWorktree).not.toHaveBeenCalled();
+      expect(enqueueCreatedPrReview).not.toHaveBeenCalled();
+      expect(db.listEvents(id).some(event => event.text === 'Worktree retained for inspection: /tmp/wt')).toBe(true);
+    } finally { db.close(); }
+  });
+
+  it('cleans up a published pre-PR worktree and queues the existing post-publication review', async () => {
+    const db = openDb(':memory:');
+    try {
+      const enqueueCreatedPrReview = vi.fn();
+      const d = { ...deps(db, jsonAdapter('pre-pr:codex'), singleAttemptHost([], true, 42), freshRunsDir()),
+        preserveWorktreeOnFailure: true, enqueueCreatedPrReview };
+      await startRun(task, d);
+      expect(d.removeWorktree).toHaveBeenCalledWith('o/r', '/tmp/wt');
+      expect(enqueueCreatedPrReview).toHaveBeenCalledWith({ parentRunId: 'run-1', repo: 'o/r', prNumber: 42 });
+    } finally { db.close(); }
+  });
+
   it('pins review worktrees and persists model selection in task metadata and phase events', async () => {
     const db = openDb(':memory:');
     try {
@@ -273,6 +315,81 @@ describe('startRun', () => {
     await startRun(task, d);
 
     expect(requestCopilotReview).toHaveBeenCalledWith('o/r', 42);
+    db.close();
+  });
+
+  it.each([['ticket', task], ['freeform', freeformTask]] as const)('queues an own review before completing a %s run and requesting Copilot', async (_label, codingTask) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn(({ parentRunId }: { parentRunId: string }) => {
+      expect(db.getRun(parentRunId)?.status).toBe('running');
+    });
+    const requestCopilotReview = vi.fn(async () => {
+      expect(enqueueCreatedPrReview).toHaveBeenCalledOnce();
+      return { ok: true as const };
+    });
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()),
+      enqueueCreatedPrReview, requestCopilotReview,
+    };
+
+    const id = await startRun(codingTask, d);
+
+    expect(enqueueCreatedPrReview).toHaveBeenCalledExactlyOnceWith({ parentRunId: id, repo: 'o/r', prNumber: 42 });
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    expect(db.listEvents(id)).toContainEqual(expect.objectContaining({ kind: 'log', text: 'Queued Helmsman review for PR #42' }));
+    expect(requestCopilotReview).toHaveBeenCalledOnce();
+    db.close();
+  });
+
+  it.each([
+    { label: 'rerun', input: { ...freeformTask, prBranch: 'fix/x', prNumber: 42 }, ok: true, stopped: false, prNumber: 42 },
+    { label: 'review', input: { ...task, review: true, prNumber: 42 }, ok: true, stopped: false, prNumber: 42 },
+    { label: 'failed', input: task, ok: false, stopped: false, prNumber: 42 },
+    { label: 'stopped', input: task, ok: true, stopped: true, prNumber: 42 },
+    { label: 'without PR', input: task, ok: true, stopped: false, prNumber: undefined },
+  ])('does not queue an own review for a $label run', async ({ input, ok, stopped, prNumber }) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn();
+    const requestCopilotReview = vi.fn(async () => ({ ok: true as const }));
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], ok, prNumber), freshRunsDir()),
+      createWorktreeFromBranch: async () => ({ path: '/tmp/wt', branch: 'fix/x' }),
+      enqueueCreatedPrReview, requestCopilotReview, isStopped: () => stopped,
+    };
+
+    const id = await startRun(input, d);
+
+    expect(enqueueCreatedPrReview).not.toHaveBeenCalled();
+    expect(requestCopilotReview).not.toHaveBeenCalled();
+    if (stopped) expect(db.getRun(id)?.status).toBe('stopped');
+    db.close();
+  });
+
+  it.each(['enqueue', 'copilot'] as const)('keeps a successful coding run succeeded when %s throws', async (failure) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn(() => {
+      if (failure === 'enqueue') throw new Error('queue unavailable');
+    });
+    const requestCopilotReview = vi.fn(async () => {
+      if (failure === 'copilot') throw new Error('GitHub unavailable');
+      return { ok: true as const };
+    });
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()),
+      enqueueCreatedPrReview, requestCopilotReview,
+    };
+
+    const id = await startRun(task, d);
+
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    expect(enqueueCreatedPrReview).toHaveBeenCalledOnce();
+    expect(requestCopilotReview).toHaveBeenCalledOnce();
+    expect(db.listEvents(id)).toContainEqual(expect.objectContaining({
+      kind: failure === 'enqueue' ? 'error' : 'log',
+      text: failure === 'enqueue'
+        ? 'Queuing Helmsman review for PR #42 failed: queue unavailable'
+        : 'requesting Copilot review failed (non-fatal): GitHub unavailable',
+    }));
     db.close();
   });
 
@@ -511,6 +628,18 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('never writes Jira for a persisted local source even without task text', async () => {
+    const db = openDb(':memory:');
+    try {
+      const jira = fakeJira();
+      const d = { ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()), jira, botAccountId: 'bot' };
+      await startRun({ ...task, todoId: 'TODO-1', ticketId: 'TODO-1' }, d);
+      expect(db.getRun('run-1')?.status).toBe('succeeded');
+      expect(jira.assignCalls).toEqual([]);
+      expect(jira.transitionCalls).toEqual([]);
+    } finally { db.close(); }
+  });
+
   it('never claims or transitions a free-form run, even when jira and botAccountId are configured', async () => {
     const db: Db = openDb(':memory:');
     const jira = fakeJira();
@@ -596,7 +725,7 @@ describe('startRun', () => {
     await startRun(reviewTask, d);
 
     expect(readReview).toHaveBeenCalledWith('/tmp/wt-review');
-    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nlooks fine');
+    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nlooks fine', { headSha: undefined, comments: [], attribution: unknownAttribution });
     expect(readReview.mock.invocationCallOrder[0]).toBeLessThan(removeWorktree.mock.invocationCallOrder[0]);
     expect(events.some((e) => e.kind === 'log' && e.text.includes('posted code-review comment on PR #12'))).toBe(true);
     db.close();
@@ -617,9 +746,34 @@ describe('startRun', () => {
         postReview, removeWorktree,
       };
       await startRun({ ...task, review: true, prNumber: 12, prHeadSha: headSha }, d);
-      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: REQUEST_CHANGES — Handle missing input.', { headSha, comments });
+      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: REQUEST_CHANGES — Handle missing input.', { headSha, comments, attribution: unknownAttribution });
       expect(postReview.mock.invocationCallOrder[0]).toBeLessThan(removeWorktree.mock.invocationCallOrder[0]);
       expect(db.getRun('run-1')?.status).toBe('succeeded');
+    } finally { db.close(); }
+  });
+
+  it.each([
+    { adapter: 'codex', model: undefined, effort: undefined, expectedModel: 'gpt-6-astra', expectedEffort: 'medium' },
+    { adapter: 'codex', model: 'gpt-5.5', effort: 'high', expectedModel: 'gpt-5.5', expectedEffort: 'high' },
+    { adapter: 'claude-code', model: 'sonnet', effort: 'low', expectedModel: 'sonnet', expectedEffort: 'low' },
+  ])('passes effective $adapter model $expectedModel and effort $expectedEffort without modifying verdict text', async ({ adapter, model, effort, expectedModel, expectedEffort }) => {
+    const db = openDb(':memory:');
+    try {
+      const body = 'Verdict: APPROVE — Looks good.';
+      const postReview = vi.fn(async () => ({ ok: true as const }));
+      const d: RunnerDeps = {
+        ...deps(db, jsonAdapter(adapter), singleAttemptHost([], true), freshRunsDir()),
+        createWorktreeFromBranch: async () => ({ path: '/tmp/attributed-review', branch: 'fix/x' }),
+        readReview: async () => body,
+        postReview,
+      };
+      await startRun({ ...task, review: true, prNumber: 12, prBranch: 'fix/x', model, effort }, d);
+      expect(postReview).toHaveBeenCalledExactlyOnceWith('o/r', 12, body, {
+        headSha: undefined,
+        comments: [],
+        attribution: { role: 'review agent', model: expectedModel, effort: expectedEffort },
+      });
+      expect(db.listEvents('run-1').find(event => event.kind === 'review-verdict')?.text).toBe('Verdict: Approve — Looks good.');
     } finally { db.close(); }
   });
 
@@ -651,7 +805,7 @@ describe('startRun', () => {
         readReviewComments: async () => null, postReview,
       };
       await startRun({ ...task, review: true, prNumber: 12, prBranch: 'fix/x' }, d);
-      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: APPROVE — Looks good.', { headSha: undefined, comments: [] });
+      expect(postReview).toHaveBeenCalledWith('o/r', 12, 'Verdict: APPROVE — Looks good.', { headSha: undefined, comments: [], attribution: unknownAttribution });
       expect(db.getRun('run-1')?.status).toBe('succeeded');
     } finally { db.close(); }
   });
@@ -678,7 +832,7 @@ describe('startRun', () => {
     ];
     expect(events.slice(-2)).toEqual(expected);
     expect(db.listEvents('run-1').slice(-2).map(({ kind, text }) => ({ kind, text }))).toEqual(expected);
-    expect(d.postReview).toHaveBeenCalledWith('o/r', 12, body);
+    expect(d.postReview).toHaveBeenCalledWith('o/r', 12, body, { headSha: undefined, comments: [], attribution: unknownAttribution });
     db.close();
   });
 
@@ -746,7 +900,7 @@ describe('startRun', () => {
 
     const id = await startRun(reviewTask, d);
 
-    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nfindings');
+    expect(postReview).toHaveBeenCalledWith('o/r', 12, '## Review\nfindings', { headSha: undefined, comments: [], attribution: unknownAttribution });
     expect(db.getRun(id)?.status).toBe('succeeded');
     db.close();
   });
@@ -807,6 +961,25 @@ describe('reattachRun', () => {
     };
   }
 
+  it('retains failed gated work after recovery without relaunching the author', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = { ...baseRow(runsDir), adapter: 'pre-pr:codex' };
+      writeFileSync(row.logPath!, JSON.stringify({ kind: 'error', text: 'Review did not complete' }) + '\n');
+      writeFileSync(row.exitPath!, '1');
+      db.insertRun(row);
+      const host = fakeHost(() => ({ events: [], ok: true }));
+      const launch = vi.spyOn(host, 'launch');
+      const d = { ...deps(db, jsonAdapter('pre-pr:codex'), host, runsDir), preserveWorktreeOnFailure: true };
+      await reattachRun(row, d);
+      expect(db.getRun(row.id)?.status).toBe('failed');
+      expect(d.removeWorktree).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+      expect(db.listEvents(row.id).some(event => event.text.includes('Worktree retained'))).toBe(true);
+    } finally { db.close(); }
+  });
+
   it('finalizes to the stored exit code status when the exit file is already present', async () => {
     const db: Db = openDb(':memory:');
     const runsDir = freshRunsDir();
@@ -815,6 +988,7 @@ describe('reattachRun', () => {
     writeFileSync(row.exitPath!, '0');
     db.insertRun(row);
     const d = deps(db, jsonAdapter(), fakeHost(() => ({ events: [], ok: true })), runsDir);
+    d.enqueueCreatedPrReview = vi.fn();
 
     await reattachRun(row, d);
 
@@ -822,6 +996,7 @@ describe('reattachRun', () => {
     expect(updated?.status).toBe('succeeded');
     expect(updated?.prNumber).toBe(7);
     expect(updated?.costUsd).toBeCloseTo(0.2);
+    expect(d.enqueueCreatedPrReview).toHaveBeenCalledExactlyOnceWith({ parentRunId: row.id, repo: 'o/r', prNumber: 7 });
     expect(d.removeWorktree).toHaveBeenCalledOnce();
     db.close();
   });
@@ -844,6 +1019,32 @@ describe('reattachRun', () => {
       { kind: 'run-complete', text: 'succeeded' },
     ]);
     db.close();
+  });
+
+  it('reattaches reviews with attribution from the persisted execution settings', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = {
+        ...baseRow(runsDir), adapter: 'codex', prNumber: 12,
+        taskJson: JSON.stringify({ ...task, prNumber: 12, prBranch: 'fix/x', review: true, model: 'gpt-5.5', effort: 'xhigh' }),
+      };
+      writeFileSync(row.logPath!, '');
+      writeFileSync(row.exitPath!, '0');
+      db.insertRun(row);
+      const postReview = vi.fn(async () => ({ ok: true as const }));
+      await reattachRun(row, {
+        ...deps(db, jsonAdapter(row.adapter), singleAttemptHost([], true), runsDir),
+        readReview: async () => 'Verdict: COMMENT — Naming suggestion.',
+        postReview,
+      });
+      expect(postReview).toHaveBeenCalledExactlyOnceWith('o/r', 12, 'Verdict: COMMENT — Naming suggestion.', {
+        headSha: undefined,
+        comments: [],
+        attribution: { role: 'review agent', model: 'gpt-5.5', effort: 'xhigh' },
+      });
+      expect(db.getRun(row.id)?.status).toBe('succeeded');
+    } finally { db.close(); }
   });
 
   it('tails remaining log and awaits the exit file when the host is still alive, then finalizes', async () => {
@@ -898,6 +1099,21 @@ describe('reattachRun', () => {
     expect(updated?.prNumber).toBe(11);
     expect(updated?.costUsd).toBeCloseTo(0.4);
     db.close();
+  });
+
+  it('never transitions Jira for a local task recovered after Jira is reenabled', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = { ...baseRow(runsDir), prNumber: 7, taskJson: JSON.stringify({ ...task, todoId: 'TODO-1', ticketId: 'TODO-1' }) };
+      writeFileSync(row.exitPath!, '0');
+      db.insertRun(row);
+      const jira = fakeJira();
+      await reattachRun(row, { ...deps(db, jsonAdapter(), singleAttemptHost([], true), runsDir), jira, botAccountId: 'bot' });
+      expect(db.getRun(row.id)?.status).toBe('succeeded');
+      expect(jira.assignCalls).toEqual([]);
+      expect(jira.transitionCalls).toEqual([]);
+    } finally { db.close(); }
   });
 
   it('finalizes with markInReview when the PR number was already persisted pre-crash', async () => {

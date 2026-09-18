@@ -1,3 +1,5 @@
+import { DEFAULT_PRE_PR_SETTINGS, PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue, type PrePrSettings } from '../src/logic/prePrSettings';
+
 export interface JiraConfig {
   baseUrl: string;
   email: string;
@@ -16,6 +18,7 @@ export interface GithubConfig {
 export type RepoProjectMap = Record<string, string>;
 
 export interface AppConfig {
+  jiraEnabled: boolean;
   jira: JiraConfig | null;
   github: GithubConfig | null;
   repoLabel: string;
@@ -30,6 +33,7 @@ export interface AppConfig {
   agentAdapter: 'claude-code' | 'command' | 'codex';
   agentCmd: string | null;
   maxCostUsd: number | null;
+  prePr: PrePrSettings;
 }
 
 type Env = Record<string, string | undefined>;
@@ -52,11 +56,12 @@ function parseRepoProjectMap(raw: string | null): RepoProjectMap {
 }
 
 export function loadConfig(env: Env): AppConfig {
+  const jiraEnabled = env.JIRA_ENABLED !== 'false';
   const baseUrl: string | null = req(env, 'JIRA_BASE_URL');
   const email: string | null = req(env, 'JIRA_EMAIL');
   const apiToken: string | null = req(env, 'JIRA_API_TOKEN');
   const jira: JiraConfig | null =
-    baseUrl && email && apiToken
+    jiraEnabled && baseUrl && email && apiToken
       ? {
           baseUrl,
           email,
@@ -93,7 +98,12 @@ export function loadConfig(env: Env): AppConfig {
   const maxCostRaw: string | null = req(env, 'AGENT_MAX_COST_USD');
   const parsedMaxCost: number = maxCostRaw ? parseFloat(maxCostRaw) : NaN;
   const maxCostUsd: number | null = Number.isFinite(parsedMaxCost) ? parsedMaxCost : null;
+  const prePr: PrePrSettings = { ...DEFAULT_PRE_PR_SETTINGS };
+  for (const definition of PRE_PR_SETTING_DEFINITIONS) {
+    prePr[definition.key] = parsePrePrSettingValue(env[definition.envKey], definition) ?? definition.defaultValue;
+  }
   return {
+    jiraEnabled,
     jira,
     github,
     repoLabel,
@@ -108,6 +118,7 @@ export function loadConfig(env: Env): AppConfig {
     agentAdapter,
     agentCmd,
     maxCostUsd,
+    prePr,
   };
 }
 

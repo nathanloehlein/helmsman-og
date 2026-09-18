@@ -14,7 +14,7 @@ export class ProcessManager {
   canStart(repo: string): { ok: true } | { ok: false; reason: string } {
     if (this.entries.size >= this.maxConcurrency) return { ok: false, reason: 'max concurrency reached' };
     for (const entry of this.entries.values()) {
-      if (entry.repo === repo) return { ok: false, reason: `a run is already active for ${repo}` };
+      if (entry.repo.toLowerCase() === repo.toLowerCase()) return { ok: false, reason: `a run is already active for ${repo}` };
     }
     return { ok: true };
   }

@@ -25,6 +25,8 @@ describe('codexArgs', () => {
     expect(args).toContain('-c');
     expect(args[args.indexOf('-c') + 1]).toBe('model_reasoning_effort="medium"');
     expect(args[args.length - 1]).toContain('AB-1'); // prompt is last, references the ticket
+    expect(args.at(-1)).toContain('requests only Copilot after the PR is created');
+    expect(args.at(-1)).toContain('Do not request code owners, teams, or other human reviewers');
   });
   it('honors a provided model and effort', () => {
     const args = codexArgs(task({ model: 'opus', effort: 'high' }));
@@ -57,6 +59,8 @@ describe('codexArgs', () => {
     expect(args.at(-1)).toContain('if there are no new inline findings');
     expect(args.at(-1)).toContain('report that limitation and use COMMENT');
     expect(args.at(-1)).toContain('Helmsman publishes');
+    expect(args.at(-1)).toContain('independent adversarial reviewer');
+    expect(args.at(-1)).toContain('realistic supported inputs');
   });
 
   it('does not enable review delegation or its skill for coding and feedback runs', () => {

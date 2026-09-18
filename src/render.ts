@@ -14,6 +14,7 @@ import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOp
 import { REQUIRED_PR_APPROVALS } from './logic/prReviews';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
 import { shortVoyageId } from './logic/voyageId';
+import { PRE_PR_CONFIG_KEYS, PRE_PR_SETTING_DEFINITIONS } from './logic/prePrSettings';
 import { defaultTriageFilters, filterTriageTickets, TRIAGE_PRIORITIES, TRIAGE_DATE_OPTIONS, type TriageFilters } from './logic/triageFilters';
 import { DEFAULT_TRIAGE_PAGE_SIZE, TRIAGE_PAGE_SIZES, paginateTriageTickets, type TriageColumn, type TriagePages, type TriagePageSize } from './logic/triagePagination';
 
@@ -35,16 +36,22 @@ import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 const PRIORITY_CLASS: Record<Priority, string> = { P0: 'pri-p0', P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3', P4: 'pri-p4' };
 
 export const CONFIG_HELP: Record<string, string> = {
+  JIRA_ENABLED: 'Use Jira tickets for voyages; disable to use local todos instead. Applies immediately. Example: false',
   GITHUB_REVIEW_WATCH_ENABLED: 'Automatically review GitHub PRs requesting your review every five minutes: true or false. Changes apply immediately. Example: true',
   SLACK_WATCH_ENABLED: 'Enable automatic PR reviews from the watched Slack channel: true or false. Changes apply immediately. Example: true',
   SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
   SLACK_CHANNEL_ID: 'Exact Slack channel ID to watch. Only messages matching this channel are eligible for automatic review. Example: C0123456789',
   SLACK_CHANNEL_NAME: 'Channel name used in the Slack search query, without #. Example: pr-reviews',
   SLACK_BROWSER_SURFACE: 'Optional cmux browser surface containing signed-in Slack. Set this when multiple Slack browser surfaces are open. Example: surface:17',
+  SLACK_REVIEW_CHANNEL: 'Slack channel for manual PR review requests. Use a channel name or ID. Example: airo-editing',
+  SLACK_REVIEW_MENTION: 'Slack user group to mention in manual PR review requests. Use a group handle or ID. Example: airo-editing-squad',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
   AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
-  AGENT_MAX_ATTEMPTS: 'Maximum times a single voyage retries before it is abandoned. Example: 3',
+  AGENT_MAX_ATTEMPTS: 'Total attempts for existing-PR voyages, including the initial attempt. New coding voyages use the separate pre-PR review rounds. Example: 1',
   AGENT_MAX_COST_USD: 'Per-voyage spend ceiling in USD; the voyage stops once exceeded. Blank means no cap. Example: 5.00',
+  PRE_PR_REVIEWER_COUNT: 'Independent reviewer sessions per round: 1 uses the writer\'s CLI; 2 also uses the other supported CLI when installed. An installed reviewer that fails blocks publication. Example: 2',
+  PRE_PR_MAX_ROUNDS: 'Maximum review rounds, including the initial review. Each additional round allows fixes followed by every reviewer reviewing again. Unresolved findings block the PR. Example: 3',
+  PRE_PR_STAGE_TIMEOUT_MINUTES: 'Time limit in minutes for each implementation, fix, or reviewer session. A timed-out session blocks publication and retains the worktree. Example: 45',
   AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart. Example: 60000',
   REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
   JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry. Example: AIROBUILD',
@@ -100,6 +107,12 @@ const ICON_INFO: string =
 
 const ICON_CHECK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>'
+
+const ICON_COPY: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="7" height="8" rx="1.2"/><path d="M3 10.5H2.5V2.5h7V3"/></svg>';
+
+const ICON_OPEN: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5h4.5V7M13 3l-7 7M6.5 3H3v10h10V9.5"/></svg>';
 
 const ICON_X_MARK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
@@ -208,7 +221,8 @@ const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'dashboard', label: 'Helm' },
   { view: 'prs', label: 'PR' },
   { view: 'triage', label: 'Triage' },
-  { view: 'cmux', label: 'Below Decks' },
+  { view: 'todos', label: 'Todos' },
+  { view: 'cmux', label: 'Terminal' },
   { view: 'bugs', label: 'Bugs' },
   { view: 'runs', label: 'Voyages' },
   { view: 'config', label: 'Config' },
@@ -233,6 +247,7 @@ interface PanelDef {
 
 export interface HelmHeadOpts {
   active: PageView;
+  jiraEnabled?: boolean;
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
@@ -248,7 +263,8 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
       ),
     )
     .join('');
-  const tabs: string = PAGE_TABS.map(
+  const tabs: string = PAGE_TABS.filter(t => t.view === 'todos' ? opts.jiraEnabled === false
+    : t.view === 'triage' || t.view === 'bugs' ? opts.jiraEnabled !== false : true).map(
     (t) =>
       `<a class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" href="${esc(routeHref({ view: t.view, repo: opts.selectedRepo }))}" data-view="${t.view}" role="tab" id="page-tab-${t.view}" aria-selected="${t.view === opts.active}" aria-controls="page-content" tabindex="${t.view === opts.active ? 0 : -1}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`,
   ).join('');
@@ -346,6 +362,7 @@ export function renderDashboard(
   layout: RackLayout = defaultLayout(),
   jiraBaseUrl: string | null = null,
   repoPrs?: PrListState,
+  jiraEnabled: boolean = true,
 ): void {
   const queue = sortByPriority(data.queue);
   const scopedRuns: RunSummary[] = selectedRepo
@@ -356,8 +373,8 @@ export function renderDashboard(
   const underway = Array.isArray(data.underway) ? data.underway.filter(ticket => ticket && ticket.status !== 'done') : [];
   const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
   const underwayItems = underwayKnown && underway.length
-    ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, selectedRepo)).join('')
-    : `<li class="empty-note">${underwayKnown ? 'No unfinished tickets assigned to you.' : 'Underway tickets unavailable.'}</li>`;
+    ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, jiraEnabled ? selectedRepo : null)).join('')
+    : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : 'Underway tickets unavailable.'}</li>`;
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
 
@@ -375,7 +392,7 @@ export function renderDashboard(
       </li>`,
         )
         .join('')
-    : '<li class="empty-note">No backlog tickets assigned.</li>';
+    : `<li class="empty-note">${jiraEnabled ? 'No backlog tickets assigned.' : 'No todos ready to launch. Add a description and set the state to To do.'}</li>`;
 
   const agentRows: string = activeRuns.length
     ? activeRuns
@@ -432,7 +449,7 @@ export function renderDashboard(
   const sampleSources = degraded.filter(source => source !== 'jira-underway');
   const banner: string =
     sampleSources.length > 0
-      ? `<div class="degraded-banner">Showing sample data for: ${sampleSources.join(', ')} — check server credentials.</div>`
+      ? `<div class="degraded-banner">${jiraEnabled ? 'Showing sample data for' : 'Unavailable integrations'}: ${sampleSources.join(', ')} — check server credentials.</div>`
       : '';
 
   const newRunRepoOptions: string = sortedRepos
@@ -448,7 +465,7 @@ export function renderDashboard(
             run.prNumber != null
               ? `<a class="recent-run-pr" href="https://github.com/${esc(run.repo)}/pull/${run.prNumber}" target="_blank" rel="noopener">#${run.prNumber}</a>`
               : '';
-          const canRerun: boolean = TICKET_RE.test(run.ticketId);
+          const canRerun: boolean = jiraEnabled && TICKET_RE.test(run.ticketId);
           const rerunBtn: string = canRerun
             ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Relaunch voyage for ${esc(run.ticketId)}" title="Relaunch voyage for ${esc(run.ticketId)}">${ICON_REDO}</button>`
             : `<button class="recent-rerun" type="button" disabled aria-label="Cannot relaunch voyage" title="Cannot relaunch voyage — original task is unavailable">${ICON_REDO}</button>`;
@@ -462,7 +479,7 @@ export function renderDashboard(
         <span class="agent-cost mono">${costText}</span>
         ${prLink}
         <span class="chip ${statusInfo.chipClass}">${statusInfo.label}</span>
-        ${rerunBtn}
+        ${run.status === 'failed' ? renderVoyageRetry(run.id) : rerunBtn}
       </li>`;
         })
         .join('')
@@ -474,21 +491,21 @@ export function renderDashboard(
     newrun: {
       lamp: 'idle',
       count: null,
-      body: `
+      body: `${jiraEnabled ? '' : `<p class="config-warning"><a class="app-link" href="${esc(routeHref({ view: 'todos', repo: selectedRepo }))}">Create or launch a todo →</a></p>`}
         <div class="newrun-body">
           <div class="newrun-mode-toggle">
-            <label class="newrun-mode-label">
+            ${jiraEnabled ? `<label class="newrun-mode-label">
               <input type="radio" class="newrun-mode" name="newrun-mode" value="ticket" checked>
               <span>Ticket</span>
-            </label>
+            </label>` : ''}
             <label class="newrun-mode-label">
-              <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform">
+              <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform"${jiraEnabled ? '' : ' checked'}>
               <span>Free-form</span>
             </label>
           </div>
           <div class="newrun-fields">
-            <input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
-            <input class="newrun-title" type="text" placeholder="Title (optional)">
+            ${jiraEnabled ? `<input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
+            <input class="newrun-title" type="text" placeholder="Title (optional)">` : ''}
             <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
             <select class="newrun-repo" aria-label="Repository for new voyage">${newRunRepoOptions}</select>
             ${tuningSelects('newrun')}
@@ -509,7 +526,7 @@ export function renderDashboard(
     underway: {
       lamp: underwayKnown && underway.length ? 'queued' : 'idle',
       count: underwayKnown ? underway.length : null,
-      body: `${underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
+      body: `${jiraEnabled && underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
     },
     recent: {
       lamp: 'idle',
@@ -547,28 +564,46 @@ export function renderDashboard(
 function renderVoyageId(id: unknown): string {
   const shortId = shortVoyageId(id);
   return shortId && typeof id === 'string'
-    ? `<span class="voyage-id mono" title="${esc(id)}" aria-label="Voyage ${esc(shortId)}">${esc(shortId)}</span>`
+    ? `<button type="button" class="voyage-id mono" data-copy-run-id="${esc(id)}" title="${esc(id)}" aria-label="Copy full voyage ID ${esc(id)}">${ICON_COPY}<span>${esc(shortId)}</span><span class="voyage-copy-feedback" role="status" aria-live="polite"></span></button>`
     : '';
+}
+
+export function renderVoyageRetry(id: string): string {
+  if (typeof id !== 'string' || id.startsWith('err-') || !/^[a-z\d_-]{1,128}$/i.test(id)) return '';
+  return `<button type="button" class="voyage-retry" data-retry-run-id="${esc(id)}" aria-label="Retry failed voyage ${esc(id)}" title="Start a fresh voyage with the original task and settings">${ICON_REDO}<span>Retry</span></button><span class="voyage-retry-feedback" data-retry-feedback-for="${esc(id)}" role="status" aria-live="polite"></span>`;
 }
 
 export interface RunTabView {
   id: string;
   label: string;
   complete: boolean;
+  status?: string;
+}
+
+export function runTabStatus(status?: string, complete = false): { kind: string; label: string } {
+  const labels: Record<string, string> = { running: 'Running', succeeded: 'Succeeded', failed: 'Failed', stopped: 'Stopped', queued: 'Queued', completed: 'Completed' };
+  const kind = status && Object.hasOwn(labels, status) ? status : complete ? 'completed' : 'running';
+  return { kind, label: labels[kind] ?? 'Running' };
 }
 
 export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, collapsed: boolean = false): string {
   const strip: string = tabs
     .map(
-      (t) => `
-      <div class="run-tab${t.id === activeId ? ' is-active' : ''}" data-tabid="${esc(t.id)}">
-        <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}">
-          <span class="run-tab-dot${t.complete ? ' is-complete' : ''}" aria-hidden="true"></span>
-          <span class="run-tab-identity"><span class="run-tab-label">${esc(t.label)}</span>${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}</span>
+      (t, index) => {
+        const status = runTabStatus(t.status, t.complete);
+        const selected = t.id === activeId;
+        return `
+      <div class="run-tab${selected ? ' is-active' : ''}" data-tabid="${esc(t.id)}" data-run-status="${status.kind}" role="presentation">
+        <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}" role="tab" id="run-tab-${esc(encodeURIComponent(t.id))}" aria-selected="${selected}" aria-controls="run-log-panel" tabindex="${selected || activeId === null && index === 0 ? 0 : -1}" title="${esc(t.label)}">
+          <span class="run-tab-label">${esc(t.label)}</span>
+          <span class="run-tab-status">${status.label}</span>
         </button>
-        ${!t.id.startsWith('err-') ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Link to ${esc(t.label)}">↗</a>` : ''}
-        <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}">${ICON_CLOSE}</button>
-      </div>`,
+        <div class="run-tab-meta">${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}
+          <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Open ${esc(t.label)} in Voyages" title="Open voyage">${ICON_OPEN}</a>` : ''}
+          <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}" title="Close voyage">${ICON_CLOSE}</button></div>
+        </div>
+      </div>`;
+      },
     )
     .join('');
   const emptyBody: string =
@@ -579,13 +614,15 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
     tabs.length === 0 ? '<span class="run-drawer-title mono">CREW TASKS</span>' : '';
   const collapseBtn: string =
     tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'crew tasks', collapsed) : '';
+  const activeTab = tabs.find(tab => tab.id === activeId);
   const logToolbar = activeId && !activeId.startsWith('err-') && /^[a-z\d_-]{1,128}$/i.test(activeId)
     ? `<div class="run-log-toolbar mono">${renderVoyageId(activeId)}<span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
     : '';
   return `
-    <div class="run-tabs" role="tablist">${header}${strip}${collapseBtn}</div>
+    <div class="run-tabs" role="tablist" aria-label="Open voyages">${header}${strip}${collapseBtn}</div>
     ${logToolbar}
-    <div class="run-drawer-body mono">${emptyBody}</div>
+    <div class="run-drawer-retry">${activeTab?.status === 'failed' ? renderVoyageRetry(activeTab.id) : ''}</div>
+    <div class="run-drawer-body mono" id="run-log-panel" role="tabpanel"${activeId ? ` aria-labelledby="run-tab-${esc(encodeURIComponent(activeId))}"` : ' aria-label="Voyage output"'} tabindex="0">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
 }
@@ -672,6 +709,7 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
           ${reviewFreshness}
         </div>
       </div>
+      ${pr.isOwnPr === true && pr.state === 'open' && !pr.merged ? slackReviewButton(pr.repo, pr.number) : ''}
       <div class="pr-review">
         <textarea class="pr-review-body" placeholder="Review comment"></textarea>
         <div class="pr-review-actions">
@@ -706,7 +744,14 @@ function validListPrs(state?: PrListState): OpenPr[] {
     : [];
 }
 
-function renderPrList(state: PrListState | undefined, emptyMessage: string): string {
+function slackReviewButton(repo: string, number: number): string {
+  return `<span class="slack-review-control" data-slack-review-control data-repo="${esc(repo)}" data-number="${number}">
+    <button type="button" class="slack-review-request" data-slack-review-request data-repo="${esc(repo)}" data-number="${number}">Request review in Slack</button>
+    <span class="slack-review-result" role="status"></span>
+  </span>`;
+}
+
+function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false): string {
   const prs: OpenPr[] = validListPrs(state);
   const rows: string = prs.map((pr) => {
     const chip = reviewChip(pr.reviewDecision ?? '');
@@ -716,6 +761,7 @@ function renderPrList(state: PrListState | undefined, emptyMessage: string): str
       <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span></span>
       ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
       ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
+      ${requestReview ? slackReviewButton(pr.repo, pr.number) : ''}
     </li>`;
   }).join('');
   const status: string = !state || state.loading
@@ -752,7 +798,7 @@ function githubPrListLink(url: string): string {
 function renderPrListPanel(title: string, className: string, state: PrListState | undefined, emptyMessage: string, githubUrl: string): string {
   return `<section class="panel pr-list-panel ${className}">
     <div class="panel-head"><span class="panel-title">${title}</span><span class="mono pr-list-count">${validListPrs(state).length}</span></div>
-    ${renderPrList(state, emptyMessage)}
+    ${renderPrList(state, emptyMessage, className === 'pr-authored')}
     <div class="empty-note">${githubPrListLink(githubUrl)}</div>
   </section>`;
 }
@@ -799,14 +845,16 @@ export function renderVoyage(run: RunSummary): string {
   const startedAt = typeof run.startedAt === 'string' && Number.isFinite(Date.parse(run.startedAt))
     ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}">${esc(formatRelativeTime(run.startedAt, new Date()))}</time>` : '';
   const href = `/runs?${new URLSearchParams({ run: run.id })}`;
-  return `<li class="recent-run" data-runid="${esc(run.id)}">
+  return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
     <a class="app-link lane runs-voyage-link" href="${esc(href)}">
       ${renderVoyageResult(run)}
-      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span>${renderVoyageId(run.id)}</span>
+      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span></span>
       <span class="agent-repo mono">${esc(run.repo.split('/').pop() ?? run.repo)}</span>
       ${startedAt}
       <span class="chip ${status.chipClass}">${esc(status.label)}</span>
     </a>
+    ${renderVoyageId(run.id)}
+    ${run.status === 'failed' ? renderVoyageRetry(run.id) : ''}
   </li>`;
 }
 
@@ -1080,7 +1128,8 @@ export interface ConfigViewOpts {
 }
 
 function configRowsHtml(uiConfig: UiConfig): string {
-  const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {});
+  const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {})
+    .filter(([key]) => !['JIRA_ENABLED', 'SLACK_REVIEW_CHANNEL', 'SLACK_REVIEW_MENTION'].includes(key) && !PRE_PR_CONFIG_KEYS.some((reviewKey) => reviewKey === key));
   if (entries.length === 0) return '<div class="empty-note">No configuration keys.</div>';
   return entries
     .map(([key, value]) => {
@@ -1100,6 +1149,32 @@ function configRowsHtml(uiConfig: UiConfig): string {
     .join('');
 }
 
+function prePrConfigPanel(uiConfig: UiConfig): string {
+  const labels = {
+    reviewerCount: 'Reviewers per round',
+    maxRounds: 'Maximum review rounds',
+    stageTimeoutMinutes: 'Session timeout (minutes)',
+  };
+  const rows = PRE_PR_SETTING_DEFINITIONS.map(({ key, envKey, defaultValue, min, max }) => {
+    const value = uiConfig.config?.[envKey] ?? defaultValue;
+    const isOverridden = uiConfig.overridden?.includes(envKey) ?? false;
+    return `
+      <div class="config-row" data-key="${envKey}">
+        <label class="config-key" for="config-${envKey}">${labels[key]}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}</label>
+        <input id="config-${envKey}" class="config-input" type="number" min="${min}" max="${max}" step="1" required value="${esc(String(value))}" aria-describedby="help-${envKey}">
+        <button class="config-save" data-key="${envKey}">Save</button>
+        <span class="config-error" role="alert"></span>
+      </div>
+      <div class="config-warning" id="help-${envKey}">${esc(CONFIG_HELP[envKey] ?? '')} Range: ${min}–${max}; default: ${defaultValue}. <span class="mono">${envKey}</span></div>`;
+  }).join('');
+  return `
+      <section class="panel config-panel pre-pr-config-panel" aria-labelledby="pre-pr-config-title">
+        <div class="panel-head"><span class="panel-title" id="pre-pr-config-title">Pre-PR review</span></div>
+        <div class="config-warning">Adversarial reviews run before a new coding voyage publishes its PR. Every reviewer must approve the final commit. Changes apply to newly launched voyages; running voyages keep their settings. Supported CLIs: Codex and Claude Code. With only one installed, one reviewer runs.</div>
+        <div class="config-list">${rows}</div>
+      </section>`;
+}
+
 function jiraTokenRowHtml(tokenSet: boolean): string {
   const status: string = tokenSet
     ? '<span class="config-secret-status is-set">set ✓</span>'
@@ -1114,10 +1189,27 @@ function jiraTokenRowHtml(tokenSet: boolean): string {
 }
 
 export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
+  const jiraEnabled = uiConfig.config?.JIRA_ENABLED !== 'false' && uiConfig.config?.JIRA_ENABLED !== false;
   const themeOptions = THEMES.map(
     (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
   ).join('');
   return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <section class="panel config-panel" aria-labelledby="work-source-title">
+        <div class="panel-head"><span class="panel-title" id="work-source-title">Voyage source</span></div>
+        <div class="config-list">
+          <div class="config-row" data-key="JIRA_ENABLED">
+            <label class="config-key" for="jira-enabled">Jira integration</label>
+            <select class="config-input" id="jira-enabled" aria-describedby="jira-enabled-help">
+              <option value="true"${jiraEnabled ? ' selected' : ''}>Enabled — Jira tickets</option>
+              <option value="false"${jiraEnabled ? '' : ' selected'}>Disabled — local todos</option>
+            </select>
+            <button type="button" class="config-save" data-key="JIRA_ENABLED">Save</button>
+            <span class="config-error" role="alert"></span>
+          </div>
+        </div>
+        <p class="config-warning" id="jira-enabled-help">Disabling Jira replaces Triage and Bugs with Todos. The backlog and auto-claim use local todos. Saved credentials and todos are kept when switching sources.</p>
+        ${jiraEnabled ? '' : `<p class="config-warning"><a class="app-link" href="${esc(routeHref({ view: 'todos', repo: opts.selectedRepo }))}">Manage todos →</a></p>`}
+      </section>
       <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
         <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
         <div class="ui-customization-body">
@@ -1126,6 +1218,24 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
           <p id="ui-theme-help">Applies immediately and is saved in this browser.</p>
           ${renderThemePreview()}
         </div>
+      </section>
+      <section class="panel config-panel slack-review-config" aria-labelledby="slack-review-config-title">
+        <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack review requests</span></div>
+        <p class="config-warning">The button on your open PRs posts the PR link and tags your review group. Requests are sent only when you click it.</p>
+        <div class="config-list">
+          ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', 'Review group', 'airo-editing-squad']].map(([key, label, fallback]) => `
+            <div class="config-row" data-key="${key}">
+              <label class="config-key" for="config-${key}">${label}</label>
+              <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup">
+              <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
+            </div>`).join('')}
+          <div class="config-row config-secret-row" data-key="SLACK_BOT_TOKEN">
+            <label class="config-key" for="config-SLACK_BOT_TOKEN">Bot token <span class="config-secret-status ${uiConfig.slackTokenSet ? 'is-set' : 'is-unset'}">${uiConfig.slackTokenSet ? 'set ✓' : 'not set'}</span></label>
+            <input id="config-SLACK_BOT_TOKEN" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste bot token to update" aria-describedby="slack-review-setup">
+            <button class="config-save" data-key="SLACK_BOT_TOKEN">Update</button><span class="config-error" role="alert"></span>
+          </div>
+        </div>
+        <p class="config-warning" id="slack-review-setup">Install a Slack app with chat:write, channels:read, and usergroups:read permissions, then invite its bot to the channel. Channel and group names or IDs are accepted. For a private channel, use its ID and add groups:read. The saved token is never displayed.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">
@@ -1136,6 +1246,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
           ${configRowsHtml(uiConfig)}
         </div>
       </section>
+      ${prePrConfigPanel(uiConfig)}
 `);
 }
 
@@ -1195,7 +1306,7 @@ export function renderCmuxView(state: CmuxViewState): string {
     readout: null,
   };
   if (!state.connected) {
-    return renderAppShell(opts, '<div class="panel empty-note">cmux not connected. Is the cmux app running?</div>');
+    return renderAppShell(opts, '<div class="panel empty-note">Terminal not connected. Check that your terminal app is running.</div>');
   }
 
   const list: string = state.tabs.length
@@ -1208,7 +1319,7 @@ export function renderCmuxView(state: CmuxViewState): string {
       </button>`,
         )
         .join('')
-    : '<div class="empty-note">No cmux tabs.</div>';
+    : '<div class="empty-note">No terminal tabs.</div>';
 
   const selected: CmuxTabView | null = state.tabs.find((t) => t.surfaceRef === state.selectedSurface) ?? null;
 

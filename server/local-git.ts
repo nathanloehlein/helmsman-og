@@ -15,7 +15,18 @@ type Branch = LocalGitResponse['branches'][number] & {
 };
 type Worktree = LocalGitResponse['worktrees'][number] & { deletionBlockedReason: string | null };
 export interface LocalGitOptions { activeWorktreePaths?: () => string[] }
+export interface BranchCleanup {
+  force: boolean;
+  expectedHead: string;
+  candidates: { branch: string; expectedCommit: string; upstreamStatus: 'none' | 'gone' }[];
+  skipped: { branch: string; reason: string }[];
+}
+
+type LocalGitResult = { status: number; json: LocalGitResponse & { cleanup?: BranchCleanup } };
+
 export type LocalGitAction =
+  | { action: 'preview-delete-untracked-branches'; force?: boolean }
+  | { action: 'delete-untracked-branches'; expectedHead: string; branches: { branch: string; expectedCommit: string }[]; force?: boolean }
   | { action: 'delete-branch'; branch: string; expectedCommit: string; force?: boolean }
   | { action: 'delete-worktree'; path: string; expectedCommit: string }
   | { action: 'refresh-remotes' };
@@ -26,6 +37,35 @@ async function git(path: string, args: string[], timeout = 10_000): Promise<stri
     env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
   });
   return result.stdout;
+}
+
+function deleteBranchRefs(path: string, branches: { branch: string; expectedCommit: string }[]): Promise<void> {
+  const input = ['start', ...branches.map(branch => `delete refs/heads/${branch.branch} ${branch.expectedCommit}`), 'prepare', 'commit', ''].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = execFile('git', ['-C', path, 'update-ref', '--no-deref', '--stdin'], {
+      encoding: 'utf8', timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+    }, (error) => error ? reject(error) : resolve());
+    child.stdin?.on('error', reject);
+    child.stdin?.end(input);
+  });
+}
+
+async function cleanupPreview(path: string, branches: Branch[], force: boolean): Promise<BranchCleanup> {
+  const expectedHead = (await git(path, ['rev-parse', '--verify', 'HEAD'])).trim();
+  const candidates: BranchCleanup['candidates'] = [];
+  const skipped: BranchCleanup['skipped'] = [];
+  for (const branch of branches) {
+    if (branch.upstreamStatus !== 'none' && branch.upstreamStatus !== 'gone') continue;
+    let reason = branch.deletionBlockedReason;
+    if (!reason && !force) {
+      try { await git(path, ['merge-base', '--is-ancestor', branch.commit, expectedHead]); }
+      catch { reason = 'Branch is not fully merged into the current HEAD.'; }
+    }
+    if (reason) skipped.push({ branch: branch.name, reason });
+    else candidates.push({ branch: branch.name, expectedCommit: branch.commit, upstreamStatus: branch.upstreamStatus });
+  }
+  return { force, expectedHead, candidates, skipped };
 }
 
 function parseBranches(output: string, config: string): Branch[] {
@@ -151,6 +191,24 @@ function parseAction(input: unknown): LocalGitAction | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const value = input as Record<string, unknown>;
   if (value.action === 'refresh-remotes') return { action: value.action };
+  if (value.action === 'preview-delete-untracked-branches') {
+    if (value.force !== undefined && typeof value.force !== 'boolean') return null;
+    return { action: value.action, force: value.force === true };
+  }
+  if (value.action === 'delete-untracked-branches') {
+    if ((value.force !== undefined && typeof value.force !== 'boolean') || typeof value.expectedHead !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value.expectedHead)
+      || !Array.isArray(value.branches) || value.branches.length === 0 || value.branches.length > 1000) return null;
+    const branches: { branch: string; expectedCommit: string }[] = [];
+    for (const entry of value.branches) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const target = entry as Record<string, unknown>;
+      if (typeof target.branch !== 'string' || !target.branch || target.branch.startsWith('-') || /[\s\0]/.test(target.branch)
+        || typeof target.expectedCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(target.expectedCommit)
+        || branches.some(branch => branch.branch === target.branch)) return null;
+      branches.push({ branch: target.branch, expectedCommit: target.expectedCommit });
+    }
+    return { action: value.action, expectedHead: value.expectedHead, branches, force: value.force === true };
+  }
   if (typeof value.expectedCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value.expectedCommit)) return null;
   if (value.action === 'delete-branch' && typeof value.branch === 'string' && value.branch.length > 0 && !value.branch.startsWith('-')
     && (value.force === undefined || typeof value.force === 'boolean')) {
@@ -168,7 +226,7 @@ export async function mutateLocalGit(
   configuredRepos: string[],
   input: unknown,
   options: LocalGitOptions = {},
-): Promise<{ status: number; json: LocalGitResponse }> {
+): Promise<LocalGitResult> {
   const action = parseAction(input);
   if (!action) return { status: 400, json: { repo, path: null, branches: [], worktrees: [], error: 'Invalid local Git action.' } };
   const lockKey = resolve(agentsRoot, typeof repo === 'string' ? repoBasename(repo) : '');
@@ -181,7 +239,41 @@ export async function mutateLocalGit(
     try {
       const checkoutError = await mutationCheckoutError(agentsRoot, repo, path);
       if (checkoutError) return fail(409, checkoutError);
-      if (action.action === 'refresh-remotes') {
+      if (action.action === 'preview-delete-untracked-branches') {
+        return { status: 200, json: { ...state.json, cleanup: await cleanupPreview(path, state.json.branches as Branch[], action.force === true) } };
+      }
+      if (action.action === 'delete-untracked-branches') {
+        const preview = await cleanupPreview(path, state.json.branches as Branch[], action.force === true);
+        if (preview.expectedHead !== action.expectedHead) return fail(409, 'Current HEAD changed. Preview branch cleanup again.');
+        for (const target of action.branches) {
+          await git(path, ['check-ref-format', `refs/heads/${target.branch}`]);
+          const candidate = preview.candidates.find(branch => branch.branch === target.branch);
+          if (!candidate || candidate.expectedCommit !== target.expectedCommit) return fail(409, `Branch ${target.branch} changed or is no longer safe to delete. Preview cleanup again.`);
+        }
+        const latest = await getLocalGit(agentsRoot, repo, configuredRepos, options);
+        if (latest.status !== 200 || latest.json.error) return fail(409, 'Unable to recheck branch safety. Preview cleanup again.');
+        for (const target of action.branches) {
+          const branch = latest.json.branches.find(branch => branch.name === target.branch);
+          if (!branch || branch.commit !== target.expectedCommit || branch.deletionBlockedReason
+            || (branch.upstreamStatus !== 'none' && branch.upstreamStatus !== 'gone')) return fail(409, `Branch ${target.branch} changed or is no longer safe to delete. Preview cleanup again.`);
+        }
+        if ((await git(path, ['rev-parse', '--verify', 'HEAD'])).trim() !== action.expectedHead) return fail(409, 'Current HEAD changed. Preview branch cleanup again.');
+        await deleteBranchRefs(path, action.branches);
+        let metadataIncomplete = false;
+        try {
+          const config = await git(path, ['config', '--null', '--list']);
+          for (const target of action.branches) {
+            if (config.split('\0').some(entry => entry.split('\n')[0]?.startsWith(`branch.${target.branch}.`))) {
+              await git(path, ['config', '--remove-section', `branch.${target.branch}`]).catch(() => { metadataIncomplete = true; });
+            }
+          }
+        } catch { metadataIncomplete = true; }
+        const refreshed = await getLocalGit(agentsRoot, repo, configuredRepos, options);
+        return metadataIncomplete ? {
+          status: 200,
+          json: { ...refreshed.json, error: 'Branches deleted, but Git could not remove all saved branch settings. Review those settings before reusing the branch names.' },
+        } : refreshed;
+      } else if (action.action === 'refresh-remotes') {
         const remotes = (await git(path, ['remote'])).split('\n').filter(Boolean);
         for (const remote of remotes) {
           await git(path, ['check-ref-format', `refs/remotes/${remote}/helmsman-validation`]);

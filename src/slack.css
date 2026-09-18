@@ -37,3 +37,10 @@
 .slack-action-error, .slack-empty { margin: 0; padding: 16px; font-size: 12px; }
 .slack-empty { color: var(--text-faint); }
 @media (max-width: 700px) { .slack-popover { position: fixed; top: 100px; right: 20px; } }
+.slack-review-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.pr-list-row .slack-review-control { margin-left: auto; }
+.slack-review-request { color: var(--accent); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 7px 10px; font: 11px var(--mono); cursor: pointer; }
+.slack-review-request:disabled { opacity: .6; cursor: default; }
+.slack-review-request:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.slack-review-result { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.slack-review-result.is-error { color: var(--bad); }

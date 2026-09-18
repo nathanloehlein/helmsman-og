@@ -9,6 +9,17 @@ const item: SlackNotification = {
 };
 
 describe('Slack notification center', () => {
+  it('identifies created-PR reviews and safely links their original voyage', () => {
+    const state = unavailableSlack();
+    state.notifications = [{ ...item, channelName: 'Helmsman created PRs', author: 'Helmsman', sourceUrl: '/runs?run=parent-42' }];
+    document.body.innerHTML = renderSlack(state, true);
+    expect(document.querySelector('.slack-author')?.textContent).toBe('Helmsman review · newly opened PR');
+    expect([...document.querySelectorAll('.app-link')].find(link => link.textContent === 'Original voyage')?.getAttribute('href')).toBe('/runs?repo=org%2Frepo&run=parent-42');
+    state.notifications[0]!.sourceUrl = '//untrusted.example/runs?run=parent-42';
+    document.body.innerHTML = renderSlack(state, true);
+    expect(document.body.textContent).not.toContain('Original voyage');
+  });
+
   it('distinguishes queued and launched reviews, preserves read history, and links to runs', () => {
     const state = unavailableSlack();
     state.notifications = [item, { ...item, id: 'two', status: 'queued', runId: null, readAt: item.createdAt }];

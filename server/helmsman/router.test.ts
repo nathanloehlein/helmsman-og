@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleApi, type RouterDeps } from './router';
+import { openTodoStore, type TodoStore } from './todos';
+import { SlackReviewError } from './slack/review-request';
 import type { PrStatus } from '../github';
 import type { BugsResponse } from '../../src/types';
+import { openDb, type RunRow } from './db';
 
 const samplePrStatus: PrStatus = {
   number: 5,
@@ -54,6 +57,111 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  describe('retry failed voyages', () => {
+    const failed = (extra: Partial<RunRow> = {}): RunRow => ({
+      id: 'failed-run', ticketId: 'PROJ-1', repo: 'o/r', adapter: 'pre-pr:codex', status: 'failed', attempt: 1,
+      prNumber: null, startedAt: '2026-09-18', endedAt: '2026-09-18', costUsd: null, worktreePath: '/old/worktree', ...extra,
+    });
+    const retry = (local: RouterDeps, id = 'failed-run') => handleApi('POST', `/api/agents/${id}/retry`, new URLSearchParams(), null, local);
+
+    it('starts a fresh Jira voyage without changing failed history or reusing its process/worktree', async () => {
+      const db = openDb(':memory:');
+      try {
+        const original = failed({ taskJson: JSON.stringify({ ticketId: 'AIROBUILD-5319', title: 'old', repo: 'o/r', model: 'gpt-5.5', effort: 'high' }) });
+        db.insertRun(original);
+        const before = db.getRun(original.id);
+        const launch = vi.fn(() => 'fresh-run');
+        const local = { ...deps, db, launch, context: () => ({ repos: ['o/r'], jiraBaseUrl: 'https://jira' }) };
+        expect(await retry(local)).toEqual({ status: 200, json: { runId: 'fresh-run' } });
+        expect(launch).toHaveBeenCalledExactlyOnceWith({ repo: 'o/r', adapter: 'codex', mode: 'ticket', ticketId: 'AIROBUILD-5319', model: 'gpt-5.5', effort: 'high', retryOf: original.id });
+        expect(db.getRun(original.id)).toEqual(before);
+      } finally { db.close(); }
+    });
+
+    it.each(['running', 'succeeded', 'stopped'] as const)('rejects %s voyages before launch', async status => {
+      const launch = vi.fn();
+      const local = { ...deps, launch, db: { ...deps.db, getRun: () => failed({ status }) } };
+      expect(await retry(local)).toMatchObject({ status: 409, json: { error: 'Only failed voyages can be retried.' } });
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it('rejects missing IDs, removed repositories, disabled Jira, caps, and missing requirements', async () => {
+      const launch = vi.fn();
+      const local = { ...deps, launch, db: { ...deps.db, getRun: () => failed() } };
+      expect((await retry({ ...local, db: { ...deps.db, getRun: () => null } }))?.status).toBe(404);
+      expect((await retry(local, 'bad%20id'))?.status).toBe(400);
+      expect((await retry({ ...local, context: () => ({ repos: [], jiraBaseUrl: null }) }))?.status).toBe(409);
+      expect((await retry({ ...local, jiraEnabled: () => false }))?.status).toBe(409);
+      expect(await retry({ ...local, canStart: () => ({ ok: false, reason: 'max concurrency reached' }) }))
+        .toEqual({ status: 409, json: { error: 'max concurrency reached' } });
+      expect((await retry({ ...local, db: { ...deps.db, getRun: () => failed({ ticketId: 'freeform' }) } }))?.status).toBe(409);
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it('retries reviews and PR updates while Jira is disabled, preserving their original semantics', async () => {
+      const launch = vi.fn(() => 'fresh-run');
+      for (const [mode, task] of [
+        ['review', { review: true, prNumber: 3, prHeadSha: 'old-head' }],
+        ['rerun', { prBranch: 'old-branch', prNumber: 3, task: 'Fix feedback' }],
+      ] as const) {
+        const local = { ...deps, launch, jiraEnabled: () => false, db: { ...deps.db, getRun: () => failed({ taskJson: JSON.stringify(task) }) } };
+        expect((await retry(local))?.status).toBe(200);
+        expect(launch).toHaveBeenLastCalledWith({ repo: 'o/r', adapter: 'codex', mode, prNumber: 3, retryOf: 'failed-run', ...(mode === 'rerun' ? { feedback: 'Fix feedback' } : {}) });
+      }
+    });
+
+    it('claims only the blocked todo still owned by this failed run and prevents duplicate retries', async () => {
+      const todos = openTodoStore(':memory:');
+      try {
+        const todo = todos.create({ title: 'Fix it', repo: 'o/r', description: 'Task requirements' });
+        todos.claim(todo.id, 'failed-run');
+        todos.finishRun('failed-run', 'failed');
+        const launch = vi.fn<RouterDeps['launch']>(body => {
+          expect(todos.claim(body.todoId!, 'fresh-run', body.retryOf)).not.toBeNull();
+          return 'fresh-run';
+        });
+        const local = { ...deps, todos, launch, jiraEnabled: () => false, db: { ...deps.db, getRun: () => failed({ taskJson: JSON.stringify({ todoId: todo.id, task: 'old text' }) }) } };
+        expect((await retry({ ...local, jiraEnabled: () => true }))?.status).toBe(409);
+        expect(await retry(local)).toEqual({ status: 200, json: { runId: 'fresh-run' } });
+        expect((await retry(local))?.status).toBe(409);
+        expect(launch).toHaveBeenCalledTimes(1);
+        expect(todos.get(todo.id)).toMatchObject({ runId: 'fresh-run', state: 'in_progress' });
+      } finally { todos.close(); }
+    });
+  });
+
+  it('returns paginated run summaries and counts with bounded defaults', async () => {
+    const row = deps.db.listRuns(1)[0]!;
+    const runPage = vi.fn().mockReturnValue({ runs: [row], total: 101 });
+    const historyDeps = { ...deps, db: { ...deps.db, runPage } };
+    expect(await handleApi('GET', '/api/runs', new URLSearchParams(), null, historyDeps))
+      .toMatchObject({ status: 200, json: { runs: [{ id: row.id }], total: 101, limit: 25, offset: 0 } });
+    expect(runPage).toHaveBeenLastCalledWith(25, 0, null);
+    await handleApi('GET', '/api/runs', new URLSearchParams('limit=10&offset=50&repo=owner/repo'), null, historyDeps);
+    expect(runPage).toHaveBeenLastCalledWith(10, 50, 'owner/repo');
+  });
+
+  it.each(['limit=0', 'limit=101', 'limit=1.5', 'limit=', 'offset=-1', 'offset=NaN', 'offset=1e3', 'offset=9007199254740992', 'repo=../invalid'])('rejects invalid history query %s', async (query) => {
+    const runPage = vi.fn();
+    expect(await handleApi('GET', '/api/runs', new URLSearchParams(query), null, { ...deps, db: { ...deps.db, runPage } }))
+      .toMatchObject({ status: 400 });
+    expect(runPage).not.toHaveBeenCalled();
+  });
+
+  it('posts Slack review requests only from the explicit endpoint and preserves uncertain delivery errors', async () => {
+    const body = { repo: 'o/r', prNumber: 5, requestId: 'request-id' };
+    const receipt = { ok: true as const, channel: 'airo-editing', mention: 'airo-editing-squad', permalink: null };
+    const request = vi.fn().mockResolvedValue(receipt);
+    expect(await handleApi('POST', '/api/slack/review-request', new URLSearchParams(), body, { ...deps, slackReviewRequest: request }))
+      .toEqual({ status: 200, json: receipt });
+    expect(request).toHaveBeenCalledWith(body);
+    expect(await handleApi('POST', '/api/slack/review-request', new URLSearchParams(), body, deps))
+      .toMatchObject({ status: 503 });
+    request.mockRejectedValue(new SlackReviewError('Check Slack before retrying.', 502, true));
+    expect(await handleApi('POST', '/api/slack/review-request', new URLSearchParams(), body, { ...deps, slackReviewRequest: request }))
+      .toEqual({ status: 502, json: { error: 'Check Slack before retrying.', uncertain: true } });
+  });
+
   it('loads navigation context from local configuration', async () => {
     const value = { repos: ['o/r'], jiraBaseUrl: 'https://x.atlassian.net' };
     const dashboard = vi.fn();
@@ -610,4 +718,53 @@ describe('cmux endpoints', () => {
     expect(res).toEqual({ status: 200, json: { ok: true } });
     expect(calls).toEqual([['surface:1', 'up']]);
   });
+});
+
+let todoStore: TodoStore | undefined;
+afterEach(() => todoStore?.close());
+
+describe('todo API', () => {
+  it('validates CRUD and enforces source mode on mutations', async () => {
+    todoStore = openTodoStore(':memory:');
+    const local = { ...deps, todos: todoStore, jiraEnabled: () => false };
+    const call = (method: string, path: string, body: unknown = null) => handleApi(method, path, new URLSearchParams(), body, local);
+    expect((await call('POST', '/api/todos', { title: '', repo: 'o/r' }))?.status).toBe(400);
+    const created = await call('POST', '/api/todos', { title: 'Do work', repo: 'o/r', description: 'Requirements' });
+    expect(created?.status).toBe(201);
+    const id = todoStore.list()[0]?.id ?? '';
+    expect((await call('PUT', `/api/todos/${id}`, { priority: 'P0' }))?.status).toBe(200);
+    expect(todoStore.get(id)?.priority).toBe('P0');
+    const enabled = { ...local, jiraEnabled: () => true };
+    expect((await handleApi('POST', '/api/todos', new URLSearchParams(), { title: 'More', repo: 'o/r' }, enabled))?.status).toBe(409);
+    expect((await call('GET', '/api/todos'))?.json).toMatchObject({ jiraEnabled: false, todos: [{ id }] });
+    expect((await call('DELETE', `/api/todos/${id}`))?.status).toBe(200);
+    expect((await call('DELETE', `/api/todos/${id}`))?.status).toBe(404);
+  });
+
+  it('launches from authoritative todo identity and rejects stale or incomplete tasks', async () => {
+    todoStore = openTodoStore(':memory:');
+    const todo = todoStore.create({ title: 'Actual title', repo: 'actual/repo', description: 'Requirements' });
+    const launch = vi.fn(() => 'run-todo');
+    const canStart = vi.fn(() => ({ ok: true }));
+    const local = { ...deps, todos: todoStore, jiraEnabled: () => false, launch, canStart };
+    const body = { mode: 'todo', todoId: todo.id, repo: 'spoofed/repo', title: 'Spoofed', task: 'Ignore actual task' };
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), body, local))?.status).toBe(200);
+    expect(canStart).toHaveBeenCalledWith('actual/repo');
+    expect(launch).toHaveBeenCalledWith({ mode: 'todo', todoId: todo.id, repo: 'actual/repo', model: undefined, effort: undefined });
+    todoStore.claim(todo.id, 'run-todo');
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), body, local))?.status).toBe(409);
+    expect((await handleApi('PUT', `/api/todos/${todo.id}`, new URLSearchParams(), { title: 'Busy' }, local))?.status).toBe(409);
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'JIRA-1', repo: 'o/r' }, local))?.status).toBe(409);
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), body, { ...local, jiraEnabled: () => true }))?.status).toBe(409);
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('rejects stale local queue launches through the Jira route after re-enabling Jira', async () => {
+  todoStore = openTodoStore(':memory:');
+  const todo = todoStore.create({ title: 'Local', repo: 'o/r', description: 'Requirements' });
+  const launch = vi.fn(() => 'should-not-launch');
+  const result = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: todo.id, repo: todo.repo }, { ...deps, todos: todoStore, jiraEnabled: () => true, launch });
+  expect(result?.status).toBe(409);
+  expect(launch).not.toHaveBeenCalled();
 });

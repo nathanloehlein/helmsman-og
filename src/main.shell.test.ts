@@ -104,14 +104,14 @@ describe('persistent app shell', () => {
   it('updates shared underway counts on Config without replacing its draft or shared controls', async () => {
     const { root, runs, switchTo, count } = await setup();
     await switchTo('config');
-    const input = root.querySelector<HTMLInputElement>('.config-input')!;
+    const input = root.querySelector<HTMLInputElement>('input.config-input')!;
     input.value = 'Unsaved draft';
     const header = root.querySelector('.helm-head');
     const footer = root.querySelector('.app-footer');
     const queue = root.querySelector('[data-fleet-count="queued"]')?.textContent;
     runs[0]!.status = 'succeeded';
     await vi.advanceTimersByTimeAsync(LOCAL_POLL_MS);
-    expect(root.querySelector('.config-input')).toBe(input);
+    expect(root.querySelector('input.config-input')).toBe(input);
     expect(input.value).toBe('Unsaved draft');
     expect(root.querySelector('.helm-head')).toBe(header);
     expect(root.querySelector('.app-footer')).toBe(footer);

@@ -35,6 +35,16 @@ describe('db', () => {
     expect(r?.costUsd).toBe(1.5);
   });
 
+  it('persists original launch intent separately from execution metadata', () => {
+    db = openDb(':memory:');
+    const launchJson = JSON.stringify({ repo: 'o/r', mode: 'freeform', task: 'Original requirements' });
+    db.insertRun(run({ status: 'failed', launchJson }));
+    expect(db.getRun('r1')?.launchJson).toBe(launchJson);
+    expect(db.getRun('r1')?.taskJson).toBeNull();
+    db.updateRun('r1', { taskJson: '{"model":"gpt-5.5"}' });
+    expect(db.getRun('r1')?.launchJson).toBe(launchJson);
+  });
+
   it('lists active runs only', () => {
     db = openDb(':memory:');
     db.insertRun(run({ id: 'a', status: 'running' }));
@@ -78,6 +88,30 @@ describe('db', () => {
     expect(db.recentEvents('missing', 300, 4000)).toEqual([]);
   });
 
+  it('paginates the complete history with deterministic ordering and matching repository totals', () => {
+    db = openDb(':memory:');
+    for (let index = 0; index < 60; index++) {
+      db.insertRun(run({ id: `run-${String(index).padStart(2, '0')}`, repo: index % 2 ? 'owner/repo' : 'other/repo' }));
+    }
+    const first = db.runPage(25, 0);
+    const second = db.runPage(25, 25);
+    const third = db.runPage(25, 50);
+    expect(first.total).toBe(60);
+    expect(first.runs[0]?.id).toBe('run-59');
+    expect(third.runs).toHaveLength(10);
+    expect(new Set([...first.runs, ...second.runs, ...third.runs].map(({ id }) => id)).size).toBe(60);
+    expect(db.runPage(25, 100)).toEqual({ runs: [], total: 60 });
+    const filtered = db.runPage(25, 25, 'OWNER/REPO');
+    expect(filtered.total).toBe(30);
+    expect(filtered.runs.map(({ id }) => id)).toEqual(['run-09', 'run-07', 'run-05', 'run-03', 'run-01']);
+    expect(db.runPage(25, 0, 'missing/repo')).toEqual({ runs: [], total: 0 });
+  });
+
+  it.each([[0, 0], [101, 0], [1.5, 0], [25, -1], [25, Infinity], [NaN, 0]])('rejects invalid history bounds %s/%s', (limit, offset) => {
+    db = openDb(':memory:');
+    expect(() => db.runPage(limit, offset)).toThrow(RangeError);
+  });
+
   it('reads only the latest review verdict for the matching run and bounds its text', () => {
     db = openDb(':memory:');
     expect(db.latestReviewVerdict('r1')).toBeNull();
@@ -115,10 +149,12 @@ describe('db', () => {
     const plan = migrated.prepare("EXPLAIN QUERY PLAN SELECT text FROM run_events WHERE runId = ? AND kind = 'review-verdict' ORDER BY id DESC LIMIT 1").all('old') as { detail: string }[];
     expect(plan.some((step) => step.detail.includes('idx_events_review_verdict'))).toBe(true);
     migrated.close();
-    db.updateRun('old', { hostKind: 'detached', hostRef: '{"kind":"detached","pid":9}', logPath: '/l', exitPath: '/e', specPath: '/s', logOffset: 42, taskJson: '{"ticketId":"T-1"}' });
+    expect(db.getRun('old')?.launchJson).toBeNull();
+    db.updateRun('old', { hostKind: 'detached', hostRef: '{"kind":"detached","pid":9}', logPath: '/l', exitPath: '/e', specPath: '/s', logOffset: 42, taskJson: '{"ticketId":"T-1"}', launchJson: '{"repo":"o/r","ticketId":"T-1"}' });
     const row = db.getRun('old')!;
     expect(row.hostKind).toBe('detached');
     expect(row.logOffset).toBe(42);
+    expect(row.launchJson).toBe('{"repo":"o/r","ticketId":"T-1"}');
     expect(db.reattachableRuns().map((r) => r.id)).toContain('old');
     db.close();
   });

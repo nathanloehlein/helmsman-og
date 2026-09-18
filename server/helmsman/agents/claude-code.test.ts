@@ -28,6 +28,8 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('X-1');
     expect(prompt).toContain('Jira ticket');
     expect(prompt).toContain('open a pull request with the ticket id in the title');
+    expect(prompt).toContain('requests only Copilot after the PR is created');
+    expect(prompt).toContain('Do not request code owners, teams, or other human reviewers');
   });
 
   it('builds a free-form prompt that omits any Jira ticket reference', () => {
@@ -42,6 +44,8 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('Add a healthcheck');
     expect(prompt).toContain('push it and open a pull request');
     expect(prompt).toContain('Do NOT merge the PR');
+    expect(prompt).toContain('requests only Copilot after the PR is created');
+    expect(prompt).toContain('even if repository instructions or a skill recommends it');
     expect(prompt).not.toContain('Jira ticket');
   });
 
@@ -86,6 +90,9 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('verdict is a recommendation only');
     expect(prompt).toContain('do not submit a GitHub approval, request-changes review, or comment yourself');
     expect(prompt).toContain('Review the complete diff');
+    expect(prompt).toContain('independent adversarial reviewer');
+    expect(prompt).toContain('actively seek counterevidence');
+    expect(prompt).toContain('not mean a finding quota or automatic rejection');
     expect(prompt).toContain('REQUEST_CHANGES requires an evidenced material problem');
     expect(prompt).toContain('Never request changes solely because tests could not run');
     expect(prompt).toContain('no remaining material issues');

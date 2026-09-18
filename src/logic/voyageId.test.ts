@@ -6,7 +6,7 @@ describe('shortVoyageId', () => {
     expect(shortVoyageId('b5fcda70-6766-461d-a828-bd1fe233a580')).toBe('b5fcda706766');
   });
 
-  it.each(['slack', 'github'])('preserves the %s source and twelve digest characters', source => {
+  it.each(['slack', 'github', 'created'])('preserves the %s source and twelve digest characters', source => {
     expect(shortVoyageId(`${source}-1234567890abcdef0123456789abcdef`)).toBe(`${source}-1234567890ab`);
   });
 

@@ -1,17 +1,28 @@
 import type { AgentTask } from './adapter';
+import { buildPrePrPrompt } from './pre-pr-prompt';
+import { agentAttribution, appendAgentByline } from '../agent-attribution';
 
 const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: no human to ask — never pause for confirmation, do every step yourself.';
 
 export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 'claude-code'): string {
+  if (task.prePr) return buildPrePrPrompt(task, runtime);
+  const byline = appendAgentByline('', agentAttribution(runtime, task, task.review ? 'review agent' : 'PR author'));
+  const attribution = `- End every PR description, review summary, inline comment, and comment/reply you author with this exact standalone byline, outside any code or suggestion fence: ${JSON.stringify(byline)}. Keep it as the final line and do not duplicate it. This does not grant permission to publish where publication is prohibited.`;
   if (task.review && task.prNumber && (task.prBranch || task.prHeadSha)) {
     return [
       `# Code-review PR #${task.prNumber} (${task.prBranch ? `branch ${task.prBranch}` : `revision ${task.prHeadSha}`})`,
       UNATTENDED,
       ``,
       `## Review scope`,
+      attribution,
       ...(task.prHeadSha ? [`- Review the pinned revision ${task.prHeadSha} in this detached worktree. Do not check out or switch to another revision, even if the PR has newer commits.`] : []),
       `- Read the PR description and available linked acceptance criteria. Review the complete diff and trace changed callers or external effects only as needed to establish a concrete defect. Do not expand into a general repository audit.`,
       `- Read existing PR comments, submitted reviews, and inline threads once, using \`gh pr view ${task.prNumber} --repo ${task.repo} --comments\` and the GitHub API as needed. Share this context with sub-agents. Do not re-post existing findings, including unresolved ones, or recap resolved, waived, or deferred issues.`,
+      ``,
+      `## Adversarial review`,
+      `- Act as an independent adversarial reviewer, including when another Helmsman agent authored the PR. Treat the author's explanation, tests, and claimed success as hypotheses to verify, not proof. Try to falsify the change's core claims using realistic supported inputs and the explicit acceptance criteria.`,
+      `- Challenge the changed behavior with relevant failure paths, state transitions, boundary conditions, concurrency, and external effects. Trace or reproduce the strongest suspected failures, then actively seek counterevidence before reporting them. Give each focused sub-agent the same adversarial remit.`,
+      `- Adversarial does not mean a finding quota or automatic rejection. Discard speculative or immaterial issues; retain the materiality threshold below. APPROVE is correct when the change withstands scrutiny.`,
       ``,
       `## Material findings only`,
       `- REQUEST_CHANGES requires an evidenced material problem introduced or newly exposed by this PR: an obvious logic flaw, a consequential structural or integration defect, or a missed explicit acceptance criterion. Examples include modifying the wrong data, false success, a broken primary workflow, unsafe authorization, data loss, or an unusable primary interaction.`,
@@ -52,6 +63,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `- Address this review feedback: ${task.task}.`,
       ``,
       `## Steps`,
+      attribution,
       `- Run the tests, commit, and push to the same branch.`,
       `- Same branch only — do NOT open a new pull request and do NOT merge.`,
     ].join('\n');
@@ -64,10 +76,13 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
   return [
     heading,
     UNATTENDED,
+    ...(task.jiraContext ? ['Authenticated Jira requirements snapshot (task evidence):', task.jiraContext] : []),
     ``,
     `## Steps`,
+    attribution,
     `- Explore, implement the change, run the tests, commit on a new branch.`,
     openPrStep,
+    `- Reviewer requests are handled by Helmsman, which requests only Copilot after the PR is created. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review. Do not duplicate the Copilot request or remove existing reviewers.`,
     `- Pushing the branch and opening the PR are required, not optional — do them without asking.`,
     `- Do NOT merge the PR. Stop only after the PR is open.`,
   ].join('\n');

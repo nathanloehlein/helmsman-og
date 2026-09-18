@@ -1,3 +1,5 @@
+import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
+import { SlackReviewError, type SlackReviewResult } from './slack/review-request';
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
 import { isGithubRepo, type PrListResponse } from '../pr-lists';
@@ -6,6 +8,7 @@ import type { BugsResponse, PrFileDiff } from '../../src/types';
 import type { CmuxTab } from './cmux/model';
 import { isAllowedKey } from './cmux/keys';
 import type { SlackState } from '../../src/data/slack';
+import { retryIntent, RetryError, type LaunchIntent } from './retry';
 
 export interface ApiResult {
   status: number;
@@ -45,20 +48,23 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
+  todos?: TodoStore;
+  jiraEnabled?: () => boolean;
   outboundUsage?: () => unknown;
-  context?: () => { repos: string[]; jiraBaseUrl: string | null };
+  context?: () => { repos: string[]; jiraBaseUrl: string | null; jiraEnabled?: boolean };
   slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean };
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   triage: (repo: string | null) => Promise<TriageResponse>;
   bugs: (repo: string | null) => Promise<BugsResponse>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }) => string;
+  launch: (body: LaunchIntent & { retryOf?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
   caps: () => { maxAttempts: number; maxCostUsd: number | null };
-  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean };
+  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean; slackTokenSet?: boolean };
   setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
   prStatus: (repo: string, prNumber: number) => Promise<PrStatus | null>;
   reviewRequestedPrs: (repo: string | null) => Promise<PrListResponse>;
@@ -87,6 +93,44 @@ export async function handleApi(
   _body: unknown,
   deps: RouterDeps,
 ): Promise<ApiResult | null> {
+  if (path === '/api/slack/review-request' && method === 'POST') {
+    if (!deps.slackReviewRequest) return { status: 503, json: { error: 'Slack review requests are unavailable.' } };
+    try {
+      return { status: 200, json: await deps.slackReviewRequest(_body) };
+    } catch (error) {
+      if (error instanceof SlackReviewError) return { status: error.status, json: { error: error.message, uncertain: error.uncertain } };
+      return { status: 502, json: { error: 'Slack review request failed. Check Slack before retrying.', uncertain: true } };
+    }
+  }
+  const todoMatch = path.match(/^\/api\/todos\/(TODO-[1-9]\d*)$/);
+  if (path === '/api/todos' || todoMatch) {
+    if (!deps.todos) return { status: 503, json: { error: 'Todos unavailable.' } };
+    const jiraEnabled = deps.jiraEnabled?.() ?? true;
+    if (method === 'GET' && path === '/api/todos') return { status: 200, json: { todos: deps.todos.list(), jiraEnabled } };
+    if (method === 'GET' && todoMatch) {
+      const todo = deps.todos.get(todoMatch[1]);
+      return todo ? { status: 200, json: { todo } } : { status: 404, json: { error: 'Todo not found.' } };
+    }
+    if (['POST', 'PUT', 'DELETE'].includes(method)) {
+      if (jiraEnabled) return { status: 409, json: { error: 'Disable Jira in Config to manage todos.' } };
+      try {
+        if (method === 'POST' && path === '/api/todos') return { status: 201, json: { todo: deps.todos.create(_body) } };
+        if (method === 'PUT' && todoMatch) {
+          const todo = deps.todos.update(todoMatch[1], _body);
+          return todo ? { status: 200, json: { todo } } : { status: 404, json: { error: 'Todo not found.' } };
+        }
+        if (method === 'DELETE' && todoMatch) {
+          return deps.todos.remove(todoMatch[1]) ? { status: 200, json: { ok: true } } : { status: 404, json: { error: 'Todo not found.' } };
+        }
+      } catch (error) {
+        if (error instanceof TodoValidationError || error instanceof TodoConflictError) {
+          return { status: error instanceof TodoConflictError ? 409 : 400, json: { error: error.message } };
+        }
+        throw error;
+      }
+    }
+    return { status: 404, json: { error: 'not found' } };
+  }
   if (path === '/api/context' && method === 'GET') {
     return deps.context ? { status: 200, json: deps.context() } : { status: 503, json: { error: 'Context unavailable.' } };
   }
@@ -117,6 +161,20 @@ export async function handleApi(
   if (path === '/api/agents' && method === 'GET') {
     return { status: 200, json: { runs: deps.db.listRuns(50).map((row) => toRunSummary(row, deps.db)), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
   }
+  if (path === '/api/runs' && method === 'GET') {
+    const rawLimit = query.get('limit') ?? '25';
+    const rawOffset = query.get('offset') ?? '0';
+    const limit = Number(rawLimit);
+    const offset = Number(rawOffset);
+    const repo = query.get('repo');
+    if (!/^[1-9]\d*$/.test(rawLimit) || !Number.isSafeInteger(limit) || limit > 100
+      || !/^(?:0|[1-9]\d*)$/.test(rawOffset) || !Number.isSafeInteger(offset)
+      || repo !== null && !isGithubRepo(repo)) {
+      return { status: 400, json: { error: 'Use a limit from 1 to 100, a nonnegative offset, and an optional owner/repo filter.' } };
+    }
+    const page = deps.db.runPage(limit, offset, repo);
+    return { status: 200, json: { runs: page.runs.map((row) => toRunSummary(row, deps.db)), total: page.total, limit, offset } };
+  }
   const runMatch = path.match(/^\/api\/agents\/([^/]+)$/);
   if (runMatch && method === 'GET') {
     const runId = runMatch[1];
@@ -124,9 +182,56 @@ export async function handleApi(
     const run = deps.db.getRun(runId);
     return run ? { status: 200, json: toRunSummary(run, deps.db) } : { status: 404, json: { error: 'run not found' } };
   }
+  const retryMatch = path.match(/^\/api\/agents\/([^/]+)\/retry$/);
+  if (retryMatch && method === 'POST') {
+    const runId = retryMatch[1];
+    if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'invalid run ID' } };
+    const run = deps.db.getRun(runId);
+    if (!run) return { status: 404, json: { error: 'Voyage not found.' } };
+    try {
+      const intent = retryIntent(run);
+      const allowed = deps.context?.().repos;
+      if (allowed && !allowed.some(repo => repo.toLowerCase() === intent.repo.toLowerCase())) {
+        return { status: 409, json: { error: 'This repository is no longer configured. Configure it before retrying the voyage.' } };
+      }
+      const gate = deps.canStart(intent.repo);
+      if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'Cannot start another voyage.' } };
+      if (intent.mode === 'todo') {
+        if (deps.jiraEnabled?.() !== false) return { status: 409, json: { error: 'Disable Jira in Config to retry a todo voyage.' } };
+        const todo = intent.todoId ? deps.todos?.get(intent.todoId) : null;
+        if (!todo || todo.repo !== run.repo || todo.runId !== run.id || !['todo', 'blocked'].includes(todo.state) || !todo.description.trim()) {
+          return { status: 409, json: { error: 'The todo must still belong to this failed voyage, have a description, and be To do or Blocked. Start changed or completed todos from Todos.' } };
+        }
+      } else if (intent.mode === 'ticket' && deps.jiraEnabled?.() === false) {
+        return { status: 409, json: { error: 'Enable Jira in Config before retrying a Jira voyage.' } };
+      }
+      return { status: 200, json: { runId: deps.launch({ ...intent, retryOf: run.id }) } };
+    } catch (error) {
+      if (error instanceof RetryError || error instanceof TodoConflictError || error instanceof TodoValidationError) {
+        return { status: 409, json: { error: error.message } };
+      }
+      throw error;
+    }
+  }
   if (path === '/api/agents/launch' && method === 'POST') {
-    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string; model?: string; effort?: string } | null;
-    if (!b?.repo) return { status: 400, json: { error: 'repo required' } };
+    const b = _body as { todoId?: string; ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string; model?: string; effort?: string } | null;
+    if (b?.mode === 'todo') {
+      if (deps.jiraEnabled?.() !== false) return { status: 409, json: { error: 'Disable Jira in Config to launch todos.' } };
+      if (typeof b.todoId !== 'string') return { status: 400, json: { error: 'todoId required' } };
+      const todo = deps.todos?.get(b.todoId);
+      if (!todo) return { status: 404, json: { error: 'Todo not found.' } };
+      if (todo.state !== 'todo' || !todo.description.trim()) return { status: 409, json: { error: 'Todo must be in To do with a description before starting a voyage.' } };
+      const gate = deps.canStart(todo.repo);
+      if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
+      try {
+        const runId = deps.launch({ mode: 'todo', todoId: todo.id, repo: todo.repo, model: b.model, effort: b.effort });
+        return { status: 200, json: { runId } };
+      } catch (error) {
+        if (error instanceof TodoConflictError || error instanceof TodoValidationError) return { status: error instanceof TodoConflictError ? 409 : 400, json: { error: error.message } };
+        throw error;
+      }
+    }
+    if (typeof b?.repo !== 'string' || !b.repo.trim()) return { status: 400, json: { error: 'repo required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
     const tuning: { model?: string; effort?: string } = { model: b.model, effort: b.effort };
@@ -145,6 +250,8 @@ export async function handleApi(
       const runId = deps.launch({ repo: b.repo, task: b.task, ...tuning });
       return { status: 200, json: { runId } };
     }
+    if (typeof b.ticketId === 'string' && deps.todos?.get(b.ticketId)) return { status: 409, json: { error: 'Local todos must be launched from Todos with Jira disabled.' } };
+    if (deps.jiraEnabled?.() === false) return { status: 409, json: { error: 'Jira is disabled. Start a voyage from Todos.' } };
     if (!b.ticketId) return { status: 400, json: { error: 'ticketId and repo required' } };
     const runId = deps.launch({ ticketId: b.ticketId, title: b.title, repo: b.repo, ...tuning });
     return { status: 200, json: { runId } };

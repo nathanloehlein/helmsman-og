@@ -12,6 +12,54 @@ function render(overrides: Partial<LocalGitState> = {}): HTMLDivElement {
 }
 
 describe('renderLocalGit', () => {
+  it('warns about unmerged commit loss only for the previewed force mode', () => {
+    const cleanup = { expectedHead: 'head123', force: true, candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'none' as const }], skipped: [] };
+    const forced = render({ cleanup });
+    expect(forced.querySelector<HTMLInputElement>('.local-git-cleanup-force')?.checked).toBe(true);
+    expect(forced.querySelector('.local-git-cleanup-warning')?.textContent).toContain('permanently lose local commits');
+    expect(forced.querySelector('.local-git-cleanup')?.textContent).toContain('Current, default, and checked-out branches are protected');
+    expect(render({ cleanup: { ...cleanup, force: false } }).querySelector('.local-git-cleanup-warning')).toBeNull();
+    expect(render({ cleanup, pendingAction: 'Deleting…' }).querySelector<HTMLInputElement>('.local-git-cleanup-force')?.disabled).toBe(true);
+  });
+
+  it('previews exact bulk candidates and safety skips without a force option', () => {
+    const root = render({ cleanup: {
+      expectedHead: 'head123', force: false,
+      candidates: [
+        { branch: 'local-topic', expectedCommit: '1234567890', upstreamStatus: 'none' },
+        { branch: 'removed-topic', expectedCommit: 'abcdef123456', upstreamStatus: 'gone' },
+      ],
+      skipped: [{ branch: 'main', reason: 'Default branch is protected.' }, { branch: 'work', reason: 'Branch is not fully merged.' }],
+    } });
+    expect(root.querySelector('.local-git-cleanup')?.textContent).toContain('Delete 2 local branches without upstreams?');
+    expect(root.querySelectorAll('[aria-label="Branches to delete"] li')).toHaveLength(2);
+    expect(root.querySelector('[aria-label="Branches to delete"]')?.textContent).toContain('Upstream branch gone');
+    expect(root.querySelector('[aria-label="Branches to delete"] .local-git-commit')?.getAttribute('title')).toBe('1234567890');
+    expect(root.querySelector('[aria-label="Branches kept"]')?.textContent).toContain('Branch is not fully merged.');
+    expect(root.querySelector('.local-git-force')).toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('.local-git-cleanup-confirm')?.disabled).toBe(false);
+  });
+
+  it('disables empty cleanup and shows the reasons branches were kept', () => {
+    const root = render({ cleanup: { expectedHead: 'head123', force: false, candidates: [], skipped: [{ branch: 'main', reason: 'Current branch.' }] } });
+    expect(root.querySelector('.local-git-cleanup')?.textContent).toContain('No local branches are ready for cleanup.');
+    expect(root.querySelector<HTMLButtonElement>('.local-git-cleanup-confirm')?.disabled).toBe(true);
+    expect(root.querySelector<HTMLDetailsElement>('.local-git-cleanup-skipped')?.open).toBe(true);
+    expect(render({ path: null }).querySelector<HTMLButtonElement>('.local-git-cleanup-preview')?.disabled).toBe(true);
+  });
+
+  it('escapes bulk branch names and reasons and disables confirmation while pending', () => {
+    const payload = '<img src=x onerror="alert(1)">';
+    const root = render({ pendingAction: 'Deleting branches…', cleanup: {
+      expectedHead: 'head123', force: false, candidates: [{ branch: payload, expectedCommit: payload, upstreamStatus: 'none' }],
+      skipped: [{ branch: payload, reason: payload }],
+    } });
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.querySelector('[aria-label="Branches to delete"] .local-git-name')?.textContent).toBe(payload);
+    expect(root.querySelector('[aria-label="Branches kept"] .local-git-cleanup-reason')?.textContent).toBe(payload);
+    expect(root.querySelector<HTMLButtonElement>('.local-git-cleanup-confirm')?.disabled).toBe(true);
+  });
+
   it('shows a selection prompt and disables refresh without a repo', () => {
     const root = render({ repo: null, path: null });
     expect(root.textContent).toContain('Select a repo');

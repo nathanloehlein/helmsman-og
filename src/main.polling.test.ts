@@ -101,7 +101,7 @@ describe('view-aware polling', () => {
 
   it.each(['/config', '/runs', '/cmux'])('does not refresh external data while on %s', async (path) => {
     const { count } = await setup(path);
-    expect(count('/api/context')).toBe(1);
+    expect(count('/api/context')).toBe(2);
     expect(count('/api/dashboard')).toBe(0);
     const initialConfig = count('/api/config');
     const initialGit = count('/api/repo/local');
@@ -112,6 +112,7 @@ describe('view-aware polling', () => {
     expect(count('/api/config')).toBe(initialConfig);
     expect(count('/api/repo/local')).toBe(initialGit);
     expect(count('/api/agents')).toBeGreaterThan(1);
+    expect(count('/api/context')).toBeGreaterThan(2);
   });
 
   it('loads the dashboard when leaving a metadata-only Config bootstrap', async () => {
@@ -142,7 +143,7 @@ describe('view-aware polling', () => {
 
   it('falls back to the existing dashboard bootstrap if context is unavailable', async () => {
     const { root, count } = await setup('/runs?repo=org/a', [], false);
-    expect(count('/api/context')).toBe(1);
+    expect(count('/api/context')).toBe(2);
     expect(count('/api/dashboard')).toBe(1);
     expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/a');
     await vi.advanceTimersByTimeAsync(POLL_MS * 2);

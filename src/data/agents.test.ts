@@ -1,8 +1,53 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getRun, openRunStream } from './agents';
+import { getRun, openRunStream, retryRun } from './agents';
 import { RUN_LOG_LINE_LIMIT } from '../logic/runLog';
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('retryRun', () => {
+  it('posts the full original ID and returns only the new voyage ID', async () => {
+    const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ runId: 'new-voyage', ignored: true })));
+    vi.stubGlobal('fetch', fetch);
+    await expect(retryRun(id)).resolves.toEqual({ runId: 'new-voyage' });
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/agents/${id}/retry`, { method: 'POST' });
+  });
+
+  it.each(['', '../run', 'bad id', 'x'.repeat(129), null, undefined, 42])('rejects invalid IDs without fetching: %j', async id => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    await expect(retryRun(id as string)).rejects.toThrow('Invalid voyage ID.');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports the server error when retry is rejected', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Original task is unavailable.' }), { status: 409 })));
+    await expect(retryRun('old-run')).rejects.toThrow('Original task is unavailable.');
+  });
+
+  it.each(['not-json', 'null', '[]', '{}', '{"error":42}'])('uses the HTTP status for malformed failure responses: %s', async body => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 503 })));
+    await expect(retryRun('old-run')).rejects.toThrow('Retry failed (503).');
+  });
+
+  it.each([
+    null, [], {}, 'new-run', { runId: null }, { runId: 42 }, { runId: '' },
+    { runId: '../run' }, { runId: 'x'.repeat(129) }, { runId: 'old-run' },
+  ])('rejects invalid or unchanged successful IDs: %j', async body => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    await expect(retryRun('old-run')).rejects.toThrow('The server did not return a new voyage ID. Check recent voyages before retrying.');
+  });
+
+  it('rejects malformed success JSON without suggesting an automatic retry', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not-json')));
+    await expect(retryRun('old-run')).rejects.toThrow('Check recent voyages before retrying.');
+  });
+
+  it('propagates network failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network unavailable')));
+    await expect(retryRun('old-run')).rejects.toThrow('Network unavailable');
+  });
+});
 
 describe('openRunStream', () => {
   it('ignores malformed events, bounds preview text, and stops after completion', () => {

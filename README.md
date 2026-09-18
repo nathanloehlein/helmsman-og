@@ -220,7 +220,74 @@ Jira key + pick a repo (Helmsman fetches the summary for the title, fail-soft); 
 **Free-form** mode, give a task prompt + repo and no Jira ticket is touched (no claim, no
 transition — the run row is labelled `freeform`). Both stream into the same live drawer.
 
+### Review before PR creation
+
+Agent-authored PR descriptions, review summaries, inline findings, and replies end
+with a short attribution line, for example:
+`_Helmsman · gpt-5.6-sol - med_`. Authors and reviewers use the same format,
+with `med` for medium and `min` for minimal. Helmsman appends the footer when publishing PRs
+and reviews; agent prompts require it on direct comments and replies too. Bylines
+use the effective execution settings, including Codex defaults. Unreported provider
+defaults and custom-command settings are explicitly marked rather than guessed.
+The footer stays outside code and suggestion blocks, and repeated publication does
+not duplicate it. Human-written reviews submitted through the UI keep their own text.
+
+Every new coding voyage implements and commits locally, then passes an adversarial
+review before Helmsman pushes the branch or opens a PR. A fresh reviewer session
+uses the writer's CLI; by default, if the other supported CLI is installed, a second
+session uses it too. **Config → Pre-PR review** controls reviewers per round (1–2),
+maximum rounds (1–5), and the timeout for each session (5–180 minutes). Settings are
+captured when a voyage launches; changes do not affect running voyages. One reviewer
+means a fresh session of the writer's CLI; two adds the other supported CLI when
+installed. With only one installed, one reviewer runs. Currently supported CLIs are
+Codex and Claude Code. Authenticate both when using two reviewers: an installed but
+broken alternate reviewer blocks publication rather than silently reducing the gate.
+
+Reviewers inspect the same pinned commit in separate detached worktrees and focus
+on material logic, structure, acceptance criteria, UX, and external effects. Codex
+reviewers require the installed `$review-agent` skill; each CLI delegates relevant
+areas to focused leaf agents. Reviews default to low effort and use medium for
+larger changes across areas. The author fixes verified findings, then **all**
+reviewers review the new commit again. By default there are at most three review
+rounds (two remediation rounds); setting one round permits no fix-and-review cycle.
+Every reviewer must approve with no findings; incomplete
+reviews, missing tools, changed revisions, and exhausted rounds block publication.
+
+Helmsman publishes the reviewed commit itself, targeting the repository's default
+branch. It selects a remote whose fetch and push URLs match the voyage repository
+(prefer `origin`, otherwise require one matching remote), then verifies the pushed
+SHA. The voyage log shows each stage. Failed or stopped voyages retain the author
+worktree for inspection and repair; review reports and PR metadata live under the
+run directory in a `.pre-pr` artifact folder. These worktrees survive restart sweeps
+and can be removed from the local branches/worktrees page when no longer needed.
+The workflow runs in the existing durable run host and survives server restarts.
+
+This gate applies to new coding voyages, not existing-PR feedback reruns. The generic
+`command` adapter cannot launch a new coding voyage because it cannot provide this
+review contract. `AGENT_MAX_ATTEMPTS` does not multiply `PRE_PR_MAX_ROUNDS`.
+Each author, fix, or reviewer session has a 45-minute timeout by default. The existing post-PR review
+and Copilot request still run after successful publication.
+
 ### Recent voyages
+
+After a successful coding voyage opens a PR, Helmsman requests Copilot and queues
+its own independent adversarial review as a separate voyage. The durable queue
+waits for repository capacity, survives restarts, and reuses a running or successful
+review of the same revision. It runs on completion and retries pending work on the
+existing five-minute cadence, with no external reads when idle or busy. This does
+not require either Slack or requested-review polling to be enabled. Closed, merged,
+or draft PRs are blocked with a notification; transient lookup failures stay queued.
+Review failures are visible and do not trigger an automatic retry loop.
+
+The review challenges the author's claims and checks realistic failure paths while
+retaining the material-defect threshold, inline findings, complexity-based model
+selection, and COMMENT-only publication. Persistent notifications link the review
+and original coding voyage. Review voyages and feedback reruns do not recursively
+queue more reviews. Existing historical PRs are not backfilled.
+
+The PR-creation agent must not request code owners, teams, or human reviewers,
+including through review mentions. GitHub's automatic CODEOWNERS rules can still
+add reviewers.
 
 Opening a voyage shows a bounded preview of its latest 300 log entries. Updates
 are batched to keep the browser responsive; long entries are shortened in the
@@ -239,7 +306,7 @@ for live runs.
 
 Voyage rows and log tabs show a stable short ID derived from the persisted run ID.
 UUIDs use their first 12 hexadecimal characters; automatic reviews retain their
-`slack-` or `github-` prefix followed by 12 hexadecimal characters. Hover the ID
+`slack-`, `github-`, or `created-` prefix followed by 12 hexadecimal characters. Hover the ID
 to see the full value. Links and log downloads continue to use the full run ID.
 
 ### PR controls
@@ -273,7 +340,7 @@ merge stays a deliberate action on GitHub, and the agent never merges.
 
 ### Direct links
 
-Each tab has a page URL: `/helm`, `/triage`, `/cmux`, `/bugs`, `/prs`, `/config`, and
+Each tab has a page URL: `/helm`, `/triage`, `/todos`, `/terminal`, `/bugs`, `/prs`, `/config`, and
 `/runs`. `/` opens Helm, and `/pr` is an alias for `/prs`. Links can include a pane
 and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 
@@ -287,7 +354,7 @@ and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 | Existing voyage's log | `/runs?run=99723f3e-ff89-433a-8621-f30a48b96fd4` |
 | Prepare a ticket voyage | `/helm?repo=gdcorp-partners/airo-app-builder&ticket=AIRO-123&pane=newrun` |
 | Local branches and worktrees | `/config?repo=gdcorp-partners/airo-app-builder&pane=local-git` |
-| Selected terminal | `/cmux?surface=surface:15&pane=screen` |
+| Selected terminal | `/terminal?surface=surface:15&pane=screen` |
 
 Voyage links only prefill the form; opening a link never launches an agent or submits
 a review. A PR number requires its `repo=owner/name`. On Helm, `repo` selects a tracked
@@ -300,9 +367,9 @@ stay scoped to the selected repository; unavailable queue/review counts show an
 em dash until a Jira snapshot is loaded, without fetching solely for the header.
 
 Available panes are `newrun`, `backlog`, `underway`, `running`, `recent`, `repoprs`, `shipped`, and
-`activity` on Helm; `backlog`, `todo`, and `mine` on Triage; `tabs` and `screen` on Below Decks;
+`activity` on Helm; `backlog`, `todo`, and `mine` on Triage; `tabs` and `screen` on Terminal;
 `review-requests`, `authored`, `lookup`, and `diff` on PRs; and `recent`, `newrun`, and
-`tasks` on Voyages. Below Decks contains the cmux terminal controls. Bugs and Config link directly to their page.
+`tasks` on Voyages. Terminal contains the terminal controls, currently backed by cmux; existing `/cmux` links still work. Bugs and Config link directly to their page.
 
 ### Triage filters
 
@@ -322,14 +389,39 @@ The Config tab edits supported runtime values and offers a write-only Jira token
 update. See [Configuration](#configuration) for every field, its default, storage,
 and restart behavior. UI customization and local Git controls are on the same page.
 
+### Local todos
+
+In Config → Voyage source, disable Jira to use a local backlog. The change is live
+and persisted: Todos replaces the Jira-specific Triage and Bugs tabs, and Helm's
+queue uses local todos. Re-enabling Jira keeps your todos and saved credentials.
+Helmsman stops issuing Jira requests while disabled; already running agents keep
+their original task context.
+
+Each todo has a title, repository (`owner/name`), priority P0–P4, description,
+acceptance criteria, state, timestamps, and a link to its latest voyage. Repositories
+must already be cloned under `AGENTS_ROOT` as described in setup. Save title-only
+drafts, then add a description to make them launchable. Use acceptance criteria for
+tests, edge cases, and constraints the crew must satisfy. The list supports search,
+state filters, and repository scope.
+
+Launching atomically claims a To do item and sends its saved details to the agent.
+In progress items cannot be edited or deleted. Successful voyages move to In review;
+failed or stopped voyages move to Blocked. Review the output before marking Done,
+or return the todo to To do to retry. No completion state automatically merges a PR.
+Todo state and run links survive server restarts; interrupted claims are reconciled
+against persisted voyages. Todos are stored in the same SQLite database as voyages.
+
 ### Auto-claim
 
-The dashboard has no auto-claim control. The backend's opt-in API remains available. Every `AUTO_CLAIM_INTERVAL_MS` a
+The Todos tab offers opt-in auto-claim for the selected repository. The backend API
+is also available for either source. Every `AUTO_CLAIM_INTERVAL_MS` a
 per-repo heartbeat pulls the top backlog ticket for the repo's mapped Jira project
 (`REPO_PROJECT_MAP`) and launches an agent — but only while that repo is idle, so it
 never double-claims (it defers to the same single-flight gate as manual Launch). One
-ticket per tick; off by default; toggling off stops further claims. A repo with no
-`REPO_PROJECT_MAP` entry can't be auto-claimed. Toggle state is held in memory
+ticket per tick; off by default; toggling off stops further claims. With Jira disabled,
+it selects described To do items by priority (P0 first), then creation order; no Jira
+project mapping is required. In Jira mode, a repo needs a `REPO_PROJECT_MAP` entry.
+Toggle state is held in memory
 (`POST /api/repos/:repo/auto-claim {enabled}`), so it resets when Helmsman restarts.
 
 ### Agent backends
@@ -350,16 +442,19 @@ Three adapters implement the same `AgentAdapter` contract, selected by `AGENT_AD
 
 ### Caps
 
-`AGENT_MAX_ATTEMPTS` bounds retries; `AGENT_MAX_COST_USD` (opt-in) stops the retry loop
-once accumulated cost across attempts reaches the cap. Both, and the live attempt/cost of
+`AGENT_MAX_ATTEMPTS` bounds retries for existing-PR voyages; new coding voyages use
+one gated workflow with the bounded review loop above. `AGENT_MAX_COST_USD` (opt-in)
+stops work once reported cost reaches the cap. Pre-PR voyages aggregate reported
+cost across author and reviewer sessions; Codex sessions currently provide no cost
+data, so the cap cannot bound their spend. Both, and the live attempt/cost of
 each run, show on the running-agent rows (`×attempt/max`, `$cost/$cap`).
 
 ### Resilience
 
-On startup Helmsman reconciles any run left `running` by a crash to `failed`
-(its child process is gone) and sweeps orphaned agent worktrees — those under a repo's
-`.worktrees/` that no live run owns. Both are fail-soft: a failure is logged and never
-blocks the server from listening.
+On startup Helmsman reattaches to surviving run hosts and marks interrupted runs
+failed when their host is gone. It sweeps orphaned agent worktrees under each repo's
+`.worktrees/`, except failed or stopped pre-PR voyages retained for recovery. These
+checks are fail-soft: a failure is logged and never blocks the server from listening.
 
 ## Configuration
 
@@ -387,6 +482,7 @@ request an immediate poll, followed by the normal five-minute interval.
 
 | Value | Default | Where it applies / how to set it | Change |
 | --- | --- | --- | --- |
+| `JIRA_ENABLED` | `true` | Config → Voyage source. Disable to use persistent local Todos for the backlog and auto-claim, without Jira requests. Saved Jira credentials remain available when re-enabled. | Live |
 | `JIRA_BASE_URL` | Empty | Jira Cloud site URL, e.g. `https://your-team.atlassian.net`, without an issue/API path. Required with email and token to enable Jira. | Restart |
 | `JIRA_EMAIL` | Empty | Email of the account that owns the API token. Never returned to the UI. | Restart |
 | `JIRA_API_TOKEN` | Empty | Atlassian API token for that account; see setup for read/write permissions. Config accepts a replacement without revealing the existing token and stores it in SQLite. Empty token updates are rejected. | Live, write-only |
@@ -426,14 +522,42 @@ Changing `JIRA_STATUS_*` does not rewrite those dashboard queries.
 Slack text fields are blank by default and the watcher is off. See
 [Automatic PR reviews](#automatic-pr-reviews) for first-time browser setup and triggers.
 
+### Requesting reviews in Slack
+
+Your open PRs have a **Request review in Slack** button, also available in an owned
+open PR's details. It posts the canonical PR link and mentions the configured Slack
+user group. Sending is manual; the button reports delivery or an actionable error
+and links to the message when Slack provides a permalink.
+
+In **Config → Slack review requests**, set the destination channel and review group.
+Defaults are `airo-editing` and `airo-editing-squad`. Names or Slack IDs are accepted;
+private channels require their channel ID. Install a Slack app with `chat:write`,
+`channels:read`, and `usergroups:read` scopes (`groups:read` for private channels),
+invite its bot to the destination, and save its bot token in the write-only field.
+The outbound sender uses Slack's official API and is independent of the browser reader.
+
+| Value | Default | Purpose |
+| --- | --- | --- |
+| `SLACK_REVIEW_CHANNEL` | `airo-editing` | Destination channel name or ID; live-editable. |
+| `SLACK_REVIEW_MENTION` | `airo-editing-squad` | User group handle or ID; resolved to an actual Slack mention. |
+| `SLACK_BOT_TOKEN` | Empty | Slack bot token; Config stores it in SQLite and never returns its value. |
+
+The server verifies that the PR is open and authored by the configured GitHub user.
+Persisted request receipts prevent repeated delivery for the same request ID, and a
+short per-PR cooldown protects against double-clicks and concurrent tabs. If delivery
+cannot be confirmed, check Slack before attempting another request.
+
 ### Agent execution and server storage
 
 | Value | Default | Where it applies / how to set it | Change |
 | --- | --- | --- | --- |
 | `AGENT_ADAPTER` | `codex` | `codex`, `claude-code`, or `command`; install/sign in to that CLI on the server machine. Unknown values fall back to Codex. | Live |
 | `AGENT_CMD` | Empty | Executable and argument template for the command adapter; see [Agent backends](#agent-backends). Does not invoke a shell. | Live |
-| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts per voyage, including the initial attempt; `1` means no retry. | Live |
+| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts for existing-PR voyages, including the initial attempt; `1` means no retry. New coding voyages use one workflow, with review rounds controlled by `PRE_PR_MAX_ROUNDS`. | Live |
 | `AGENT_MAX_COST_USD` | Empty (no cap) | Cost limit in USD across attempts, enforced when the adapter reports cost. It cannot bound spend for adapters that do not report cost, including the current Codex and command adapters. | Live |
+| `PRE_PR_REVIEWER_COUNT` | `2` | Integer `1`–`2`. Independent reviewer sessions per round: `1` uses the writer's CLI, `2` adds the other supported CLI if installed. Only Codex and Claude Code are supported. One installed CLI means one reviewer; an installed reviewer that fails blocks publication. Set in **Config → Pre-PR review**. | Live; new voyages only |
+| `PRE_PR_MAX_ROUNDS` | `3` | Integer `1`–`5`. Total review rounds, including the initial round. `3` permits up to two fix-and-review cycles; `1` permits none. Every reviewer must approve the final commit; unresolved findings block publication when rounds are exhausted. | Live; new voyages only |
+| `PRE_PR_STAGE_TIMEOUT_MINUTES` | `45` | Integer `5`–`180`. Timeout for each implementation, fix, or reviewer session, not the whole voyage. Timeout blocks publication and preserves the author worktree. | Live; new voyages only |
 | `AGENT_MAX_CONCURRENCY` | `3` | Maximum simultaneous runs across repositories. The separate one-run-per-repository limit still applies. | Restart |
 | `AUTO_CLAIM_INTERVAL_MS` | `60000` | Interval in milliseconds for the optional ticket auto-claim scheduler. Does not enable auto-claim or control either PR watcher. | Config-editable; restart timer |
 | `AGENTS_ROOT` | Server working directory | Parent directory of target repo checkouts, e.g. `/absolute/path/to/agent-repos`; not the path to a single checkout. | Restart |
@@ -492,6 +616,15 @@ branch deletion requires an additional explicit checkbox. Current/default branch
 primary/locked/active worktrees, changed commits, and mismatched checkouts are
 protected. Worktrees containing uncommitted, untracked, or ignored files cannot be
 removed through this control. No cleanup runs automatically.
+
+**Clean up branches** previews local branches with no configured upstream or a deleted
+upstream. By default, only branches already merged into the current HEAD are eligible.
+Select **Include unmerged branches** to also remove branches with unmerged commits;
+the preview warns before this destructive option is confirmed. The preview
+lists each candidate and explains protected skips; confirmation deletes
+the exact reviewed names and commits atomically. Any changed branch or HEAD requires a
+new preview. Use **Check remotes** first to refresh deleted-upstream information.
+Current, default, and checked-out branches remain protected in either mode.
 
 `GET /api/usage/external` exposes actual server HTTP request counts by service,
 including lifetime and rolling five-minute totals, errors, and rate-limit responses.

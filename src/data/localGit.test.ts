@@ -33,6 +33,38 @@ describe('fetchLocalGit', () => {
 });
 
 describe('updateLocalGit', () => {
+  it('preserves the exact cleanup preview and sends only explicitly confirmed commits', async () => {
+    const cleanup = {
+      expectedHead: 'head123', force: false, candidates: [{ branch: 'local-topic', expectedCommit: 'abc123', upstreamStatus: 'none' }],
+      skipped: [{ branch: 'main', reason: 'Default branch.' }],
+    };
+    const response = { repo: 'org/repo', path: '/repos/repo', branches: [], worktrees: [], error: null };
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...response, cleanup })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response)));
+    vi.stubGlobal('fetch', fetch);
+    const preview = await updateLocalGit('org/repo', { action: 'preview-delete-untracked-branches' });
+    expect(preview.cleanup).toEqual(cleanup);
+    const action = { action: 'delete-untracked-branches' as const, expectedHead: cleanup.expectedHead, branches: cleanup.candidates.map(({ branch, expectedCommit }) => ({ branch, expectedCommit })) };
+    await updateLocalGit('org/repo', action);
+    expect(JSON.parse(fetch.mock.calls[1]?.[1]?.body as string)).toEqual({ repo: 'org/repo', ...action });
+  });
+
+  it.each([
+    { expectedHead: 'head123', force: false, candidates: [null], skipped: [] },
+    { expectedHead: 'head123', force: false, candidates: [{ branch: 'topic', expectedCommit: '', upstreamStatus: 'none' }], skipped: [] },
+    { expectedHead: 'head123', force: false, candidates: [{ branch: 'topic', expectedCommit: 'abc', upstreamStatus: 'present' }], skipped: [] },
+    { expectedHead: null, candidates: [], skipped: [] },
+    { expectedHead: 'head123', force: 'true', candidates: [], skipped: [] },
+    { expectedHead: 'head123', candidates: [], skipped: [] },
+  ])('rejects malformed cleanup previews instead of offering an unsafe partial list', async cleanup => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      repo: 'org/repo', path: '/repos/repo', branches: [], worktrees: [], error: null, cleanup,
+    }))));
+    const result = await updateLocalGit('org/repo', { action: 'preview-delete-untracked-branches' });
+    expect(result.cleanup).toBeUndefined();
+    expect(result.error).toContain('Refresh local data before retrying');
+  });
+
   it('preserves actionable API errors and safety metadata on a refused deletion', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       repo: 'org/repo', path: '/repos/repo', error: 'Worktree is dirty.',

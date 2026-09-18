@@ -1,5 +1,6 @@
 import type { GithubConfig } from '../config';
 import { isGithubRepo } from '../pr-lists';
+import { agentAttribution, appendAgentByline, stripAgentByline, type AgentAttribution } from './agent-attribution';
 
 export interface InlineReviewComment {
   path: string;
@@ -8,6 +9,12 @@ export interface InlineReviewComment {
   start_line?: number;
   start_side?: 'LEFT' | 'RIGHT';
   body: string;
+}
+
+export interface InlineReviewInput {
+  headSha?: string;
+  comments: InlineReviewComment[];
+  attribution?: AgentAttribution;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -105,7 +112,7 @@ function plainSuggestions(body: string): string {
 function summaryFinding(comment: InlineReviewComment, reason: string): string {
   const path = comment.path.replace(/[\\`*_\[\]<>]/g, '\\$&');
   const range = comment.start_line ? `${comment.start_line}–${comment.line}` : String(comment.line);
-  const body = plainSuggestions(comment.body);
+  const body = plainSuggestions(stripAgentByline(comment.body));
   return `### ${path}:${range} (${comment.side})\n\n${reason}\n\n${body}`;
 }
 
@@ -114,7 +121,7 @@ export async function publishInlineReview(
   repo: string,
   prNumber: number,
   body: string,
-  input: { headSha?: string; comments: InlineReviewComment[] },
+  input: InlineReviewInput,
   fetcher: typeof fetch = fetch,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   let posting = false;
@@ -123,6 +130,7 @@ export async function publishInlineReview(
     if (typeof github?.token !== 'string' || !github.token.trim()) throw new Error('GitHub token is missing');
     if (typeof body !== 'string' || !body.trim()) throw new Error('Review summary must be nonempty text');
     if (!Array.isArray(input?.comments)) throw new Error('Inline review comments must be an array');
+    const attribution = input.attribution ?? agentAttribution('unknown', {}, 'review agent');
     const comments = parseInlineReviewComments(JSON.stringify(input.comments));
     const sha = input.headSha;
     if (sha !== undefined && !/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(sha)) throw new Error('Invalid pinned review head SHA');
@@ -168,13 +176,15 @@ export async function publishInlineReview(
       }
       await checkHead();
     }
-    const reviewBody = fallback.length ? `${body}\n\n## Findings retained in summary\n\n${fallback.join('\n\n')}` : body;
+    const summary = stripAgentByline(body);
+    const reviewBody = appendAgentByline(fallback.length ? `${summary}\n\n## Findings retained in summary\n\n${fallback.join('\n\n')}` : summary, attribution);
+    const publishedComments = inline.map(comment => ({ ...comment, body: appendAgentByline(comment.body, attribution) }));
     posting = true;
     const response = await fetcher(`${base}/reviews`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(30_000),
-      body: JSON.stringify({ event: 'COMMENT', body: reviewBody, ...(sha ? { commit_id: sha } : {}), ...(inline.length ? { comments: inline } : {}) }),
+      body: JSON.stringify({ event: 'COMMENT', body: reviewBody, ...(sha ? { commit_id: sha } : {}), ...(publishedComments.length ? { comments: publishedComments } : {}) }),
     });
     if (!response.ok) {
       const failure = record(await response.json().catch(() => null));

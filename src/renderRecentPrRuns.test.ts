@@ -53,6 +53,14 @@ describe('recent PR voyages', () => {
     expect(element.querySelectorAll('.recent-run')).toHaveLength(0);
   });
 
+  it('offers Retry for failed PR review voyages outside the navigation link', () => {
+    const element = mount(renderRecentPrRuns([run('review-failed', { status: 'failed' }), run('review-succeeded')], null));
+    expect(element.querySelectorAll('[data-retry-run-id]')).toHaveLength(1);
+    expect(element.querySelector('[data-retry-run-id]')?.getAttribute('data-retry-run-id')).toBe('review-failed');
+    expect(element.querySelector('[data-retry-feedback-for="review-failed"]')?.getAttribute('role')).toBe('status');
+    expect(element.querySelector('a [data-retry-run-id]')).toBeNull();
+  });
+
   it('shows a short source ID while retaining the full ID in voyage navigation', () => {
     const id = 'github-1234567890abcdef0123456789abcdef';
     const element = mount(renderRecentPrRuns([run(id)], 'org/a'));

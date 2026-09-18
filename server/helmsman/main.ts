@@ -20,23 +20,30 @@ import { hasCmux, hasWezTerm, pickHost, type HostRef, type RunHost } from './run
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
+import { isPrePrAdapter, prePrAdapter } from './agents/pre-pr';
 import { createWorktree, createWorktreeFromBranch, createReviewWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
-import { makeJiraActions, type JiraActions } from './jira-actions';
+import { makeLiveJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, fetchPrDiff, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
 import { fetchRepoOpenPrs, fetchReviewRequestedPrs } from '../pr-lists';
 import { getLocalGit, mutateLocalGit } from '../local-git';
 import type { PrFileDiff } from '../../src/types';
-import { AutoClaimScheduler } from './scheduler';
+import { openTodoStore, TodoConflictError } from './todos';
+import { todoTask, reconcileTodoRuns } from './todo-source';
+import { AutoClaimScheduler, type BacklogItem } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
-import { fetchQueueIssues, fetchIssueSummary } from '../jira';
+import { fetchQueueIssues } from '../jira';
+import { jiraTask } from './jira-task';
+import { launchIntentJson, RetryError, type LaunchIntent } from './retry';
 import { createBridge, type Bridge } from './cmux/bridge';
 import { createWezTermBridge } from './wezterm/bridge';
 import { openSlackStore } from './slack/store';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { createSlackBrowserReader } from './slack/browser';
-import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS } from './slack/config';
+import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
+import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings } from './slack/review-request';
 import type { SlackState } from '../../src/data/slack';
 import { createGithubReviewWatcher } from './github-review-watcher';
+import { createCreatedPrReviews } from './created-pr-reviews';
 import { fetchReviewHead, fetchReviewScope, selectReviewModel } from './review-policy';
 import { publishInlineReview } from './inline-review';
 import { createOutboundMeter } from './outbound-meter';
@@ -52,6 +59,8 @@ const PORT: number = Number(process.env.HELMSMAN_PORT ?? '8787');
 const DIST: string = join(process.cwd(), 'dist');
 const dbPath = process.env.HELMSMAN_DB ?? join(process.cwd(), '.helmsman.sqlite');
 const db = openDb(dbPath);
+const todos = openTodoStore(dbPath);
+reconcileTodoRuns(todos, db);
 const slackStore = openSlackStore(dbPath);
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
@@ -60,6 +69,13 @@ const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-ru
 mkdirSync(RUNS_DIR, { recursive: true });
 const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
+const slackReviewRequester = openSlackReviewRequester(dbPath, {
+  settings: () => slackReviewSettings(configStore.effectiveEnv()),
+  getPr: (repo, prNumber) => {
+    const github = configStore.current().github;
+    return github ? fetchPrStatus(github, repo, prNumber) : Promise.resolve(null);
+  },
+});
 const startupCfg: AppConfig = configStore.current();
 // cmux is macOS-only; wezterm is the cross-platform terminal driving the same
 // panel. TERM_BRIDGE forces one, otherwise take whichever suits the platform.
@@ -82,6 +98,7 @@ const host: RunHost = await pickHost({ hasCmux, hasWezTerm, wrapperPath: WRAPPER
 process.stdout.write(`run host: ${host.kind}\n`);
 
 function adapterFor(id: string, cfg: AppConfig): AgentAdapter {
+  if (isPrePrAdapter(id)) return prePrAdapter(id === 'pre-pr:claude-code' ? claudeCodeAdapter : codexAdapter, RUNS_DIR);
   if (id === 'command') return commandAdapter(cfg.agentCmd ?? '');
   if (id === 'claude-code') return claudeCodeAdapter;
   return codexAdapter;
@@ -116,7 +133,7 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
     postReview: (repo, prNumber, reviewBody, input) => {
       const g: AppConfig['github'] = configStore.current().github;
       return g
-        ? publishInlineReview(g, repo, prNumber, reviewBody, input ?? { comments: [] })
+        ? publishInlineReview(g, repo, prNumber, reviewBody, input)
         : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
     },
     requestCopilotReview: (repo: string, prNumber: number) => {
@@ -125,12 +142,41 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
         ? ghRequestCopilotReview(g, repo, prNumber)
         : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
     },
+    enqueueCreatedPrReview: (input) => { createdPrReviews.enqueue(input); },
   };
+}
+
+function findExistingReview(repo: string, number: number, headSha: string): string | null {
+  for (const run of db.listRuns(1000)) {
+    if (run.repo.toLowerCase() !== repo.toLowerCase() || run.prNumber !== number || !['running', 'succeeded'].includes(run.status)) continue;
+    try {
+      const task: unknown = run.taskJson ? JSON.parse(run.taskJson) : null;
+      if (task && typeof task === 'object' && 'review' in task && task.review === true && 'prHeadSha' in task && task.prHeadSha === headSha) return run.id;
+    } catch { continue; }
+  }
+  return null;
+}
+
+const createdPrReviews = createCreatedPrReviews({
+  store: slackStore,
+  getRun: (id) => db.getRun(id),
+  isRunActive: (id) => pm.hasRun(id),
+  canLaunch: (repo) => Boolean(configStore.current().github) && pm.canStart(repo).ok,
+  fetchPr: (repo, number) => {
+    const github = configStore.current().github;
+    return github ? fetchReviewHead(github, repo, number) : Promise.resolve(null);
+  },
+  findExistingReview,
+  launch,
+});
+
+function pollCreatedPrReviews(): Promise<void> {
+  return createdPrReviews.poll().catch((error: unknown) => { process.stderr.write(`Created PR review queue failed: ${String(error)}\n`); });
 }
 
 function dispatchReattach(row: RunRow): Promise<void> {
   const cfg: AppConfig = configStore.current();
-  const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
+  const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(row.id, row.repo, () => {
     control.stopped = true;
@@ -139,6 +185,7 @@ function dispatchReattach(row: RunRow): Promise<void> {
   const deps: RunnerDeps = {
     ...baseRunnerDeps(cfg, jira),
     adapter: adapterFor(row.adapter, cfg),
+    preserveWorktreeOnFailure: isPrePrAdapter(row.adapter),
     genId: () => row.id,
     onLaunch: (_runId: string, stop: () => Promise<void>) => {
       control.stop = stop;
@@ -146,7 +193,12 @@ function dispatchReattach(row: RunRow): Promise<void> {
     },
     isStopped: () => control.stopped,
   };
-  return reattachRun(row, deps).finally(() => pm.remove(row.id));
+  return reattachRun(row, deps).finally(() => {
+    const status = db.getRun(row.id)?.status;
+    if (status && status !== 'running') todos.finishRun(row.id, status);
+    pm.remove(row.id);
+    void pollCreatedPrReviews();
+  });
 }
 
 const reattachIds: string[] = db.reattachableRuns().map((r: RunRow) => r.id);
@@ -160,7 +212,11 @@ try {
     const removed: string[] = await sweepOrphanedWorktrees({
       listAgentWorktrees,
       remove: removeWorktreeAt,
-      isActiveRunId: (id: string) => pm.hasRun(id) || reattachIds.includes(id),
+      isActiveRunId: (id: string) => {
+        if (pm.hasRun(id) || reattachIds.includes(id)) return true;
+        const row = db.getRun(id);
+        return Boolean(row && isPrePrAdapter(row.adapter) && row.status !== 'succeeded');
+      },
       repoDirs,
     });
     if (removed.length > 0) process.stdout.write(`swept ${removed.length} orphaned worktree(s)\n`);
@@ -177,29 +233,48 @@ void recoverRuns(db, { reattach: (row: RunRow) => dispatchReattach(row) })
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string; runId?: string; headSha?: string }): string {
+function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf?: string }): string {
   const runId: string = body.runId ?? randomUUID();
   if (db.getRun(runId) || pm.hasRun(runId)) return runId;
   const cfg: AppConfig = configStore.current();
+  const adapterId = body.adapter ?? cfg.agentAdapter;
+  if (body.retryOf && adapterId === 'command' && !cfg.agentCmd) throw new RetryError('The original command agent is no longer configured. Configure it before retrying.');
+  let localTodo = body.mode === 'todo' && body.todoId ? todos.get(body.todoId) : null;
+  if (body.mode === 'todo') {
+    if (cfg.jiraEnabled) throw new TodoConflictError('Disable Jira before launching todos.');
+    if (!localTodo) throw new TodoConflictError('Todo not found.');
+    const gate = pm.canStart(localTodo.repo);
+    if (!gate.ok) throw new TodoConflictError(gate.reason ?? 'Cannot start voyage.');
+    localTodo = todos.claim(localTodo.id, runId, body.retryOf);
+    if (!localTodo) throw new TodoConflictError('Todo is no longer ready to launch.');
+    body = { ...body, repo: localTodo.repo, ticketId: localTodo.id, title: localTodo.title };
+  } else if (body.ticketId && todos.get(body.ticketId) && !body.task && (!body.mode || body.mode === 'ticket')) {
+    throw new TodoConflictError('Local todos must be launched from Todos with Jira disabled.');
+  } else if (!cfg.jiraEnabled && body.ticketId && !body.task && (!body.mode || body.mode === 'ticket')) {
+    throw new TodoConflictError('Jira is disabled. Start a voyage from Todos.');
+  }
+  const launchJson = launchIntentJson(body);
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(runId, body.repo, () => {
     control.stopped = true;
     void control.stop?.();
   });
   const adapter: AgentAdapter =
-    cfg.agentAdapter === 'command' && cfg.agentCmd
+    adapterId === 'command' && cfg.agentCmd
       ? commandAdapter(cfg.agentCmd)
-      : cfg.agentAdapter === 'claude-code'
+      : adapterId === 'claude-code'
         ? claudeCodeAdapter
         : codexAdapter;
-  if (cfg.agentAdapter === 'command' && !cfg.agentCmd) {
+  if (adapterId === 'command' && !cfg.agentCmd) {
     process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using codex\n');
   }
-  const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
+  const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
   void (async (): Promise<void> => {
     try {
       let taskObj: AgentTask;
-      if (body.mode === 'rerun') {
+      if (localTodo) {
+        taskObj = todoTask(localTodo);
+      } else if (body.mode === 'rerun') {
         const pr: PrStatus | null =
           cfg.github && body.prNumber ? await fetchPrStatus(cfg.github, body.repo, body.prNumber) : null;
         if (!pr) {
@@ -207,7 +282,7 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           const failedRow: RunRow = {
             id: runId, ticketId: 'rerun', repo: body.repo, adapter: adapter.id,
             status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
-            endedAt: ts, costUsd: null, worktreePath: null,
+            endedAt: ts, costUsd: null, worktreePath: null, launchJson,
           };
           db.insertRun(failedRow);
           const message: string = `could not resolve PR #${body.prNumber ?? '?'} for rerun`;
@@ -229,7 +304,7 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           const failedRow: RunRow = {
             id: runId, ticketId: 'review', repo: body.repo, adapter: adapter.id,
             status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
-            endedAt: ts, costUsd: null, worktreePath: null,
+            endedAt: ts, costUsd: null, worktreePath: null, launchJson,
           };
           db.insertRun(failedRow);
           const message: string = `could not resolve PR #${body.prNumber ?? '?'} for review`;
@@ -239,9 +314,9 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
           bus.publish(runId, { kind: 'run-complete', text: 'failed' });
           return;
         }
-        if (body.headSha && pr.headSha !== body.headSha) throw new Error('PR changed before review launch; the next poll will discover the new revision');
+        if (body.headSha && pr.headSha !== body.headSha) throw new Error('PR changed before review launch; a new review is needed for the latest revision');
         const scope = cfg.github ? await fetchReviewScope(cfg.github, body.repo, pr.number) : null;
-        if (body.headSha && scope?.headSha && scope.headSha !== body.headSha) throw new Error('PR changed during review preparation; the next poll will discover the new revision');
+        if (body.headSha && scope?.headSha && scope.headSha !== body.headSha) throw new Error('PR changed during review preparation; a new review is needed for the latest revision');
         const choice = selectReviewModel(scope?.headSha === pr.headSha ? scope : null, adapter.id, body);
         taskObj = {
           ticketId: 'review', title: `review #${pr.number}`, repo: body.repo,
@@ -252,18 +327,18 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
         };
       } else {
         const ticketId: string = body.ticketId ?? 'freeform';
-        const fetchedTitle: string | null =
-          !body.title && body.ticketId && cfg.jira
-            ? await fetchIssueSummary(cfg.jira, body.ticketId).catch((): null => null)
-            : null;
-        const title: string = body.title ?? fetchedTitle ?? ticketId;
-        taskObj = { ticketId, title, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
+        taskObj = body.ticketId && !body.task
+          ? await jiraTask(cfg.jira, { ticketId, title: body.title, repo: body.repo })
+          : { ticketId, title: body.title ?? ticketId, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
       }
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;
+      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, cfg.prePr) : adapter;
       await startRun(taskObj, {
         ...baseRunnerDeps(cfg, jira),
-        adapter,
+        launchJson,
+        adapter: runAdapter,
+        ...(isPrePrAdapter(runAdapter.id) ? { maxAttempts: 1, preserveWorktreeOnFailure: true } : {}),
         genId: () => runId,
         onLaunch: (_runId: string, stop: () => Promise<void>) => {
           control.stop = stop;
@@ -276,28 +351,36 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
       const message = error instanceof Error ? error.message : String(error);
       if (db.getRun(runId)) db.updateRun(runId, { status: 'failed', endedAt: ts });
       else db.insertRun({
-        id: runId, ticketId: body.mode ?? body.ticketId ?? 'freeform', repo: body.repo,
+        id: runId, ticketId: body.ticketId ?? body.mode ?? 'freeform', repo: body.repo,
         adapter: adapter.id, status: 'failed', attempt: 1, prNumber: body.prNumber ?? null,
-        startedAt: ts, endedAt: ts, costUsd: null, worktreePath: null,
+        startedAt: ts, endedAt: ts, costUsd: null, worktreePath: null, launchJson,
       });
       db.appendEvent(runId, 'error', message, ts);
       db.appendEvent(runId, 'run-complete', 'failed', ts);
       bus.publish(runId, { kind: 'error', text: message });
       bus.publish(runId, { kind: 'run-complete', text: 'failed' });
     } finally {
+      const status = db.getRun(runId)?.status;
+      if (status && status !== 'running') todos.finishRun(runId, status);
+      else if (localTodo) todos.finishRun(runId, 'failed');
       pm.remove(runId);
+      void pollCreatedPrReviews();
     }
   })();
   return runId;
 }
 
-function fetchTopBacklog(repo: string): Promise<{ ticketId: string; title: string } | null> {
+function fetchTopBacklog(repo: string): Promise<BacklogItem | null> {
   const cfg: AppConfig = configStore.current();
+  if (!cfg.jiraEnabled) {
+    const todo = todos.list().find(item => item.repo === repo && item.state === 'todo' && item.description.trim());
+    return Promise.resolve(todo ? { ticketId: todo.id, title: todo.title, todoId: todo.id, mode: 'todo' } : null);
+  }
   const project: string | undefined = cfg.repoProjectMap[repo];
   if (!project || !cfg.jira) return Promise.resolve(null);
   return fetchQueueIssues({ ...cfg.jira, project }).then(
     (issues: JiraIssue[]): { ticketId: string; title: string } | null =>
-      issues[0] ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
+      issues[0]?.key && issues[0]?.fields?.summary ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
   );
 }
 
@@ -384,21 +467,16 @@ const githubReviewWatcher = createGithubReviewWatcher({
   },
   canLaunch: (repo) => githubReviewEnabled() && pm.canStart(repo).ok,
   getRun: (id) => db.getRun(id), isRunActive: (id) => pm.hasRun(id), launch,
-  findExistingReview: (repo, number, headSha) => {
-    for (const run of db.listRuns(1000)) {
-      if (run.repo.toLowerCase() !== repo.toLowerCase() || run.prNumber !== number || !['running', 'succeeded'].includes(run.status)) continue;
-      try {
-        const task: unknown = run.taskJson ? JSON.parse(run.taskJson) : null;
-        if (task && typeof task === 'object' && 'review' in task && task.review === true && 'prHeadSha' in task && task.prHeadSha === headSha) return run.id;
-      } catch { continue; }
-    }
-    return null;
-  },
+  findExistingReview,
   intervalMs: SLACK_INTERVAL_MS,
 });
 
 const pollGithubReviews = () => githubReviewWatcher.poll().catch((error: unknown) => process.stderr.write(`GitHub review watcher failed: ${String(error)}\n`));
-setInterval(() => void pollGithubReviews(), SLACK_INTERVAL_MS);
+setInterval(() => {
+  void pollCreatedPrReviews();
+  void pollGithubReviews();
+}, SLACK_INTERVAL_MS);
+void pollCreatedPrReviews();
 void pollSlack();
 void pollGithubReviews();
 
@@ -432,12 +510,16 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       context: () => {
         const cfg = configStore.current();
         return {
-          repos: [...new Set([...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])])].sort(),
+          repos: [...new Set([...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : []), ...(!cfg.jiraEnabled ? todos.list().map(todo => todo.repo) : [])])].sort(),
+          jiraEnabled: cfg.jiraEnabled,
           jiraBaseUrl: cfg.jira?.baseUrl ?? null,
         };
       },
       slack: { snapshot: slackSnapshot, markRead: (id) => slackStore.markRead(id, new Date().toISOString()) },
-      dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
+      slackReviewRequest: (input) => slackReviewRequester.request(input),
+      todos,
+      jiraEnabled: () => configStore.current().jiraEnabled,
+      dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo, todos.list()),
       triage: (repo) => buildTriageResponse(configStore.effectiveEnv(), undefined, repo),
       bugs: (repo) => buildBugsResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       db,
@@ -451,15 +533,16 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         return { maxAttempts: c.maxAttempts, maxCostUsd: c.maxCostUsd };
       },
       getConfig: () => ({
-        config: { ...publicConfig(configStore.current()), ...publicSlackSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
+        config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), ...publicSlackReviewSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
         overridden: Object.keys(configStore.overrides()),
         jiraTokenSet: configStore.hasJiraToken(),
+        slackTokenSet: configStore.hasSlackToken(),
       }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {
           if (WRITABLE_SECRET_KEYS.includes(key)) configStore.setSecret(key, value, () => new Date().toISOString());
           else configStore.setOverride(key, value, () => new Date().toISOString());
-          if (key.startsWith('SLACK_')) {
+          if (SLACK_CONFIG_KEYS.some((configKey) => configKey === key)) {
             configuredSlackWatcher();
             void pollSlack();
           }
@@ -537,7 +620,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       res.end(JSON.stringify(api.json));
       return;
     }
-    const isPage = /^\/(?:helm|triage|cmux|bugs|prs?|runs|config)?\/?$/.test(url.pathname);
+    const isPage = /^\/(?:helm|triage|terminal|cmux|bugs|prs?|runs|config|todos)?\/?$/.test(url.pathname);
     const rel: string = isPage ? '/index.html' : url.pathname;
     const file: string = normalize(join(DIST, rel));
     if (file.startsWith(DIST + sep) && existsSync(file)) {

@@ -7,7 +7,8 @@ import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import { tailLog, type Tail } from './log-tail';
 import type { HostRef, RunHost } from './run-host';
 import { reviewVerdictLine } from './review-verdict';
-import { parseInlineReviewComments, type InlineReviewComment } from './inline-review';
+import { parseInlineReviewComments, type InlineReviewInput } from './inline-review';
+import { agentAttribution } from './agent-attribution';
 
 export interface RunnerDeps {
   db: Db;
@@ -15,6 +16,7 @@ export interface RunnerDeps {
   adapter: AgentAdapter;
   host: RunHost;
   runsDir: string;
+  launchJson?: string;
   createWorktree: (repo: string, runId: string) => Promise<{ path: string; branch: string }>;
   createWorktreeFromBranch?: (repo: string, runId: string, branch: string) => Promise<{ path: string; branch: string }>;
   createReviewWorktree?: (repo: string, runId: string, prNumber: number, headSha: string) => Promise<{ path: string; branch: string }>;
@@ -30,11 +32,13 @@ export interface RunnerDeps {
   findPrNumber?: (repo: string, branch: string) => Promise<number | null>;
   maxAttempts?: number;
   maxCostUsd?: number | null;
+  preserveWorktreeOnFailure?: boolean;
   isStopped?: () => boolean;
   readReview?: (worktreePath: string) => Promise<string | null>;
   readReviewComments?: (worktreePath: string) => Promise<string | null>;
-  postReview?: (repo: string, prNumber: number, body: string, input?: { headSha?: string; comments: InlineReviewComment[] }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  postReview?: (repo: string, prNumber: number, body: string, input: InlineReviewInput) => Promise<{ ok: true } | { ok: false; error: string }>;
   requestCopilotReview?: (repo: string, prNumber: number) => Promise<{ ok: true } | { ok: false; error: string }>;
+  enqueueCreatedPrReview?: (input: { parentRunId: string; repo: string; prNumber: number }) => void;
 }
 
 type OnEvent = (e: AgentEvent) => void;
@@ -95,9 +99,11 @@ async function postReviewDerivingStatusFromReviewNotExitCode(
   }
   const comments = parseInlineReviewComments(await deps.readReviewComments?.(worktreePath) ?? null);
   if (deps.isStopped?.()) return 'stopped';
-  const r = deps.readReviewComments
-    ? await deps.postReview(task.repo, prNumber, body, { headSha: task.prHeadSha, comments })
-    : await deps.postReview(task.repo, prNumber, body);
+  const r = await deps.postReview(task.repo, prNumber, body, {
+    headSha: task.prHeadSha,
+    comments,
+    attribution: agentAttribution(deps.adapter.id, task, 'review agent'),
+  });
   if (!r.ok) {
     onEvent({ kind: 'error', text: `code review failed: posting comment on PR #${prNumber} failed: ${r.error}` });
     return 'failed';
@@ -208,7 +214,8 @@ interface FinalizeParams {
 }
 
 async function finalizeRun(p: FinalizeParams): Promise<void> {
-  const { runId, task, deps, prNumber, totalCost, stopped, ok, worktreePath, onEvent } = p;
+  const { runId, task, deps, prNumber, totalCost, ok, worktreePath, onEvent } = p;
+  const stopped = p.stopped || (deps.isStopped?.() ?? false);
   const statusInReview: string = deps.statusInReview ?? 'In Review';
   const status: RunStatus = stopped ? 'stopped' : ok ? 'succeeded' : 'failed';
 
@@ -218,18 +225,34 @@ async function finalizeRun(p: FinalizeParams): Promise<void> {
     return;
   }
 
+  const createdPr = status === 'succeeded' && prNumber != null && !task.prBranch;
+  if (createdPr && deps.enqueueCreatedPrReview) {
+    try {
+      deps.enqueueCreatedPrReview({ parentRunId: runId, repo: task.repo, prNumber });
+      onEvent({ kind: 'log', text: `Queued Helmsman review for PR #${prNumber}` });
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      onEvent({ kind: 'error', text: `Queuing Helmsman review for PR #${prNumber} failed: ${text}` });
+    }
+  }
+
   deps.db.updateRun(runId, { status, prNumber, costUsd: totalCost, endedAt: deps.now() });
 
-  if (ok && deps.jira && prNumber != null && !task.task && !task.prBranch) {
+  if (createdPr && deps.jira && !task.todoId && !task.task) {
     await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
   }
 
-  if (ok && prNumber != null && !task.prBranch && deps.requestCopilotReview) {
-    const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
-    if (r.ok) {
-      onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
-    } else {
-      onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
+  if (createdPr && deps.requestCopilotReview) {
+    try {
+      const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
+      if (r.ok) {
+        onEvent({ kind: 'log', text: `requested Copilot review on PR #${prNumber}` });
+      } else {
+        onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${r.error}` });
+      }
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      onEvent({ kind: 'log', text: `requesting Copilot review failed (non-fatal): ${text}` });
     }
   }
 }
@@ -253,9 +276,15 @@ async function resolvePrNumber(
 }
 
 async function completeRun(runId: string, repo: string, worktreePath: string | null, deps: RunnerDeps): Promise<void> {
-  if (worktreePath) await deps.removeWorktree(repo, worktreePath);
   const finalRow: RunRow | null = deps.db.getRun(runId);
   const finalStatus: string = finalRow?.status ?? 'failed';
+  if (worktreePath) {
+    if (deps.preserveWorktreeOnFailure && finalStatus !== 'succeeded') {
+      const text = `Worktree retained for inspection: ${worktreePath}`;
+      deps.db.appendEvent(runId, 'phase', text, deps.now());
+      deps.bus.publish(runId, { kind: 'phase', text });
+    } else await deps.removeWorktree(repo, worktreePath);
+  }
   deps.db.appendEvent(runId, 'run-complete', finalStatus, deps.now());
   deps.bus.publish(runId, { kind: 'run-complete', text: finalStatus });
 }
@@ -272,7 +301,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
     status: 'running', attempt: 1, prNumber: task.prNumber ?? null, startedAt: deps.now(),
     endedAt: null, costUsd: null, worktreePath: null,
-    logPath, exitPath, specPath, logOffset: 0, taskJson: JSON.stringify(task),
+    logPath, exitPath, specPath, logOffset: 0, taskJson: JSON.stringify(task), launchJson: deps.launchJson ?? null,
   };
   deps.db.insertRun(initial);
   if (task.reviewComplexity) {
@@ -302,7 +331,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       deps.bus.publish(runId, e);
     };
 
-    if (deps.jira && deps.botAccountId && !task.task && !task.prBranch) {
+    if (deps.jira && deps.botAccountId && !task.todoId && !task.task && !task.prBranch) {
       await claimTicket(deps.jira, task.ticketId, deps.botAccountId, statusInProgress, onEvent);
     }
 

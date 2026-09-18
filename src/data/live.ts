@@ -6,6 +6,7 @@ export interface DashboardResponse {
   repos: string[];
   selectedRepo: string | null;
   jiraBaseUrl: string | null;
+  jiraEnabled?: boolean;
 }
 
 export const POLL_MS: number = 5 * 60_000;

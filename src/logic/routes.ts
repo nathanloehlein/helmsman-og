@@ -1,4 +1,4 @@
-export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'config' | 'runs';
+export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'config' | 'runs' | 'todos';
 
 export interface AppRoute {
   view: PageView;
@@ -14,11 +14,12 @@ export interface AppRoute {
 const paths: Record<PageView, string> = {
   dashboard: '/helm',
   triage: '/triage',
-  cmux: '/cmux',
+  cmux: '/terminal',
   bugs: '/bugs',
   prs: '/prs',
   config: '/config',
   runs: '/runs',
+  todos: '/todos',
 };
 
 const panes: Record<PageView, readonly string[]> = {
@@ -29,6 +30,7 @@ const panes: Record<PageView, readonly string[]> = {
   prs: ['review-requests', 'authored', 'lookup', 'diff'],
   config: ['local-git'],
   runs: ['recent', 'newrun', 'tasks'],
+  todos: ['list', 'new'],
 };
 
 function validRepo(value: string | null): string | null {
@@ -60,6 +62,7 @@ function isSurfaceRef(value: string | null): boolean {
 export function parseRoute(url: URL): AppRoute {
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   const view = pathname === '/pr' ? 'prs'
+    : pathname === '/cmux' ? 'cmux'
     : (Object.keys(paths) as PageView[]).find((page) => paths[page] === pathname) ?? 'dashboard';
   const params = url.searchParams;
   const repo = validRepo(params.get('repo'));

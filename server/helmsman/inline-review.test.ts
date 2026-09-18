@@ -4,6 +4,8 @@ import { parseInlineReviewComments, publishInlineReview, type InlineReviewCommen
 const github = { token: 'test-token', repo: 'owner/repo', author: 'reviewer' };
 const sha = 'a'.repeat(40);
 const comment: InlineReviewComment = { path: 'src/example.ts', line: 11, side: 'RIGHT', body: 'Guard absent values.\n\n```suggestion\nreturn input?.value;\n```' };
+const defaultByline = '_Helmsman · not reported - not reported_';
+const attributedComment = { ...comment, body: `${comment.body}\n\n${defaultByline}` };
 const patch = '@@ -10,4 +10,4 @@\n context\n-old\n+new\n context\n context';
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const detail = (count = 1, headSha = sha) => ({ head: { sha: headSha }, changed_files: count });
@@ -46,7 +48,7 @@ describe('publishInlineReview', () => {
   it('posts one COMMENT review containing the pinned SHA, summary, inline finding and suggestion', async () => {
     const fetcher = setup();
     expect(await publishInlineReview(github, 'owner/repo', 42, 'Review summary', { headSha: sha, comments: [comment] }, fetcher)).toEqual({ ok: true });
-    expect(payload(fetcher)).toEqual({ event: 'COMMENT', body: 'Review summary', commit_id: sha, comments: [comment] });
+    expect(payload(fetcher)).toEqual({ event: 'COMMENT', body: `Review summary\n\n${defaultByline}`, commit_id: sha, comments: [attributedComment] });
     const post = fetcher.mock.calls[3];
     expect(post?.[0]).toBe('https://api.github.com/repos/owner/repo/pulls/42/reviews');
     expect(post?.[1]?.headers).toMatchObject({ Authorization: 'Bearer test-token', 'Content-Type': 'application/json' });
@@ -60,7 +62,7 @@ describe('publishInlineReview', () => {
     ];
     const fetcher = setup();
     expect(await publishInlineReview(github, 'owner/repo', 42, 'Summary', { headSha: sha, comments: findings }, fetcher)).toEqual({ ok: true });
-    expect(payload(fetcher).comments).toEqual(findings);
+    expect(payload(fetcher).comments).toEqual(findings.map(finding => ({ ...finding, body: `${finding.body}\n\n${defaultByline}` })));
   });
 
   it('preserves fix samples on deleted lines as ordinary code fences', async () => {
@@ -88,11 +90,33 @@ describe('publishInlineReview', () => {
     const fetcher = setup();
     await publishInlineReview(github, 'owner/repo', 42, 'Summary', { headSha: sha, comments: [comment, missing] }, fetcher);
     const posted = payload(fetcher);
-    expect(posted.comments).toEqual([comment]);
+    expect(posted.comments).toEqual([attributedComment]);
+    expect(posted.body.endsWith(defaultByline)).toBe(true);
     expect(posted.body).toContain('## Findings retained in summary');
     expect(posted.body).toContain('absent.ts:11 (RIGHT)');
     expect(posted.body).toContain('```\nreturn input?.value;\n```');
     expect(posted.body).not.toContain('```suggestion');
+  });
+
+  it('replaces agent-written bylines after fallback assembly and preserves inline suggestions and source comments', async () => {
+    const attribution = { role: 'review agent' as const, model: 'gpt-5.5', effort: 'high' };
+    const byline = '_Helmsman · gpt-5.5 - high_';
+    const previousByline = '_Helmsman review agent · model: stale · effort: low_';
+    const signed = { ...comment, body: `${comment.body}\n\n${previousByline}` };
+    const missing = { ...signed, path: 'absent.ts' };
+    const comments = [signed, missing];
+    const snapshot = structuredClone(comments);
+    const fetcher = setup();
+    expect(await publishInlineReview(github, 'owner/repo', 42, `Summary\n\n${previousByline}`, {
+      headSha: sha, comments, attribution,
+    }, fetcher)).toEqual({ ok: true });
+    const posted = payload(fetcher);
+    expect(posted.body.endsWith(byline)).toBe(true);
+    expect(posted.body.match(/_Helmsman ·/g)).toHaveLength(1);
+    expect(posted.body).not.toContain(previousByline);
+    expect(posted.body).toContain('absent.ts:11 (RIGHT)');
+    expect(posted.comments).toEqual([{ ...comment, body: `${comment.body}\n\n${byline}` }]);
+    expect(comments).toEqual(snapshot);
   });
 
   it.each([undefined, null, '@@ -10,4 +10,4 @@\n context\n-old\n+new', 'malformed patch'])('retains unavailable or truncated patches in summary: %s', patchValue => {
@@ -122,7 +146,7 @@ describe('publishInlineReview', () => {
       .mockResolvedValueOnce(json({ id: 10 }));
     expect(await publishInlineReview(github, 'owner/repo', 42, 'Summary', { headSha: sha, comments: [comment] }, fetcher)).toEqual({ ok: true });
     expect(fetcher.mock.calls[2]?.[0]).toContain('page=2');
-    expect(payload(fetcher).comments).toEqual([comment]);
+    expect(payload(fetcher).comments).toEqual([attributedComment]);
   });
 
   it('fails safely when the PR head moved before or during diff retrieval', async () => {
@@ -170,7 +194,7 @@ describe('publishInlineReview', () => {
   it('supports legacy summary-only reviews without diff lookup', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ id: 10 }));
     expect(await publishInlineReview(github, 'owner/repo', 42, 'Summary', { comments: [] }, fetcher)).toEqual({ ok: true });
-    expect(payload(fetcher)).toEqual({ body: 'Summary', event: 'COMMENT' });
+    expect(payload(fetcher)).toEqual({ body: `Summary\n\n${defaultByline}`, event: 'COMMENT' });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

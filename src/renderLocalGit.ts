@@ -44,6 +44,18 @@ export function renderLocalGit(state: LocalGitState): string {
     </li>`;
   }).join('');
   const confirmation = state?.confirmation;
+  const cleanup = state?.cleanup;
+  const cleanupForce = cleanup?.force ?? state?.cleanupForce ?? false;
+  const candidates = Array.isArray(cleanup?.candidates) ? cleanup.candidates.filter(item => item && text(item.branch) && text(item.expectedCommit)) : [];
+  const skipped = Array.isArray(cleanup?.skipped) ? cleanup.skipped.filter(item => item && text(item.branch)) : [];
+  const cleanupPanel = cleanup ? `<div class="local-git-confirmation local-git-cleanup" role="region" aria-label="Preview branch cleanup">
+    <strong>${candidates.length ? `Delete ${candidates.length} local branch${candidates.length === 1 ? '' : 'es'} without upstreams?` : 'No local branches are ready for cleanup.'}</strong>
+    ${cleanup.force ? '<p class="local-git-cleanup-warning" role="alert">This preview includes unmerged branches. Deleting them may permanently lose local commits that have not been merged.</p>' : '<p>Only branches merged into the selected checkout are included.</p>'}
+    <p>Current, default, and checked-out branches are protected. Remote branches are unchanged.</p>
+    ${candidates.length ? `<ul class="local-git-cleanup-list" aria-label="Branches to delete">${candidates.map(item => `<li><span class="local-git-name mono">${esc(item.branch)}</span>${shortCommit(item.expectedCommit)}<span class="local-git-cleanup-reason">${item.upstreamStatus === 'gone' ? 'Upstream branch gone' : 'No upstream configured'}</span></li>`).join('')}</ul>` : ''}
+    ${skipped.length ? `<details class="local-git-cleanup-skipped"${candidates.length ? '' : ' open'}><summary>${skipped.length} branch${skipped.length === 1 ? '' : 'es'} skipped</summary><ul class="local-git-cleanup-list" aria-label="Branches kept">${skipped.map(item => `<li><span class="local-git-name mono">${esc(item.branch)}</span><span class="local-git-cleanup-reason">${esc(text(item.reason))}</span></li>`).join('')}</ul></details>` : ''}
+    <div class="local-git-item-actions"><button class="local-git-cleanup-confirm local-git-delete" type="button"${busy || !candidates.length ? ' disabled' : ''}>Delete ${candidates.length} branch${candidates.length === 1 ? '' : 'es'}</button><button class="local-git-cleanup-cancel local-git-refresh" type="button"${busy ? ' disabled' : ''}>Cancel</button></div>
+  </div>` : '';
   const confirmationPanel = confirmation ? `<div class="local-git-confirmation" role="region" aria-label="Confirm deletion">
     <strong>Delete ${confirmation.action === 'delete-branch' ? 'local branch' : 'worktree'} <span class="mono">${esc(confirmation.action === 'delete-branch' ? confirmation.branch : confirmation.path)}</span>?</strong>
     <p>${confirmation.action === 'delete-branch' ? 'This removes the local branch. The remote branch is unchanged.' : 'This removes the worktree directory. Its branch is kept. Worktrees with uncommitted changes cannot be deleted.'}</p>
@@ -56,6 +68,7 @@ export function renderLocalGit(state: LocalGitState): string {
       ${error ? `<div class="local-git-error" role="alert">${esc(error)}</div>` : ''}
       ${busy ? `<div class="empty-note" role="status">${esc(state?.pendingAction || 'Loading local branches and worktrees…')}</div>` : ''}
       ${confirmationPanel}
+      ${cleanupPanel}
       ${!loading && !error || branches.length || worktrees.length ? `<div class="local-git-columns">
         <section class="local-git-group" aria-label="Local branches"><h3>Branches <span class="local-git-count mono">${branches.length}</span></h3><ul class="local-git-list">${branchRows || '<li class="empty-note">No local branches.</li>'}</ul></section>
         <section class="local-git-group" aria-label="Local worktrees"><h3>Worktrees <span class="local-git-count mono">${worktrees.length}</span></h3><ul class="local-git-list">${worktreeRows || '<li class="empty-note">No local worktrees.</li>'}</ul></section>
@@ -63,6 +76,7 @@ export function renderLocalGit(state: LocalGitState): string {
   return `<section class="panel local-git-panel" data-pane="local-git" aria-busy="${busy}">
     <div class="panel-head"><span class="panel-title">Local branches &amp; worktrees</span><div class="local-git-actions"><button class="local-git-refresh" type="button"${busy || !repo ? ' disabled' : ''}>Refresh</button><button class="local-git-check-remotes local-git-refresh" type="button"${busy || !repo ? ' disabled' : ''}>Check remotes</button><a class="app-link pane-link" href="${esc(routeHref({ view: 'config', repo: repo || null, pane: 'local-git' }))}" aria-label="Link to local branches and worktrees">↗</a></div></div>
     ${repo ? '<p class="local-git-hint">Remote status uses local tracking refs. Check remotes fetches and prunes them to detect deleted remote branches. Refresh only reads local data.</p>' : ''}
+    <div class="local-git-cleanup-controls"><label class="local-git-force-label"><input class="local-git-cleanup-force" type="checkbox"${cleanupForce ? ' checked' : ''}${busy || !repo || !path ? ' disabled' : ''}> Include unmerged branches</label><button class="local-git-cleanup-preview local-git-delete" type="button"${busy || !repo || !path ? ' disabled' : ''}>Clean up branches without upstreams</button></div>
     ${content}
   </section>`;
 }

@@ -20,6 +20,34 @@ const FULL = {
 };
 
 describe('loadConfig', () => {
+  it('defaults pre-PR settings to two reviewers, three rounds, and 45 minutes per stage', () => {
+    expect(loadConfig({}).prePr).toEqual({ reviewerCount: 2, maxRounds: 3, stageTimeoutMinutes: 45 });
+  });
+
+  it('loads valid pre-PR settings independently', () => {
+    expect(loadConfig({
+      PRE_PR_REVIEWER_COUNT: '1',
+      PRE_PR_MAX_ROUNDS: ' 5 ',
+      PRE_PR_STAGE_TIMEOUT_MINUTES: '180',
+    }).prePr).toEqual({ reviewerCount: 1, maxRounds: 5, stageTimeoutMinutes: 180 });
+  });
+
+  it.each(['', ' ', '0', '-1', '1.5', '2x', '1e2', 'Infinity', 'NaN', '999999999999999999'])('defaults invalid pre-PR settings %j', (value) => {
+    expect(loadConfig({
+      PRE_PR_REVIEWER_COUNT: value,
+      PRE_PR_MAX_ROUNDS: value,
+      PRE_PR_STAGE_TIMEOUT_MINUTES: value,
+    }).prePr).toEqual({ reviewerCount: 2, maxRounds: 3, stageTimeoutMinutes: 45 });
+  });
+
+  it('defaults only invalid pre-PR values without discarding valid settings', () => {
+    expect(loadConfig({
+      PRE_PR_REVIEWER_COUNT: '3',
+      PRE_PR_MAX_ROUNDS: '1',
+      PRE_PR_STAGE_TIMEOUT_MINUTES: '4',
+    }).prePr).toEqual({ reviewerCount: 2, maxRounds: 1, stageTimeoutMinutes: 45 });
+  });
+
   it('populates both sources when all vars present', () => {
     const cfg = loadConfig(FULL);
     expect(cfg.jira?.project).toBe('AIROBUILD');
@@ -198,5 +226,16 @@ describe('loadConfig', () => {
   it('falls back to maxCostUsd null when AGENT_MAX_COST_USD is not a valid number', () => {
     const cfg = loadConfig({ ...FULL, AGENT_MAX_COST_USD: 'x' });
     expect(cfg.maxCostUsd).toBeNull();
+  });
+});
+
+describe('Jira source toggle', () => {
+  it('defaults on and disables credentials without affecting GitHub', () => {
+    expect(loadConfig(FULL).jiraEnabled).toBe(true);
+    const cfg = loadConfig({ ...FULL, JIRA_ENABLED: 'false' });
+    expect(cfg.jiraEnabled).toBe(false);
+    expect(cfg.jira).toBeNull();
+    expect(cfg.github).toEqual(loadConfig(FULL).github);
+    expect(loadConfig({ ...FULL, JIRA_ENABLED: 'true' }).jira).not.toBeNull();
   });
 });

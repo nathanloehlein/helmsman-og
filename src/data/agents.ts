@@ -6,10 +6,11 @@ export interface LaunchResult {
 
 export interface LaunchRunBody {
   ticketId?: string;
+  todoId?: string;
   title?: string;
   repo: string;
   task?: string;
-  mode?: 'ticket' | 'freeform' | 'rerun' | 'review';
+  mode?: 'ticket' | 'freeform' | 'rerun' | 'review' | 'todo';
   prNumber?: number;
   feedback?: string;
   model?: string;
@@ -22,12 +23,27 @@ export async function launchRun(body: LaunchRunBody): Promise<LaunchResult> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`launch ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(typeof body?.error === 'string' ? body.error : `launch ${res.status}`);
+  }
   return res.json() as Promise<LaunchResult>;
 }
 
 export async function launchAgent(ticketId: string, title: string, repo: string): Promise<LaunchResult> {
   return launchRun({ ticketId, title, repo, mode: 'ticket' });
+}
+
+export async function retryRun(runId: string): Promise<LaunchResult> {
+  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) throw new Error('Invalid voyage ID.');
+  const response = await fetch(`/api/agents/${encodeURIComponent(runId)}/retry`, { method: 'POST' });
+  const result: unknown = await response.json().catch(() => null);
+  const body = result && typeof result === 'object' ? result as Record<string, unknown> : null;
+  if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : `Retry failed (${response.status}).`);
+  if (typeof body?.runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(body.runId) || body.runId === runId) {
+    throw new Error('The server did not return a new voyage ID. Check recent voyages before retrying.');
+  }
+  return { runId: body.runId };
 }
 
 export interface RunEvent {
@@ -110,15 +126,12 @@ export async function stopAgent(runId: string): Promise<void> {
 }
 
 export async function setAutoClaim(repo: string, enabled: boolean): Promise<void> {
-  try {
-    await fetch(`/api/repos/${encodeURIComponent(repo)}/auto-claim`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-  } catch {
-    return;
-  }
+  const response = await fetch(`/api/repos/${encodeURIComponent(repo)}/auto-claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) throw new Error('Unable to update auto-claim.');
 }
 
 export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): () => void {

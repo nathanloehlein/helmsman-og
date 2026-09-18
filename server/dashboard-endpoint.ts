@@ -1,3 +1,5 @@
+import type { Todo } from '../src/data/todos';
+import type { Ticket } from '../src/types';
 import type { DashboardSnapshot } from '../src/data/mock';
 import type { GithubPr, JiraIssue } from './types';
 import type { AppConfig, GithubConfig, JiraConfig } from './config';
@@ -13,6 +15,7 @@ export interface DashboardResponse {
   repos: string[];
   selectedRepo: string | null;
   jiraBaseUrl: string | null;
+  jiraEnabled: boolean;
 }
 
 export interface Deps {
@@ -38,6 +41,7 @@ export async function buildDashboardResponse(
   now: Date,
   deps: Deps = DEFAULT_DEPS,
   selectedRepo: string | null = null,
+  todos: Todo[] = [],
 ): Promise<DashboardResponse> {
   const config: AppConfig = loadConfig(env);
   const degraded: string[] = [];
@@ -69,14 +73,14 @@ export async function buildDashboardResponse(
         underwayAvailable = true;
       }).catch(() => { degraded.push('jira-underway'); }),
     ]);
-  } else {
+  } else if (config.jiraEnabled) {
     degraded.push('jira');
   }
 
   if (config.github) {
     try {
       const configuredRepos: string[] = Array.from(
-        new Set([...Object.keys(config.repoProjectMap), ...(config.github.repo ? [config.github.repo] : [])]),
+        new Set([...Object.keys(config.repoProjectMap), ...(config.github.repo ? [config.github.repo] : []), ...(!config.jiraEnabled ? todos.map(todo => todo.repo) : [])]),
       );
       [prs, openPrs] = await Promise.all([
         deps.fetchAuthoredPrs(config.github, configuredRepos),
@@ -95,6 +99,8 @@ export async function buildDashboardResponse(
   const repos: string[] = Array.from(
     new Set([
       ...Object.keys(config.repoProjectMap),
+      ...(!config.jiraEnabled && config.github?.repo ? [config.github.repo] : []),
+      ...(!config.jiraEnabled ? todos.map(todo => todo.repo) : []),
       ...prs.map((pr) => pr.repo).filter((r): r is string => !!r),
     ]),
   ).sort();
@@ -116,7 +122,7 @@ export async function buildDashboardResponse(
   snapshot.underway = underwayIssues.map((issue) => issueToTicket(issue, repoLabel));
   snapshot.underwayAvailable = underwayAvailable;
 
-  if (jiraDegraded || githubDegraded) {
+  if (config.jiraEnabled && (jiraDegraded || githubDegraded)) {
     const mock: DashboardSnapshot = await deps.loadMock();
     if (jiraDegraded) {
       snapshot.queue = mock.queue;
@@ -133,5 +139,25 @@ export async function buildDashboardResponse(
     }
   }
 
-  return { snapshot, degraded, repos, selectedRepo, jiraBaseUrl: config.jira?.baseUrl ?? null };
+  if (!config.jiraEnabled) {
+    const scoped = todos.filter(todo => !selectedRepo || todo.repo === selectedRepo);
+    const ticket = (todo: Todo): Ticket => ({
+      id: todo.id, title: todo.title, repo: todo.repo, priority: todo.priority, updatedAt: todo.updatedAt,
+      status: todo.state === 'in_progress' ? 'in-progress' : todo.state === 'in_review' ? 'in-review' : todo.state === 'done' ? 'done' : 'backlog',
+    });
+    snapshot.queue = scoped.filter(todo => todo.state === 'todo' && todo.description.trim()).map(ticket);
+    snapshot.underway = scoped.filter(todo => todo.state === 'in_progress' || todo.state === 'in_review').map(ticket);
+    snapshot.underwayAvailable = true;
+    snapshot.steps = [];
+    snapshot.stats = {
+      completedToday: scoped.filter(todo => todo.state === 'done' && todo.completedAt?.slice(0, 10) === now.toISOString().slice(0, 10)).length,
+      awaitingReview: scoped.filter(todo => todo.state === 'in_review').length,
+      avgCycleMinutes: 0,
+    };
+    snapshot.throughput7d = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(now.getTime() - (6 - index) * 86_400_000).toISOString().slice(0, 10);
+      return scoped.filter(todo => todo.state === 'done' && todo.completedAt?.slice(0, 10) === day).length;
+    });
+  }
+  return { snapshot, degraded, repos, selectedRepo, jiraBaseUrl: config.jira?.baseUrl ?? null, jiraEnabled: config.jiraEnabled };
 }

@@ -89,7 +89,7 @@ describe('bounded voyage log rendering', () => {
     expect(log.children).toHaveLength(300);
     expect(log.children[298]).toBe(retainedLine);
     expect(log.lastElementChild?.textContent).toBe('line 5001');
-    expect(document.querySelector('.run-tab-dot.is-complete')).not.toBeNull();
+    expect(document.querySelector('.run-tab[data-run-status="succeeded"]')).not.toBeNull();
     expect(document.querySelector('.run-drawer-footer')?.textContent).toContain('Succeeded');
     expect(RunStream.instances[0]!.close).toHaveBeenCalled();
   });

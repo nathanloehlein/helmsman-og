@@ -1,7 +1,14 @@
+export interface BacklogItem {
+  ticketId: string;
+  title: string;
+  todoId?: string;
+  mode?: 'todo';
+}
+
 export interface SchedulerDeps {
   canStart: (repo: string) => boolean;
-  fetchTopBacklog: (repo: string) => Promise<{ ticketId: string; title: string } | null>;
-  launch: (body: { ticketId: string; title: string; repo: string }) => void;
+  fetchTopBacklog: (repo: string) => Promise<BacklogItem | null>;
+  launch: (body: BacklogItem & { repo: string }) => void;
   onLog?: (msg: string) => void;
 }
 
@@ -38,18 +45,17 @@ export class AutoClaimScheduler {
           continue;
         }
 
-        const ticket: { ticketId: string; title: string } | null = await this.deps.fetchTopBacklog(repo);
+        const ticket: BacklogItem | null = await this.deps.fetchTopBacklog(repo);
         if (ticket === null) {
           continue;
         }
 
-        if (!this.deps.canStart(repo)) {
+        if (!this.enabledRepoSet.has(repo) || !this.deps.canStart(repo)) {
           continue;
         }
 
         this.deps.launch({
-          ticketId: ticket.ticketId,
-          title: ticket.title,
+          ...ticket,
           repo,
         });
       } catch (err: unknown) {

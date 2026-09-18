@@ -1,6 +1,6 @@
 import type { PrInboxState } from './data/prLists';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRepoPrs, renderRunsDrawer, renderTriageView } from './render';
+import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRepoPrs, renderRunsDrawer, renderTriageView, renderVoyage, runTabStatus } from './render';
 import { EDITABLE_KEYS } from '../server/helmsman/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
@@ -391,7 +391,7 @@ describe('renderDashboard', () => {
     expect(link).not.toBeNull();
   });
 
-  it('puts an enabled re-run button on ticket runs and a disabled one on non-ticket runs', () => {
+  it('retains ticket relaunch and retries failed freeform voyages by their original run ID', () => {
     const el: HTMLDivElement = root();
     const runs: RunSummary[] = [
       { id: 'r1', ticketId: 'ABC-2', repo: 'org/beta', status: 'succeeded', attempt: 1, prNumber: 42, startedAt: NOW.toISOString(), costUsd: 1 },
@@ -400,11 +400,14 @@ describe('renderDashboard', () => {
     renderDashboard(el, snapshot(), NOW, [], [], null, runs);
     const rows = el.querySelectorAll<HTMLElement>('.recent-run');
     const ticketBtn = rows[0]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
-    const freeformBtn = rows[1]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
+    const freeformBtn = rows[1]!.querySelector<HTMLButtonElement>('[data-retry-run-id]');
     expect(ticketBtn.disabled).toBe(false);
     expect(ticketBtn.dataset.ticket).toBe('ABC-2');
     expect(ticketBtn.dataset.repo).toBe('org/beta');
-    expect(freeformBtn.disabled).toBe(true);
+    expect(freeformBtn?.disabled).toBe(false);
+    expect(freeformBtn?.dataset.retryRunId).toBe('r2');
+    expect(rows[1]?.querySelector('.recent-rerun')).toBeNull();
+    expect(rows[1]?.querySelector('[data-retry-feedback-for="r2"]')?.getAttribute('role')).toBe('status');
   });
 
   it('shows the empty note in the recent-runs panel when there are none', () => {
@@ -424,8 +427,8 @@ describe('renderDashboard', () => {
 
     el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
 
-    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-row:not(.config-secret-row)');
-    expect(rows.length).toBe(2);
+    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-panel:not(.pre-pr-config-panel) .config-row:not(.config-secret-row)');
+    expect(rows.length).toBe(5);
     const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
@@ -433,6 +436,47 @@ describe('renderDashboard', () => {
     expect(attemptsRow).not.toBeNull();
     expect(attemptsRow!.textContent).toContain('overridden');
     expect(adapterRow!.textContent).not.toContain('overridden');
+  });
+
+  it('groups pre-PR settings in one panel with bounded numeric inputs and defaults', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+    const panel = el.querySelector('.pre-pr-config-panel');
+    expect(panel?.textContent).toContain('running voyages keep their settings');
+    expect(panel?.textContent).toContain('With only one installed, one reviewer runs');
+    for (const [key, value, min, max] of [
+      ['PRE_PR_REVIEWER_COUNT', '2', '1', '2'],
+      ['PRE_PR_MAX_ROUNDS', '3', '1', '5'],
+      ['PRE_PR_STAGE_TIMEOUT_MINUTES', '45', '5', '180'],
+    ]) {
+      const row = panel?.querySelector(`.config-row[data-key="${key}"]`);
+      const input = row?.querySelector<HTMLInputElement>('.config-input');
+      expect(input?.type).toBe('number');
+      expect(input?.value).toBe(value);
+      expect(input?.min).toBe(min);
+      expect(input?.max).toBe(max);
+      expect(input?.step).toBe('1');
+      expect(input?.required).toBe(true);
+      expect(row?.querySelector('label')?.getAttribute('for')).toBe(input?.id);
+      expect(el.querySelector(`#${input?.getAttribute('aria-describedby')}`)?.textContent).toContain(key);
+      expect(row?.querySelector('.config-save')?.getAttribute('data-key')).toBe(key);
+    }
+  });
+
+  it('shows persisted pre-PR settings only once and marks overrides', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({
+      config: { PRE_PR_REVIEWER_COUNT: 1, PRE_PR_MAX_ROUNDS: 5, PRE_PR_STAGE_TIMEOUT_MINUTES: 90 },
+      overridden: ['PRE_PR_MAX_ROUNDS'],
+    }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+    for (const [key, value] of [
+      ['PRE_PR_REVIEWER_COUNT', '1'], ['PRE_PR_MAX_ROUNDS', '5'], ['PRE_PR_STAGE_TIMEOUT_MINUTES', '90'],
+    ]) {
+      expect(el.querySelectorAll(`.config-row[data-key="${key}"]`)).toHaveLength(1);
+      expect(el.querySelector<HTMLInputElement>(`.pre-pr-config-panel [data-key="${key}"] .config-input`)?.value).toBe(value);
+    }
+    expect(el.querySelector('.pre-pr-config-panel [data-key="PRE_PR_MAX_ROUNDS"] .config-overridden')).not.toBeNull();
+    expect(el.querySelector('.pre-pr-config-panel [data-key="PRE_PR_REVIEWER_COUNT"] .config-overridden')).toBeNull();
   });
 
   it('renders a write-only JIRA_API_TOKEN update row that never carries a value', () => {
@@ -866,7 +910,7 @@ describe('renderCmuxView', () => {
 
   it('renders a no-tabs note when the tab list is empty', () => {
     const html: string = renderCmuxView(cmuxStateFixture({ tabs: [] }));
-    expect(html.toLowerCase()).toContain('no cmux tabs');
+    expect(html.toLowerCase()).toContain('no terminal tabs');
   });
 
   it('gives the list and detail panels collapse buttons with stable ids', () => {
@@ -900,14 +944,92 @@ describe('renderRunsDrawer', () => {
   });
 
   it('marks the active tab', () => {
-    const html: string = renderRunsDrawer([tab({ id: 'a' }), tab({ id: 'b' })], 'b');
-    const bTab: string = html.slice(html.indexOf('data-tabid="b"') - 40, html.indexOf('data-tabid="b"'));
-    expect(bTab).toContain('is-active');
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ id: 'a' }), tab({ id: 'b' })], 'b');
+    expect(el.querySelector('.run-tab[data-tabid="b"]')?.classList.contains('is-active')).toBe(true);
+    const active = el.querySelector<HTMLButtonElement>('.run-tab-select[data-tabid="b"]');
+    expect(active?.getAttribute('role')).toBe('tab');
+    expect(active?.getAttribute('aria-selected')).toBe('true');
+    expect(active?.tabIndex).toBe(0);
+    expect(el.querySelector<HTMLButtonElement>('.run-tab-select[data-tabid="a"]')?.tabIndex).toBe(-1);
+    expect(el.querySelector('.run-drawer-body')?.getAttribute('aria-labelledby')).toBe(active?.id);
   });
 
-  it('flags completed tabs', () => {
-    const html: string = renderRunsDrawer([tab({ complete: true })], 'run-1');
-    expect(html).toContain('run-tab-dot is-complete');
+  it('shows an unknown completed result neutrally instead of implying success', () => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ complete: true })], 'run-1');
+    expect(el.querySelector('.run-tab')?.getAttribute('data-run-status')).toBe('completed');
+    expect(el.querySelector('.run-tab-status')?.textContent).toBe('Completed');
+    expect(el.querySelector('.run-tab-dot')).toBeNull();
+  });
+
+  it.each([
+    ['failed', 'Failed'], ['succeeded', 'Succeeded'], ['running', 'Running'], ['stopped', 'Stopped'], ['queued', 'Queued'],
+  ])('labels %s with its own status for theme colors', (status, label) => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ status, complete: true })], 'run-1');
+    expect(el.querySelector('.run-tab')?.getAttribute('data-run-status')).toBe(status);
+    expect(el.querySelector('.run-tab-status')?.textContent).toBe(label);
+    expect(runTabStatus(status, true)).toEqual({ kind: status, label });
+  });
+
+  it('keeps copy, select, open, and close controls separate', () => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab()], 'run-1');
+    const card = el.querySelector('.run-tab')!;
+    expect(card.querySelectorAll('button button, a button, button a')).toHaveLength(0);
+    expect(card.querySelector('.run-tab-select [data-copy-run-id]')).toBeNull();
+    expect(card.querySelector('[data-copy-run-id]')?.getAttribute('aria-label')).toBe('Copy full voyage ID run-1');
+    expect(card.querySelector('[data-copy-run-id] .voyage-copy-feedback')?.getAttribute('role')).toBe('status');
+    expect(card.querySelector('.run-tab-open')?.getAttribute('aria-label')).toContain('Open');
+    expect(card.querySelector('.run-tab-close')?.getAttribute('aria-label')).toContain('Close');
+  });
+
+  it('renders a separate full-ID copy button outside history navigation', () => {
+    const el = document.createElement('div');
+    const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
+    el.innerHTML = renderVoyage({ id, ticketId: 'T-1', repo: 'org/repo', status: 'succeeded', attempt: 1, prNumber: null, startedAt: '2026-09-18T00:00:00Z', costUsd: null });
+    expect(el.querySelector('.runs-voyage-link [data-copy-run-id]')).toBeNull();
+    expect(el.querySelector('.recent-run > [data-copy-run-id]')?.getAttribute('data-copy-run-id')).toBe(id);
+    expect(el.querySelector('.voyage-id')?.textContent).toBe('b5fcda706766');
+  });
+
+  it.each(['failed', 'running', 'queued', 'succeeded', 'stopped'])('offers a separate Retry button only for failed history voyages: %s', status => {
+    const el = document.createElement('div');
+    const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
+    el.innerHTML = renderVoyage({ id, ticketId: 'Freeform', repo: 'org/repo', status, attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null });
+    const retry = el.querySelector<HTMLButtonElement>('[data-retry-run-id]');
+    expect(!!retry).toBe(status === 'failed');
+    if (status === 'failed') {
+      expect(retry?.dataset.retryRunId).toBe(id);
+      expect(retry?.type).toBe('button');
+      expect(retry?.textContent).toBe('Retry');
+      expect(retry?.getAttribute('aria-label')).toBe(`Retry failed voyage ${id}`);
+      expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('data-retry-feedback-for')).toBe(id);
+      expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('aria-live')).toBe('polite');
+    }
+    expect(el.querySelectorAll('a button, button button, button a')).toHaveLength(0);
+  });
+
+  it('shows Retry in a persistent drawer slot only for the active failed voyage', () => {
+    const el = document.createElement('div');
+    const tabs = [tab({ id: 'failed-run', status: 'failed', complete: true }), tab({ id: 'running-run', status: 'running' })];
+    el.innerHTML = renderRunsDrawer(tabs, 'failed-run');
+    expect(el.querySelectorAll('[data-retry-run-id]')).toHaveLength(1);
+    expect(el.querySelector('.run-drawer-retry [data-retry-run-id]')?.getAttribute('data-retry-run-id')).toBe('failed-run');
+    expect(el.querySelector('.run-drawer-retry')?.nextElementSibling?.classList.contains('run-drawer-body')).toBe(true);
+    expect(el.querySelectorAll('a button, button button, button a')).toHaveLength(0);
+    el.innerHTML = renderRunsDrawer(tabs, 'running-run');
+    expect(el.querySelector('[data-retry-run-id]')).toBeNull();
+    expect(el.querySelector('.run-drawer-retry')?.innerHTML).toBe('');
+  });
+
+  it.each(['err-launch', '', 'invalid/id', 'x'.repeat(129)])('omits Retry for synthetic or invalid failed voyage IDs: %s', id => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ id, status: 'failed', complete: true })], id);
+    expect(el.querySelector('[data-retry-run-id]')).toBeNull();
+    el.innerHTML = renderVoyage({ id, ticketId: 'Task', repo: 'org/repo', status: 'failed', attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null });
+    expect(el.querySelector('[data-retry-run-id]')).toBeNull();
   });
 
   it('provides body, footer, and pr shells', () => {
@@ -926,6 +1048,7 @@ describe('renderRunsDrawer', () => {
     for (const selector of ['.run-tab .voyage-id', '.run-log-toolbar .voyage-id']) {
       expect(el.querySelector(selector)?.textContent).toBe('b5fcda706766');
       expect(el.querySelector(selector)?.getAttribute('title')).toBe(id);
+      expect(el.querySelector(selector)?.getAttribute('data-copy-run-id')).toBe(id);
     }
     expect(el.querySelector('.run-tab')?.getAttribute('data-tabid')).toBe(id);
     expect(el.querySelector('.run-log-download')?.getAttribute('href')).toBe(`/api/agents/${id}/log/download`);
