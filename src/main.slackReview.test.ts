@@ -7,8 +7,8 @@ const permalink = 'https://godaddy.slack.com/archives/C123/p1789730000000000';
 const success = { ok: true, channel: 'airo-editing', mention: 'airo-editing-squad', permalink };
 const json = (data: unknown, status = 200): Response => new Response(JSON.stringify(data), { status });
 
-async function setup(post: (body: Record<string, unknown>) => Response | Promise<Response> = () => json(success)) {
-  window.history.replaceState(null, '', '/prs');
+async function setup(post: (body: Record<string, unknown>) => Response | Promise<Response> = () => json(success), withRun = false) {
+  window.history.replaceState(null, '', withRun ? '/prs?run=review-run' : '/prs');
   const snapshot = await loadDashboard();
   snapshot.myOpenPrs = [{ repo: 'org/repo', number: 42, title: 'Improve search', draft: false, reviewDecision: '', createdAt: '2026-09-18T12:00:00Z' }];
   const writes: Record<string, unknown>[] = [];
@@ -24,7 +24,14 @@ async function setup(post: (body: Record<string, unknown>) => Response | Promise
     reads.push(url.pathname);
     if (url.pathname === '/api/context') return json({ repos: ['org/repo'], jiraBaseUrl: null });
     if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/repo'], selectedRepo: null, jiraBaseUrl: null });
-    if (url.pathname === '/api/agents') return json({ runs: [], autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+    if (url.pathname === '/api/agents') return json({ runs: withRun ? [{
+      id: 'review-run', ticketId: 'Review search', repo: 'org/repo', prNumber: 42, status: 'succeeded', attempt: 1,
+      startedAt: '2026-09-18T12:00:00Z', costUsd: null,
+    }] : [], autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+    if (url.pathname === '/api/pr') return json({
+      repo: 'org/repo', number: 42, state: 'open', isOwnPr: true, draft: false, merged: false, headRefName: 'search',
+      reviewDecision: '', comments: 0, checks: { passed: 1, failed: 0, pending: 0 }, url: 'https://github.com/org/repo/pull/42',
+    });
     if (url.pathname === '/api/config') return json({ config: {}, overridden: [], slackTokenSet: true });
     if (url.pathname === '/api/slack') return json({ health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null }, notifications: [] });
     if (url.pathname === '/api/pr/review-requests' || url.pathname === '/api/pr/open') return json({ prs: [], degraded: false, truncated: false });
@@ -53,6 +60,23 @@ afterEach(() => {
 });
 
 describe('Slack review requests from authored PRs', () => {
+  it('preserves the successful Slack receipt when reopening a voyage drawer', async () => {
+    const { root, writes } = await setup(() => json(success), true);
+    const drawerButton = () => root.querySelector<HTMLButtonElement>('.run-drawer-pr [data-slack-review-request]');
+    await vi.waitFor(() => expect(drawerButton()).not.toBeNull());
+    drawerButton()!.click();
+    await vi.waitFor(() => expect(drawerButton()?.textContent).toBe('Review requested'));
+    const previous = drawerButton();
+    root.querySelector<HTMLButtonElement>('.run-tab-select[data-tabid="review-run"]')!.click();
+    await vi.waitFor(() => expect(drawerButton()).not.toBeNull());
+    expect(drawerButton()).not.toBe(previous);
+    expect(drawerButton()?.textContent).toBe('Review requested');
+    expect(drawerButton()?.disabled).toBe(true);
+    expect(root.querySelector<HTMLAnchorElement>('.run-drawer-pr .slack-review-result a')?.href).toBe(permalink);
+    drawerButton()!.click();
+    expect(writes).toHaveLength(1);
+  });
+
   it('does not send on load or refresh and intercepts the explicit button before PR navigation', async () => {
     const { root, view, writes, reads, button } = await setup();
     await view.refresh();

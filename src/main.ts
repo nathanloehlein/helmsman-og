@@ -1944,7 +1944,10 @@ export class DashboardView {
     if (refreshed && prViewSeq === this.prViewSeq && this.prView.repo === t.repo && this.prView.number === t.number) {
       this.prView = { ...this.prView, pr: refreshed };
     }
-    if (t.panel.isConnected) t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab);
+    if (t.panel.isConnected) {
+      t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab);
+      this.paintSlackReviewRequests();
+    }
     void this.loadReviewRequests();
   }
 
@@ -2149,7 +2152,10 @@ export class DashboardView {
     await tab.prPending;
     if (this.destroyed || !this.runTabs.includes(tab) || runId !== this.activeTabId) return;
     const prEl = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
-    if (prEl) prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true);
+    if (prEl) {
+      prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true);
+      this.paintSlackReviewRequests();
+    }
   }
 
   private rehomeRunDrawer(): void {
