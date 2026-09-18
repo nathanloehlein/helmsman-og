@@ -99,7 +99,7 @@ function deriveVars(anchors: ThemeAnchors): Record<string, string> {
 const THEME_ANCHORS: ThemeAnchors[] = [
   {
     id: 'quarterdeck', label: 'Quarterdeck', mode: 'dark',
-    bg: '#081721', gutter: '#061019', panel: '#102938', panel2: '#2d241e', panelHi: '#3b2e24',
+    bg: '#081721', gutter: '#061019', panel: '#102938', panel2: '#2d241e', panelHi: '#1b3544',
     accent: '#dfb778', text: '#f3ecdc', textDim: '#c9c6b6', textFaint: '#b7b6a5',
     bad: '#f59986', good: '#92cdb2', review: '#8ecae6', queued: '#e6c785',
   },
