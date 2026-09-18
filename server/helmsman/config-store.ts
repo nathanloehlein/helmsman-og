@@ -1,10 +1,12 @@
 import { loadConfig, type AppConfig } from '../config';
 import type { Db } from './db';
 import { SLACK_CONFIG_KEYS } from './slack/config';
+import { SLACK_REVIEW_CONFIG_KEYS } from './slack/review-request';
 import { PRE_PR_CONFIG_KEYS, PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue } from '../../src/logic/prePrSettings';
 
 export const EDITABLE_KEYS: readonly string[] = [
   ...SLACK_CONFIG_KEYS,
+  ...SLACK_REVIEW_CONFIG_KEYS,
   ...PRE_PR_CONFIG_KEYS,
   'GITHUB_REVIEW_WATCH_ENABLED',
   'AGENT_ADAPTER',
@@ -21,9 +23,9 @@ export const EDITABLE_KEYS: readonly string[] = [
   'GITHUB_PR_AUTHOR',
 ];
 
-export const SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'GITHUB_TOKEN', 'JIRA_EMAIL'];
+export const SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'GITHUB_TOKEN', 'JIRA_EMAIL', 'SLACK_BOT_TOKEN'];
 
-export const WRITABLE_SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN'];
+export const WRITABLE_SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'SLACK_BOT_TOKEN'];
 
 export function publicConfig(cfg: AppConfig): Record<string, unknown> {
   return {
@@ -71,6 +73,13 @@ export class ConfigStore {
     if (['JIRA_ENABLED', 'SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
       throw new Error(`${key} must be true or false`);
     }
+    const slackTarget = value.trim().replace(key === 'SLACK_REVIEW_CHANNEL' ? /^#/ : /^@/, '');
+    if (key === 'SLACK_REVIEW_CHANNEL' && slackTarget && !/^(?:[CG][A-Z\d]{2,31}|[a-z\d_-]{1,80})$/.test(slackTarget)) {
+      throw new Error('Slack review channel must be a channel name or channel ID');
+    }
+    if (key === 'SLACK_REVIEW_MENTION' && slackTarget && !/^(?:S[A-Z\d]{2,31}|[a-z\d_-]{1,80})$/.test(slackTarget)) {
+      throw new Error('Slack review mention must be a user group handle or group ID');
+    }
     const prePrSetting = PRE_PR_SETTING_DEFINITIONS.find(({ envKey }) => envKey === key);
     if (prePrSetting && value.trim() !== '' && parsePrePrSettingValue(value, prePrSetting) === undefined) {
       throw new Error(`${key} must be a whole number from ${prePrSetting.min} to ${prePrSetting.max}`);
@@ -90,5 +99,9 @@ export class ConfigStore {
 
   hasJiraToken(): boolean {
     return Boolean(this.effectiveEnv().JIRA_API_TOKEN?.trim());
+  }
+
+  hasSlackToken(): boolean {
+    return Boolean(this.effectiveEnv().SLACK_BOT_TOKEN?.trim());
   }
 }

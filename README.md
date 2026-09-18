@@ -512,6 +512,31 @@ Changing `JIRA_STATUS_*` does not rewrite those dashboard queries.
 Slack text fields are blank by default and the watcher is off. See
 [Automatic PR reviews](#automatic-pr-reviews) for first-time browser setup and triggers.
 
+### Requesting reviews in Slack
+
+Your open PRs have a **Request review in Slack** button, also available in an owned
+open PR's details. It posts the canonical PR link and mentions the configured Slack
+user group. Sending is manual; the button reports delivery or an actionable error
+and links to the message when Slack provides a permalink.
+
+In **Config → Slack review requests**, set the destination channel and review group.
+Defaults are `airo-editing` and `airo-editing-squad`. Names or Slack IDs are accepted;
+private channels require their channel ID. Install a Slack app with `chat:write`,
+`channels:read`, and `usergroups:read` scopes (`groups:read` for private channels),
+invite its bot to the destination, and save its bot token in the write-only field.
+The outbound sender uses Slack's official API and is independent of the browser reader.
+
+| Value | Default | Purpose |
+| --- | --- | --- |
+| `SLACK_REVIEW_CHANNEL` | `airo-editing` | Destination channel name or ID; live-editable. |
+| `SLACK_REVIEW_MENTION` | `airo-editing-squad` | User group handle or ID; resolved to an actual Slack mention. |
+| `SLACK_BOT_TOKEN` | Empty | Slack bot token; Config stores it in SQLite and never returns its value. |
+
+The server verifies that the PR is open and authored by the configured GitHub user.
+Persisted request receipts prevent repeated delivery for the same request ID, and a
+short per-PR cooldown protects against double-clicks and concurrent tabs. If delivery
+cannot be confirmed, check Slack before attempting another request.
+
 ### Agent execution and server storage
 
 | Value | Default | Where it applies / how to set it | Change |
@@ -581,6 +606,15 @@ branch deletion requires an additional explicit checkbox. Current/default branch
 primary/locked/active worktrees, changed commits, and mismatched checkouts are
 protected. Worktrees containing uncommitted, untracked, or ignored files cannot be
 removed through this control. No cleanup runs automatically.
+
+**Clean up branches** previews local branches with no configured upstream or a deleted
+upstream. By default, only branches already merged into the current HEAD are eligible.
+Select **Include unmerged branches** to also remove branches with unmerged commits;
+the preview warns before this destructive option is confirmed. The preview
+lists each candidate and explains protected skips; confirmation deletes
+the exact reviewed names and commits atomically. Any changed branch or HEAD requires a
+new preview. Use **Check remotes** first to refresh deleted-upstream information.
+Current, default, and checked-out branches remain protected in either mode.
 
 `GET /api/usage/external` exposes actual server HTTP request counts by service,
 including lifetime and rolling five-minute totals, errors, and rate-limit responses.

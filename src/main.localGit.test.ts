@@ -54,6 +54,111 @@ afterEach(() => {
 });
 
 describe('local Git actions', () => {
+  it('includes unmerged branches only after opt-in and confirms the previewed force mode', async () => {
+    const { root, writes, click } = await setup(body => body.action === 'preview-delete-untracked-branches'
+      ? json({ ...listing(), cleanup: {
+        expectedHead: 'head123', force: body.force === true,
+        candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'gone' }],
+        skipped: [{ branch: 'main', reason: 'Default branch is protected.' }],
+      } }) : json({ ...listing(), branches: [] }));
+    expect(root.querySelector<HTMLInputElement>('.local-git-cleanup-force')?.checked).toBe(false);
+    root.querySelector<HTMLInputElement>('.local-git-cleanup-force')!.click();
+    expect(writes).toEqual([]);
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-confirm')).not.toBeNull());
+    expect(writes).toEqual([{ repo: 'org/a', action: 'preview-delete-untracked-branches', force: true }]);
+    expect(root.querySelector('.local-git-cleanup-warning')?.textContent).toContain('permanently lose local commits');
+    expect(root.querySelector<HTMLInputElement>('.local-git-cleanup-force')?.checked).toBe(true);
+    expect(root.querySelector('[aria-label="Branches kept"]')?.textContent).toContain('Default branch is protected.');
+    root.querySelector<HTMLInputElement>('.local-git-cleanup-force')!.checked = false;
+    click('.local-git-cleanup-confirm');
+    await vi.waitFor(() => expect(root.querySelector('[data-local-branch=topic]')).toBeNull());
+    expect(writes[1]).toEqual({
+      repo: 'org/a', action: 'delete-untracked-branches', expectedHead: 'head123',
+      branches: [{ branch: 'topic', expectedCommit: 'abc123' }], force: true,
+    });
+    expect(root.querySelector<HTMLInputElement>('.local-git-cleanup-force')?.checked).toBe(false);
+  });
+
+  it('invalidates the confirmation when the unmerged option changes and requires a new preview', async () => {
+    const { root, writes, click } = await setup(body => json({ ...listing(), cleanup: {
+      expectedHead: 'head123', force: body.force === true,
+      candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'gone' }], skipped: [],
+    } }));
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-confirm')).not.toBeNull());
+    root.querySelector<HTMLInputElement>('.local-git-cleanup-force')!.click();
+    expect(root.querySelector('.local-git-cleanup-confirm')).toBeNull();
+    expect(writes).toHaveLength(1);
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-confirm')).not.toBeNull());
+    expect(writes[1]).toEqual({ repo: 'org/a', action: 'preview-delete-untracked-branches', force: true });
+    click('.local-git-cleanup-cancel');
+    expect(root.querySelector<HTMLInputElement>('.local-git-cleanup-force')?.checked).toBe(false);
+    expect(writes).toHaveLength(2);
+  });
+
+  it('previews bulk cleanup without deleting and confirms the exact branch snapshot', async () => {
+    const cleanup = {
+      expectedHead: 'head123', force: false, candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'gone' }],
+      skipped: [{ branch: 'main', reason: 'Default branch is protected.' }],
+    };
+    const { root, writes, click } = await setup(body => body.action === 'preview-delete-untracked-branches'
+      ? json({ ...listing(), cleanup }) : json({ ...listing(), branches: [] }));
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-confirm')).not.toBeNull());
+    expect(writes).toEqual([{ repo: 'org/a', action: 'preview-delete-untracked-branches' }]);
+    expect(root.querySelector('[data-local-branch=topic]')).not.toBeNull();
+    expect(root.querySelector('[aria-label="Branches kept"]')?.textContent).toContain('Default branch is protected.');
+    click('.local-git-cleanup-confirm');
+    await vi.waitFor(() => expect(root.querySelector('[data-local-branch=topic]')).toBeNull());
+    expect(writes[1]).toEqual({
+      repo: 'org/a', action: 'delete-untracked-branches', expectedHead: 'head123',
+      branches: [{ branch: 'topic', expectedCommit: 'abc123' }],
+    });
+    expect(writes[1]).not.toHaveProperty('force');
+    expect(root.querySelector('.local-git-cleanup')).toBeNull();
+  });
+
+  it('cancels bulk cleanup without sending a deletion request', async () => {
+    const { root, writes, click } = await setup(() => json({ ...listing(), cleanup: {
+      expectedHead: 'head123', force: false, candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'gone' }], skipped: [],
+    } }));
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-cancel')).not.toBeNull());
+    click('.local-git-cleanup-cancel');
+    expect(root.querySelector('.local-git-cleanup')).toBeNull();
+    expect(root.querySelector('[data-local-branch=topic]')).not.toBeNull();
+    expect(writes).toEqual([{ repo: 'org/a', action: 'preview-delete-untracked-branches' }]);
+  });
+
+  it('shows stale bulk-preview failures and requires a fresh preview before another deletion', async () => {
+    const { root, writes, click } = await setup(body => body.action === 'preview-delete-untracked-branches'
+      ? json({ ...listing(), cleanup: {
+        expectedHead: 'head123', force: false, candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'gone' }], skipped: [],
+      } })
+      : json({ ...listing(), error: 'The branch changed since preview. Preview cleanup again.' }, 409));
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-confirm')).not.toBeNull());
+    click('.local-git-cleanup-confirm');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-error')?.textContent).toContain('changed since preview'));
+    expect(root.querySelector('[data-local-branch=topic]')).not.toBeNull();
+    expect(root.querySelector('.local-git-cleanup-confirm')).toBeNull();
+    expect(writes).toHaveLength(2);
+    expect(root.querySelector<HTMLButtonElement>('.local-git-cleanup-preview')?.disabled).toBe(false);
+  });
+
+  it('keeps bulk deletion disabled when every branch is protected or unmerged', async () => {
+    const { root, writes, click } = await setup(() => json({ ...listing(), cleanup: {
+      expectedHead: 'head123', force: false, candidates: [], skipped: [{ branch: 'topic', reason: 'Branch is not fully merged.' }],
+    } }));
+    click('.local-git-cleanup-preview');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-cleanup-confirm')).not.toBeNull());
+    expect(root.querySelector<HTMLButtonElement>('.local-git-cleanup-confirm')?.disabled).toBe(true);
+    click('.local-git-cleanup-confirm');
+    expect(writes).toHaveLength(1);
+  });
+
   it('requires explicit target confirmation and defaults to safe branch deletion', async () => {
     const { root, writes, click } = await setup();
     click('[data-local-branch="topic"]');

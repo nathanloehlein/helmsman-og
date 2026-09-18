@@ -36,7 +36,8 @@ import { createBridge } from './cmux/bridge';
 import { openSlackStore } from './slack/store';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { createSlackBrowserReader } from './slack/browser';
-import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS } from './slack/config';
+import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
+import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings } from './slack/review-request';
 import type { SlackState } from '../../src/data/slack';
 import { createGithubReviewWatcher } from './github-review-watcher';
 import { createCreatedPrReviews } from './created-pr-reviews';
@@ -65,6 +66,13 @@ const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-ru
 mkdirSync(RUNS_DIR, { recursive: true });
 const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
+const slackReviewRequester = openSlackReviewRequester(dbPath, {
+  settings: () => slackReviewSettings(configStore.effectiveEnv()),
+  getPr: (repo, prNumber) => {
+    const github = configStore.current().github;
+    return github ? fetchPrStatus(github, repo, prNumber) : Promise.resolve(null);
+  },
+});
 const startupCfg: AppConfig = configStore.current();
 const cmux = createBridge();
 const cmuxClients = new Set<ServerResponse>();
@@ -498,6 +506,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         };
       },
       slack: { snapshot: slackSnapshot, markRead: (id) => slackStore.markRead(id, new Date().toISOString()) },
+      slackReviewRequest: (input) => slackReviewRequester.request(input),
       todos,
       jiraEnabled: () => configStore.current().jiraEnabled,
       dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo, todos.list()),
@@ -514,15 +523,16 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         return { maxAttempts: c.maxAttempts, maxCostUsd: c.maxCostUsd };
       },
       getConfig: () => ({
-        config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
+        config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), ...publicSlackReviewSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
         overridden: Object.keys(configStore.overrides()),
         jiraTokenSet: configStore.hasJiraToken(),
+        slackTokenSet: configStore.hasSlackToken(),
       }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {
           if (WRITABLE_SECRET_KEYS.includes(key)) configStore.setSecret(key, value, () => new Date().toISOString());
           else configStore.setOverride(key, value, () => new Date().toISOString());
-          if (key.startsWith('SLACK_')) {
+          if (SLACK_CONFIG_KEYS.some((configKey) => configKey === key)) {
             configuredSlackWatcher();
             void pollSlack();
           }
@@ -600,7 +610,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       res.end(JSON.stringify(api.json));
       return;
     }
-    const isPage = /^\/(?:helm|triage|cmux|bugs|prs?|runs|config)?\/?$/.test(url.pathname);
+    const isPage = /^\/(?:helm|triage|terminal|cmux|bugs|prs?|runs|config|todos)?\/?$/.test(url.pathname);
     const rel: string = isPage ? '/index.html' : url.pathname;
     const file: string = normalize(join(DIST, rel));
     if (file.startsWith(DIST + sep) && existsSync(file)) {

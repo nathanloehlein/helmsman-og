@@ -1,4 +1,5 @@
 import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
+import { SlackReviewError, type SlackReviewResult } from './slack/review-request';
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
 import { isGithubRepo, type PrListResponse } from '../pr-lists';
@@ -46,6 +47,7 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
   todos?: TodoStore;
   jiraEnabled?: () => boolean;
   outboundUsage?: () => unknown;
@@ -61,7 +63,7 @@ export interface RouterDeps {
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
   caps: () => { maxAttempts: number; maxCostUsd: number | null };
-  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean };
+  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean; slackTokenSet?: boolean };
   setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
   prStatus: (repo: string, prNumber: number) => Promise<PrStatus | null>;
   reviewRequestedPrs: (repo: string | null) => Promise<PrListResponse>;
@@ -90,6 +92,15 @@ export async function handleApi(
   _body: unknown,
   deps: RouterDeps,
 ): Promise<ApiResult | null> {
+  if (path === '/api/slack/review-request' && method === 'POST') {
+    if (!deps.slackReviewRequest) return { status: 503, json: { error: 'Slack review requests are unavailable.' } };
+    try {
+      return { status: 200, json: await deps.slackReviewRequest(_body) };
+    } catch (error) {
+      if (error instanceof SlackReviewError) return { status: error.status, json: { error: error.message, uncertain: error.uncertain } };
+      return { status: 502, json: { error: 'Slack review request failed. Check Slack before retrying.', uncertain: true } };
+    }
+  }
   const todoMatch = path.match(/^\/api\/todos\/(TODO-[1-9]\d*)$/);
   if (path === '/api/todos' || todoMatch) {
     if (!deps.todos) return { status: 503, json: { error: 'Todos unavailable.' } };
@@ -148,6 +159,20 @@ export async function handleApi(
   }
   if (path === '/api/agents' && method === 'GET') {
     return { status: 200, json: { runs: deps.db.listRuns(50).map((row) => toRunSummary(row, deps.db)), autoClaim: deps.autoClaimRepos(), caps: deps.caps() } };
+  }
+  if (path === '/api/runs' && method === 'GET') {
+    const rawLimit = query.get('limit') ?? '25';
+    const rawOffset = query.get('offset') ?? '0';
+    const limit = Number(rawLimit);
+    const offset = Number(rawOffset);
+    const repo = query.get('repo');
+    if (!/^[1-9]\d*$/.test(rawLimit) || !Number.isSafeInteger(limit) || limit > 100
+      || !/^(?:0|[1-9]\d*)$/.test(rawOffset) || !Number.isSafeInteger(offset)
+      || repo !== null && !isGithubRepo(repo)) {
+      return { status: 400, json: { error: 'Use a limit from 1 to 100, a nonnegative offset, and an optional owner/repo filter.' } };
+    }
+    const page = deps.db.runPage(limit, offset, repo);
+    return { status: 200, json: { runs: page.runs.map((row) => toRunSummary(row, deps.db)), total: page.total, limit, offset } };
   }
   const runMatch = path.match(/^\/api\/agents\/([^/]+)$/);
   if (runMatch && method === 'GET') {

@@ -11,11 +11,12 @@ const todo = (overrides: Partial<Todo> = {}): Todo => ({
   createdAt: '2026-09-18T12:00:00Z', updatedAt: '2026-09-18T12:00:00Z', runId: null, completedAt: null, ...overrides,
 });
 
-async function setup(options: { path?: string; jiraEnabled?: boolean; items?: Todo[]; launchError?: string } = {}) {
+async function setup(options: { path?: string; jiraEnabled?: boolean; items?: Todo[]; launchError?: string; autoClaimError?: boolean } = {}) {
   window.history.replaceState(null, '', options.path ?? '/todos?repo=org/a');
   const snapshot = await loadDashboard();
   let jiraEnabled = options.jiraEnabled ?? false;
   let todos = options.items ?? [todo()];
+  let autoClaim: string[] = [];
   const writes: { path: string; method: string; body: Record<string, unknown> }[] = [];
   const reads: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -48,13 +49,18 @@ async function setup(options: { path?: string; jiraEnabled?: boolean; items?: To
         todos = todos.map(item => item.id === body.todoId ? { ...item, state: 'in_progress', runId: 'run-123' } : item);
         return json({ runId: 'run-123' });
       }
+      if (url.pathname === '/api/repos/org%2Fa/auto-claim') {
+        if (options.autoClaimError) return json({ error: 'Unable to update auto-claim.' }, 500);
+        autoClaim = body.enabled ? ['org/a'] : [];
+        return json({ ok: true });
+      }
       throw new Error(`Unexpected write ${method} ${url.pathname}`);
     }
     reads.push(url.pathname);
     if (url.pathname === '/api/context') return json({ repos: ['org/a', 'org/b'], jiraBaseUrl: null, jiraEnabled });
     if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/a', 'org/b'], selectedRepo: url.searchParams.get('repo'), jiraBaseUrl: null, jiraEnabled });
     if (url.pathname === '/api/todos') return json({ todos, jiraEnabled });
-    if (url.pathname === '/api/agents') return json({ runs: [], autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+    if (url.pathname === '/api/agents') return json({ runs: [], autoClaim, caps: { maxAttempts: 1, maxCostUsd: null } });
     if (url.pathname === '/api/config') return json({ config: { JIRA_ENABLED: String(jiraEnabled) }, overridden: [] });
     if (url.pathname === '/api/slack') return json({ health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null }, notifications: [] });
     if (url.pathname === '/api/pr/review-requests' || url.pathname === '/api/pr/open') return json({ prs: [], degraded: false, truncated: false });
@@ -76,7 +82,7 @@ async function setup(options: { path?: string; jiraEnabled?: boolean; items?: To
     field.dispatchEvent(new Event('change', { bubbles: true }));
   };
   const submit = () => root.querySelector<HTMLFormElement>('[data-todo-form]')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-  return { root, view, writes, reads, click, fill, submit };
+  return { root, view, writes, reads, click, fill, submit, resetAutoClaim: () => { autoClaim = []; } };
 }
 
 beforeEach(() => {
@@ -93,6 +99,44 @@ afterEach(() => {
 });
 
 describe('todo workflow', () => {
+  it('enables and disables automatic voyages for the selected repository', async () => {
+    const { root, writes, click, fill, view } = await setup();
+    fill('title', 'Keep this draft ');
+    expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('false');
+    click('[data-todo-auto-claim]');
+    await vi.waitFor(() => expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('true'));
+    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Disable auto-claim');
+    expect(root.querySelector<HTMLInputElement>('[name=title]')?.value).toBe('Keep this draft ');
+    await view.refresh();
+    expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('true');
+    click('[data-todo-auto-claim]');
+    await vi.waitFor(() => expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('false'));
+    expect(writes).toEqual([
+      { path: '/api/repos/org%2Fa/auto-claim', method: 'POST', body: { enabled: true } },
+      { path: '/api/repos/org%2Fa/auto-claim', method: 'POST', body: { enabled: false } },
+    ]);
+  });
+
+  it('keeps automatic voyages off after a failed opt-in', async () => {
+    const { root, click } = await setup({ autoClaimError: true });
+    click('[data-todo-auto-claim]');
+    await vi.waitFor(() => expect(root.querySelector('[data-todo-feedback] [role=alert]')?.textContent).toBe('Unable to update auto-claim.'));
+    expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(root.querySelector<HTMLButtonElement>('[data-todo-auto-claim]')?.disabled).toBe(false);
+  });
+
+  it('reflects a server-side auto-claim reset without replacing the draft', async () => {
+    const { root, click, fill, view, resetAutoClaim } = await setup();
+    click('[data-todo-auto-claim]');
+    await vi.waitFor(() => expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('true'));
+    fill('title', 'Draft across server restart');
+    resetAutoClaim();
+    await view.refresh();
+    expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Enable auto-claim');
+    expect(root.querySelector<HTMLInputElement>('[name=title]')?.value).toBe('Draft across server restart');
+  });
+
   it('opens the direct Todos link and replaces Jira-specific navigation', async () => {
     const { root, reads } = await setup();
     expect(root.querySelector('[data-page=todos]')).not.toBeNull();
@@ -182,7 +226,7 @@ describe('todo workflow', () => {
     const { root, fill, click } = await setup({ launchError: 'No local checkout configured.' });
     fill('title', 'Draft to keep');
     click('[data-todo-launch=TODO-1]');
-    await vi.waitFor(() => expect(root.querySelector('[data-todo-feedback] [role=alert]')).not.toBeNull());
+    await vi.waitFor(() => expect(root.querySelector('[data-todo-feedback] [role=alert]')?.textContent).toBe('No local checkout configured.'));
     expect(root.querySelector<HTMLInputElement>('[name=title]')?.value).toBe('Draft to keep');
     expect(root.querySelector('.todo-state')?.textContent).toBe('To do');
     expect(root.querySelector<HTMLButtonElement>('[data-todo-launch=TODO-1]')?.disabled).toBe(false);

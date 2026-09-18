@@ -8,6 +8,7 @@ import { emptyLocalGit, fetchLocalGit, updateLocalGit, type LocalGitAction, type
 import { renderLocalGit } from './renderLocalGit';
 import { fetchSlack, markSlackNotificationRead, unavailableSlack, type SlackState } from './data/slack';
 import { renderSlack } from './renderSlack';
+import { requestSlackReview, SlackReviewRequestError, type SlackReviewResult } from './data/slackReview';
 import './style.css';
 import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
 import { renderRunsView } from './renderRuns';
@@ -193,6 +194,7 @@ export class DashboardView {
   private slackError: string | null = null;
   private slackSeq: number = 0;
   private slackReads = new Set<string>();
+  private slackReviewRequests = new Map<string, { requestId: string; pending: boolean; error?: string; result?: SlackReviewResult }>();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -230,6 +232,13 @@ export class DashboardView {
     }, { signal: this.rootEvents.signal });
     this.root.addEventListener('change', (event: Event): void => {
       const control = event.target;
+      if (control instanceof HTMLInputElement && control.matches('.local-git-cleanup-force')) {
+        if (control.disabled || this.localGit.loading || this.localGit.pendingAction) return;
+        this.localGit = { ...this.localGit, cleanup: undefined, cleanupForce: control.checked };
+        this.paintLocalGit();
+        this.root.querySelector<HTMLInputElement>('.local-git-cleanup-force')?.focus();
+        return;
+      }
       if (this.view === 'todos' && control instanceof HTMLSelectElement && control.matches('[data-todo-state-filter]')) {
         this.todos.stateFilter = TODO_STATES.find(state => state === control.value) ?? 'all';
         this.paintTodoList();
@@ -483,13 +492,15 @@ export class DashboardView {
     const seq: number = ++this.refreshSeq;
     const slackSeq = ++this.slackSeq;
     const repo: string | null = this.selectedRepo;
-    const [response, agents, config, slack] = await Promise.all([
+    const [response, agents, config, slack, context] = await Promise.all([
       dashboardDue ? loadDashboard(repo).catch((): DashboardResponse | null => null) : null,
       localDue ? fetchAgents() : null,
       force ? getConfig() : null,
       localDue ? fetchSlack() : undefined,
+      localDue ? getContext() : null,
     ]);
     if (seq !== this.refreshSeq || repo !== this.selectedRepo) return;
+    const priorJiraEnabled = this.jiraEnabled;
     if (dashboardDue) this.dashboardUnavailable = !response;
     if (response) {
       this.snapshot = response.snapshot;
@@ -510,7 +521,26 @@ export class DashboardView {
       this.uiConfig = config;
       if (config.config?.JIRA_ENABLED !== undefined) this.jiraEnabled = config.config.JIRA_ENABLED !== false && config.config.JIRA_ENABLED !== 'false';
     }
+    if (context) {
+      this.repos = [...new Set([...(response?.repos ?? this.repos), ...context.repos])].sort();
+      this.jiraBaseUrl = context.jiraBaseUrl;
+      if (typeof context.jiraEnabled === 'boolean') this.jiraEnabled = context.jiraEnabled;
+    }
+    if (priorJiraEnabled !== this.jiraEnabled) {
+      this.uiConfig.config.JIRA_ENABLED = String(this.jiraEnabled);
+      if (response?.jiraEnabled !== this.jiraEnabled) {
+        this.snapshot = null;
+        this.dashboardRepo = undefined;
+        this.lastDashboardRefresh = -Infinity;
+      }
+      const sourceSelect = this.root.querySelector<HTMLSelectElement>('#jira-enabled');
+      if (sourceSelect && sourceSelect !== document.activeElement) sourceSelect.value = String(this.jiraEnabled);
+    }
     this.syncShell();
+    if ((!this.jiraEnabled && (this.view === 'triage' || this.view === 'bugs')) || (this.jiraEnabled && this.view === 'todos')) {
+      await this.navigate({ ...this.route, view: this.jiraEnabled ? 'config' : 'todos', pane: null }, 'replace');
+      return;
+    }
     if (localDue && slackSeq === this.slackSeq) {
       this.slack = slack ?? {
         ...this.slack,
@@ -582,6 +612,7 @@ export class DashboardView {
     const inbox: HTMLElement | null = this.root.querySelector('.pr-inbox');
     if (inbox) inbox.innerHTML = renderPrLists(this.prInbox());
     this.bindPaneLinks();
+    this.paintSlackReviewRequests();
   }
 
   private loadReviewRequests(force: boolean = true): Promise<void> {
@@ -771,6 +802,7 @@ export class DashboardView {
     if (content && this.contentView !== this.view) content.scrollTop = 0;
     this.contentView = this.view;
     this.syncShell();
+    this.paintSlackReviewRequests();
   }
 
   private syncShell(): void {
@@ -858,6 +890,58 @@ export class DashboardView {
       const button = Array.from(center.querySelectorAll<HTMLButtonElement>('[data-slack-read]')).find(item => item.dataset.slackRead === focusReadId);
       (button ?? center.querySelector<HTMLButtonElement>('[data-slack-toggle]'))?.focus({ preventScroll: true });
     } else if (focusToggle) center.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus({ preventScroll: true });
+  }
+
+  private paintSlackReviewRequests(): void {
+    for (const control of this.root.querySelectorAll<HTMLElement>('[data-slack-review-control]')) {
+      const repo = control.dataset.repo;
+      const number = Number(control.dataset.number);
+      if (!repo || !Number.isSafeInteger(number)) continue;
+      const state = this.slackReviewRequests.get(`${repo}#${number}`);
+      const button = control.querySelector<HTMLButtonElement>('[data-slack-review-request]');
+      const status = control.querySelector<HTMLElement>('.slack-review-result');
+      if (!button || !status) continue;
+      button.disabled = Boolean(state?.pending || state?.result);
+      button.textContent = state?.pending ? 'Sending…' : state?.result ? 'Review requested' : 'Request review in Slack';
+      status.classList.toggle('is-error', Boolean(state?.error));
+      status.setAttribute('role', state?.error ? 'alert' : 'status');
+      status.replaceChildren();
+      if (state?.error) status.textContent = state.error;
+      else if (state?.result) {
+        status.textContent = `Sent to #${state.result.channel.replace(/^#/, '')}. `;
+        if (state.result.permalink) {
+          const link = document.createElement('a');
+          link.href = state.result.permalink;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'View message ↗';
+          status.append(link);
+        }
+      }
+    }
+  }
+
+  private async sendSlackReviewRequest(button: HTMLButtonElement): Promise<void> {
+    const repo = button.dataset.repo;
+    const number = Number(button.dataset.number);
+    if (!repo || !Number.isSafeInteger(number) || number < 1) return;
+    const key = `${repo}#${number}`;
+    const previous = this.slackReviewRequests.get(key);
+    if (previous?.pending || previous?.result) return;
+    const state = { requestId: previous?.requestId || crypto.randomUUID(), pending: true } as {
+      requestId: string; pending: boolean; error?: string; result?: SlackReviewResult;
+    };
+    this.slackReviewRequests.set(key, state);
+    this.paintSlackReviewRequests();
+    try {
+      state.result = await requestSlackReview(repo, number, state.requestId);
+    } catch (error: unknown) {
+      state.error = error instanceof Error ? error.message : 'Slack request failed. Check the channel before retrying.';
+      if (error instanceof SlackReviewRequestError && !error.uncertain) state.requestId = '';
+    } finally {
+      state.pending = false;
+      if (!this.destroyed) this.paintSlackReviewRequests();
+    }
   }
 
   private async readSlackNotification(id: string): Promise<void> {
@@ -1004,7 +1088,7 @@ export class DashboardView {
     }
     if (this.localGitPending?.repo === repo) return this.localGitPending.promise;
     const seq = ++this.localGitSeq;
-    this.localGit = { ...(this.localGit.repo === repo ? this.localGit : emptyLocalGit(repo)), loading: true, confirmation: undefined, pendingAction: undefined };
+    this.localGit = { ...(this.localGit.repo === repo ? this.localGit : emptyLocalGit(repo)), loading: true, confirmation: undefined, cleanup: undefined, pendingAction: undefined };
     this.paintLocalGit();
     const promise = fetchLocalGit(repo).then(result => {
       if (seq !== this.localGitSeq || repo !== this.selectedRepo) return;
@@ -1024,9 +1108,9 @@ export class DashboardView {
     const branch = this.localGit.branches.find(item => item?.name === branchName);
     const tree = this.localGit.worktrees.find(item => item?.path === worktreePath);
     if (branch && !branch.current && !branch.deletionBlockedReason) {
-      this.localGit = { ...this.localGit, confirmation: { action: 'delete-branch', branch: branch.name, expectedCommit: branch.commit } };
+      this.localGit = { ...this.localGit, cleanup: undefined, confirmation: { action: 'delete-branch', branch: branch.name, expectedCommit: branch.commit } };
     } else if (tree && !tree.locked && !tree.bare && tree.path !== this.localGit.path && !tree.deletionBlockedReason) {
-      this.localGit = { ...this.localGit, confirmation: { action: 'delete-worktree', path: tree.path, expectedCommit: tree.commit } };
+      this.localGit = { ...this.localGit, cleanup: undefined, confirmation: { action: 'delete-worktree', path: tree.path, expectedCommit: tree.commit } };
     } else return;
     this.paintLocalGit();
     this.root.querySelector<HTMLButtonElement>('.local-git-cancel')?.focus();
@@ -1036,7 +1120,9 @@ export class DashboardView {
     const repo = this.selectedRepo;
     if (!repo || this.localGit.repo !== repo || this.localGit.loading || this.localGit.pendingAction || this.localGitOperations.has(repo)) return Promise.resolve();
     const seq = ++this.localGitSeq;
-    this.localGit = { ...this.localGit, confirmation: undefined, error: null, pendingAction: action.action === 'refresh-remotes' ? 'Checking remotes…' : 'Deleting…' };
+    this.localGit = { ...this.localGit, confirmation: undefined, cleanup: undefined, error: null,
+      pendingAction: action.action === 'refresh-remotes' ? 'Checking remotes…'
+        : action.action === 'preview-delete-untracked-branches' ? 'Checking eligible branches…' : 'Deleting…' };
     this.paintLocalGit();
     const promise = updateLocalGit(repo, action).then(result => {
       if (seq !== this.localGitSeq || repo !== this.selectedRepo) return;
@@ -1063,6 +1149,12 @@ export class DashboardView {
     if (this.view !== 'todos' || this.destroyed) return;
     const list = this.root.querySelector('[data-todo-list]');
     if (list) list.innerHTML = renderTodoList(this.todos, this.shellOptions());
+    const autoClaim = this.root.querySelector<HTMLButtonElement>('[data-todo-auto-claim]');
+    if (autoClaim) {
+      const enabled = this.autoClaimRepos.includes(this.selectedRepo ?? '');
+      autoClaim.setAttribute('aria-pressed', String(enabled));
+      autoClaim.textContent = enabled ? 'Disable auto-claim' : 'Enable auto-claim';
+    }
     const feedback = this.root.querySelector('[data-todo-feedback]');
     if (feedback) {
       const template = document.createElement('template');
@@ -1072,7 +1164,8 @@ export class DashboardView {
     }
   }
 
-  private async loadTodos(): Promise<void> {
+  private async loadTodos(force: boolean = false): Promise<void> {
+    if (this.todos.pendingAction && !force) return;
     const seq = ++this.todosSeq;
     this.todos.loading = true;
     try {
@@ -1100,6 +1193,8 @@ export class DashboardView {
 
   private async saveTodo(form: HTMLFormElement): Promise<void> {
     if (this.todos.pendingAction || this.jiraEnabled) return;
+    ++this.todosSeq;
+    this.todos.loading = false;
     const input = readTodoForm(form);
     const id = this.todos.editingId;
     this.todos.draft = input;
@@ -1173,6 +1268,8 @@ export class DashboardView {
     const todo = this.todos.items.find(item => item.id === (todoConfirmDelete ?? todoLaunch));
     if (!todo || todo.state === 'in_progress') return;
     if (todoConfirmDelete && this.todos.deletingId !== todo.id) return;
+    ++this.todosSeq;
+    this.todos.loading = false;
     this.todos.pendingAction = todoConfirmDelete ? 'Deleting todo…' : 'Launching voyage…';
     this.todos.error = null;
     this.paint();
@@ -1188,7 +1285,7 @@ export class DashboardView {
       } else {
         const result = await launchRun({ mode: 'todo', todoId: todo.id, repo: todo.repo });
         if (!this.destroyed) this.openRunTab(result.runId, todo.id);
-        await this.loadTodos();
+        await this.loadTodos(true);
       }
       this.lastDashboardRefresh = -Infinity;
     } catch (error: unknown) {
@@ -1557,6 +1654,12 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+    const slackReview = target.closest<HTMLButtonElement>('[data-slack-review-request]');
+    if (slackReview) {
+      event.preventDefault();
+      if (!slackReview.disabled) void this.sendSlackReviewRequest(slackReview);
+      return;
+    }
     const todoButton = target.closest<HTMLButtonElement>('[data-todo-edit], [data-todo-delete], [data-todo-confirm-delete], [data-todo-cancel-delete], [data-todo-launch], [data-todo-cancel], [data-todo-new], [data-todo-refresh], [data-todo-auto-claim]');
     if (todoButton && this.view === 'todos') {
       if (!todoButton.disabled) void this.handleTodoAction(todoButton);
@@ -1678,6 +1781,20 @@ export class DashboardView {
     if (localGitButton) {
       if (localGitButton.disabled) return;
       if (localGitButton.matches('.local-git-check-remotes')) void this.mutateLocalGit({ action: 'refresh-remotes' });
+      else if (localGitButton.matches('.local-git-cleanup-preview')) void this.mutateLocalGit({
+        action: 'preview-delete-untracked-branches', ...(this.localGit.cleanupForce ? { force: true } : {}),
+      });
+      else if (localGitButton.matches('.local-git-cleanup-cancel')) {
+        this.localGit = { ...this.localGit, cleanup: undefined, cleanupForce: false };
+        this.paintLocalGit();
+      } else if (localGitButton.matches('.local-git-cleanup-confirm')) {
+        const cleanup = this.localGit.cleanup;
+        if (cleanup?.candidates.length) void this.mutateLocalGit({
+          action: 'delete-untracked-branches', expectedHead: cleanup.expectedHead,
+          branches: cleanup.candidates.map(({ branch, expectedCommit }) => ({ branch, expectedCommit })),
+          ...(cleanup.force ? { force: true } : {}),
+        });
+      }
       else if (localGitButton.matches('.local-git-cancel')) {
         this.localGit = { ...this.localGit, confirmation: undefined };
         this.paintLocalGit();
@@ -2234,6 +2351,8 @@ export class DashboardView {
         return;
       }
       if (key === 'JIRA_ENABLED') {
+        ++this.refreshSeq;
+        this.refreshPending = null;
         this.jiraEnabled = input.value !== 'false';
         this.jiraBaseUrl = null;
         this.snapshot = null;

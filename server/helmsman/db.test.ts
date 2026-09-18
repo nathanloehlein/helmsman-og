@@ -78,6 +78,30 @@ describe('db', () => {
     expect(db.recentEvents('missing', 300, 4000)).toEqual([]);
   });
 
+  it('paginates the complete history with deterministic ordering and matching repository totals', () => {
+    db = openDb(':memory:');
+    for (let index = 0; index < 60; index++) {
+      db.insertRun(run({ id: `run-${String(index).padStart(2, '0')}`, repo: index % 2 ? 'owner/repo' : 'other/repo' }));
+    }
+    const first = db.runPage(25, 0);
+    const second = db.runPage(25, 25);
+    const third = db.runPage(25, 50);
+    expect(first.total).toBe(60);
+    expect(first.runs[0]?.id).toBe('run-59');
+    expect(third.runs).toHaveLength(10);
+    expect(new Set([...first.runs, ...second.runs, ...third.runs].map(({ id }) => id)).size).toBe(60);
+    expect(db.runPage(25, 100)).toEqual({ runs: [], total: 60 });
+    const filtered = db.runPage(25, 25, 'OWNER/REPO');
+    expect(filtered.total).toBe(30);
+    expect(filtered.runs.map(({ id }) => id)).toEqual(['run-09', 'run-07', 'run-05', 'run-03', 'run-01']);
+    expect(db.runPage(25, 0, 'missing/repo')).toEqual({ runs: [], total: 0 });
+  });
+
+  it.each([[0, 0], [101, 0], [1.5, 0], [25, -1], [25, Infinity], [NaN, 0]])('rejects invalid history bounds %s/%s', (limit, offset) => {
+    db = openDb(':memory:');
+    expect(() => db.runPage(limit, offset)).toThrow(RangeError);
+  });
+
   it('reads only the latest review verdict for the matching run and bounds its text', () => {
     db = openDb(':memory:');
     expect(db.latestReviewVerdict('r1')).toBeNull();

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleApi, type RouterDeps } from './router';
 import { openTodoStore, type TodoStore } from './todos';
+import { SlackReviewError } from './slack/review-request';
 import type { PrStatus } from '../github';
 import type { BugsResponse } from '../../src/types';
 
@@ -55,6 +56,38 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('returns paginated run summaries and counts with bounded defaults', async () => {
+    const row = deps.db.listRuns(1)[0]!;
+    const runPage = vi.fn().mockReturnValue({ runs: [row], total: 101 });
+    const historyDeps = { ...deps, db: { ...deps.db, runPage } };
+    expect(await handleApi('GET', '/api/runs', new URLSearchParams(), null, historyDeps))
+      .toMatchObject({ status: 200, json: { runs: [{ id: row.id }], total: 101, limit: 25, offset: 0 } });
+    expect(runPage).toHaveBeenLastCalledWith(25, 0, null);
+    await handleApi('GET', '/api/runs', new URLSearchParams('limit=10&offset=50&repo=owner/repo'), null, historyDeps);
+    expect(runPage).toHaveBeenLastCalledWith(10, 50, 'owner/repo');
+  });
+
+  it.each(['limit=0', 'limit=101', 'limit=1.5', 'limit=', 'offset=-1', 'offset=NaN', 'offset=1e3', 'offset=9007199254740992', 'repo=../invalid'])('rejects invalid history query %s', async (query) => {
+    const runPage = vi.fn();
+    expect(await handleApi('GET', '/api/runs', new URLSearchParams(query), null, { ...deps, db: { ...deps.db, runPage } }))
+      .toMatchObject({ status: 400 });
+    expect(runPage).not.toHaveBeenCalled();
+  });
+
+  it('posts Slack review requests only from the explicit endpoint and preserves uncertain delivery errors', async () => {
+    const body = { repo: 'o/r', prNumber: 5, requestId: 'request-id' };
+    const receipt = { ok: true as const, channel: 'airo-editing', mention: 'airo-editing-squad', permalink: null };
+    const request = vi.fn().mockResolvedValue(receipt);
+    expect(await handleApi('POST', '/api/slack/review-request', new URLSearchParams(), body, { ...deps, slackReviewRequest: request }))
+      .toEqual({ status: 200, json: receipt });
+    expect(request).toHaveBeenCalledWith(body);
+    expect(await handleApi('POST', '/api/slack/review-request', new URLSearchParams(), body, deps))
+      .toMatchObject({ status: 503 });
+    request.mockRejectedValue(new SlackReviewError('Check Slack before retrying.', 502, true));
+    expect(await handleApi('POST', '/api/slack/review-request', new URLSearchParams(), body, { ...deps, slackReviewRequest: request }))
+      .toEqual({ status: 502, json: { error: 'Check Slack before retrying.', uncertain: true } });
+  });
+
   it('loads navigation context from local configuration', async () => {
     const value = { repos: ['o/r'], jiraBaseUrl: 'https://x.atlassian.net' };
     const dashboard = vi.fn();

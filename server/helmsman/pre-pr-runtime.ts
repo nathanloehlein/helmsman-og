@@ -121,7 +121,6 @@ export async function executePrePrStage(adapter: AgentAdapter, task: AgentTask, 
     child.once('close', (code, exitSignal) => {
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
-      killStage('SIGKILL');
       signal.removeEventListener('abort', abort);
       forward(stdout); forward(stderr, true);
       if (failure) reject(failure);

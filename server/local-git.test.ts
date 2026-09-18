@@ -367,3 +367,195 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     expect((await git('rev-parse', 'refs/remotes/origin/main')).trim()).toBe(await sha());
   });
 });
+
+describe('bulk branch cleanup', () => {
+  const mutate = (action: unknown, options = {}) => mutateLocalGit(root, 'owner/repo', ['owner/repo'], action, options);
+  const preview = () => mutate({ action: 'preview-delete-untracked-branches' });
+  const confirm = (cleanup: { expectedHead: string; candidates: { branch: string; expectedCommit: string }[] }) => ({
+    action: 'delete-untracked-branches', expectedHead: cleanup.expectedHead,
+    branches: cleanup.candidates.map(({ branch, expectedCommit }) => ({ branch, expectedCommit })),
+  });
+
+  it('previews no-upstream and gone branches, skipping protected, checked-out and unmerged work without changing refs', async () => {
+    await git('branch', 'feature/local');
+    await git('branch', 'feature/gone');
+    await git('config', 'branch.feature/gone.remote', 'origin');
+    await git('config', 'branch.feature/gone.merge', 'refs/heads/gone');
+    await git('branch', 'feature/present');
+    await git('update-ref', 'refs/remotes/origin/present', 'HEAD');
+    await git('branch', '--set-upstream-to=origin/present', 'feature/present');
+    await git('branch', 'feature/unknown');
+    await git('config', 'branch.feature/unknown.merge', 'refs/heads/missing');
+    await git('worktree', 'add', '-b', 'feature/active', join(root, 'active'));
+    await git('checkout', '-b', 'feature/unmerged');
+    await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'unmerged');
+    await git('checkout', 'main');
+    const before = await git('show-ref');
+    const result = await mutate({ action: 'preview-delete-untracked-branches' }, { activeWorktreePaths: () => [join(root, 'active')] });
+    expect(result.status).toBe(200);
+    expect(result.json.cleanup?.candidates).toEqual([
+      expect.objectContaining({ branch: 'feature/gone', upstreamStatus: 'gone' }),
+      expect.objectContaining({ branch: 'feature/local', upstreamStatus: 'none' }),
+    ]);
+    expect(result.json.cleanup?.skipped).toEqual([
+      expect.objectContaining({ branch: 'feature/active', reason: expect.stringContaining('worktree') }),
+      expect.objectContaining({ branch: 'feature/unmerged', reason: expect.stringContaining('not fully merged') }),
+      expect.objectContaining({ branch: 'main', reason: expect.stringContaining('protected') }),
+    ]);
+    expect(await git('show-ref')).toBe(before);
+  });
+
+  it('deletes only the confirmed branch set atomically and removes their config', async () => {
+    await git('branch', 'feature/one');
+    await git('branch', 'feature/two');
+    await git('config', 'branch.feature/two.description', 'temporary');
+    const cleanup = (await preview()).json.cleanup!;
+    await git('branch', 'feature/added-after-preview');
+    const result = await mutate(confirm(cleanup));
+    expect(result.status).toBe(200);
+    expect(result.json.branches.map(branch => branch.name)).toEqual(['feature/added-after-preview', 'main']);
+    expect(await git('config', '--list')).not.toContain('branch.feature/two.');
+  });
+
+  it('rejects stale commits and changed HEAD before deleting any branch', async () => {
+    await git('branch', 'feature/one');
+    await git('branch', 'feature/two');
+    const cleanup = (await preview()).json.cleanup!;
+    const advanced = (await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'advanced')).trim();
+    await git('update-ref', 'refs/heads/feature/two', advanced);
+    expect((await mutate(confirm(cleanup))).status).toBe(409);
+    expect((await git('branch', '--list', 'feature/*')).trim().split('\n')).toHaveLength(2);
+    await git('update-ref', 'refs/heads/feature/two', cleanup.expectedHead);
+    await git('update-ref', 'refs/heads/main', advanced);
+    expect((await mutate(confirm(cleanup))).json.error).toContain('HEAD changed');
+    expect((await git('branch', '--list', 'feature/*')).trim().split('\n')).toHaveLength(2);
+  });
+
+  it('rejects new upstreams and checked-out worktrees after preview', async () => {
+    await git('branch', 'feature/one');
+    const cleanup = (await preview()).json.cleanup!;
+    await git('update-ref', 'refs/remotes/origin/one', 'HEAD');
+    await git('branch', '--set-upstream-to=origin/one', 'feature/one');
+    expect((await mutate(confirm(cleanup))).status).toBe(409);
+    await git('branch', '--unset-upstream', 'feature/one');
+    await git('worktree', 'add', join(root, 'new-worktree'), 'feature/one');
+    expect((await mutate(confirm(cleanup))).status).toBe(409);
+    expect((await git('show-ref', '--verify', 'refs/heads/feature/one')).trim()).not.toBe('');
+  });
+
+  it('rejects malformed, duplicate, empty, and injected bulk requests', async () => {
+    const expectedHead = (await git('rev-parse', 'HEAD')).trim();
+    const target = { branch: 'feature/one', expectedCommit: expectedHead };
+    for (const change of [
+      { branches: [] }, { branches: [target, target] }, { branches: [null] },
+      { branches: [{ ...target, branch: 'feature/x\ndelete refs/heads/main' }] },
+      { branches: [target], force: 'true' }, { branches: [target], force: 1 }, { branches: [target], expectedHead: 'HEAD' },
+      { branches: [{ ...target, expectedCommit: 'HEAD' }] },
+    ]) {
+      expect((await mutate({ action: 'delete-untracked-branches', expectedHead, ...change })).status).toBe(400);
+    }
+    expect((await mutate({ action: 'delete-untracked-branches', expectedHead, branches: [{ branch: 'main', expectedCommit: expectedHead }] })).status).toBe(409);
+  });
+
+  it.each(['none', 'gone'] as const)('requires explicit force to preview and delete unmerged branches with %s upstream', async upstream => {
+    await git('branch', 'feature/merged');
+    await git('checkout', '-b', 'feature/unmerged');
+    await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'unmerged');
+    const unmerged = (await git('rev-parse', 'HEAD')).trim();
+    await git('checkout', 'main');
+    if (upstream === 'gone') {
+      await git('config', 'branch.feature/unmerged.remote', 'origin');
+      await git('config', 'branch.feature/unmerged.merge', 'refs/heads/unmerged');
+    }
+    const safe = (await preview()).json.cleanup!;
+    expect(safe.force).toBe(false);
+    expect(safe.candidates.map(branch => branch.branch)).toEqual(['feature/merged']);
+    const forced = (await mutate({ action: 'preview-delete-untracked-branches', force: true })).json.cleanup!;
+    expect(forced.force).toBe(true);
+    expect(forced.candidates).toContainEqual({ branch: 'feature/unmerged', expectedCommit: unmerged, upstreamStatus: upstream });
+    expect((await mutate(confirm(forced))).status).toBe(409);
+    expect((await git('branch', '--list', 'feature/*')).trim().split('\n')).toHaveLength(2);
+    const result = await mutate({ ...confirm(forced), force: true });
+    expect(result.status).toBe(200);
+    expect(result.json.branches.map(branch => branch.name)).toEqual(['main']);
+  });
+
+  it('protects default, checked-out, symbolic, present and unknown-upstream branches even in forced bulk cleanup', async () => {
+    for (const name of ['master', 'trunk', 'feature/present', 'feature/unknown']) await git('branch', name);
+    await git('update-ref', 'refs/remotes/origin/trunk', 'HEAD');
+    await git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+    await git('branch', '--set-upstream-to=origin/trunk', 'feature/present');
+    await git('config', 'branch.feature/unknown.merge', 'refs/heads/missing');
+    await git('symbolic-ref', 'refs/heads/alias', 'refs/heads/main');
+    await git('worktree', 'add', '-b', 'feature/active', join(root, 'active'));
+    await git('checkout', '-b', 'feature/current');
+    const result = await mutate({ action: 'preview-delete-untracked-branches', force: true });
+    expect(result.json.cleanup?.candidates).toEqual([]);
+    const expectedHead = (await git('rev-parse', 'HEAD')).trim();
+    for (const branch of ['main', 'master', 'trunk', 'alias', 'feature/current', 'feature/active', 'feature/present', 'feature/unknown']) {
+      expect((await mutate({ action: 'delete-untracked-branches', force: true, expectedHead, branches: [{ branch, expectedCommit: expectedHead }] })).status, branch).toBe(409);
+    }
+    expect((await git('rev-parse', 'refs/heads/main')).trim()).toBe(expectedHead);
+  });
+
+  it.each(['true', 1, null])('rejects nonboolean force %j on bulk previews', async force => {
+    expect((await mutate({ action: 'preview-delete-untracked-branches', force })).status).toBe(400);
+  });
+
+  it('reports completed deletion accurately if Git refuses branch metadata cleanup', async () => {
+    await git('branch', 'feature/one');
+    await git('config', 'branch.feature/one.description', 'temporary settings');
+    const cleanup = (await preview()).json.cleanup!;
+    const realGit = (await run('which', ['git'], { encoding: 'utf8' })).stdout.trim();
+    const wrapperDir = join(root, 'metadata-git-wrapper');
+    await mkdir(wrapperDir);
+    await writeFile(join(wrapperDir, 'git'), `#!/bin/sh
+if [ "$3" = "config" ] && [ "$4" = "--remove-section" ]; then
+  exit 1
+fi
+exec "$HELMSMAN_TEST_GIT_BIN" "$@"
+`, { mode: 0o755 });
+    const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN };
+    Object.assign(process.env, { PATH: `${wrapperDir}:${process.env.PATH ?? ''}`, HELMSMAN_TEST_GIT_BIN: realGit });
+    try {
+      const result = await mutate(confirm(cleanup));
+      expect(result.status).toBe(200);
+      expect(result.json.error).toContain('Branches deleted');
+      expect(result.json.branches.map(branch => branch.name)).toEqual(['main']);
+      expect(await git('config', '--list')).toContain('branch.feature/one.description');
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('preserves every target if one branch advances at the atomic deletion step', async () => {
+    await git('branch', 'feature/one');
+    await git('branch', 'feature/two');
+    const cleanup = (await preview()).json.cleanup!;
+    const advanced = (await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'advanced')).trim();
+    const realGit = (await run('which', ['git'], { encoding: 'utf8' })).stdout.trim();
+    const wrapperDir = join(root, 'bulk-git-wrapper');
+    await mkdir(wrapperDir);
+    await writeFile(join(wrapperDir, 'git'), `#!/bin/sh
+if [ "$3" = "update-ref" ] && [ "$5" = "--stdin" ]; then
+  "$HELMSMAN_TEST_GIT_BIN" -C "$2" update-ref refs/heads/feature/two "$HELMSMAN_TEST_REPLACEMENT"
+fi
+exec "$HELMSMAN_TEST_GIT_BIN" "$@"
+`, { mode: 0o755 });
+    const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN, HELMSMAN_TEST_REPLACEMENT: process.env.HELMSMAN_TEST_REPLACEMENT };
+    Object.assign(process.env, { PATH: `${wrapperDir}:${process.env.PATH ?? ''}`, HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_REPLACEMENT: advanced });
+    try {
+      expect((await mutate(confirm(cleanup))).status).toBe(409);
+      expect((await git('rev-parse', 'refs/heads/feature/one')).trim()).toBe(cleanup.expectedHead);
+      expect((await git('rev-parse', 'refs/heads/feature/two')).trim()).toBe(advanced);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});

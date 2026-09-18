@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -94,6 +94,22 @@ describe('pre-PR runtime boundaries', () => {
       await expect.poll(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, { timeout: 2000 }).toBe(true);
     } finally { await rm(root, { recursive: true, force: true }); }
   }, 15_000);
+
+  it('does not signal a released process group again after exit cleanup', async () => {
+    const originalKill = process.kill.bind(process);
+    const cleaned = new Set<number>();
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid < 0 && signal === 'SIGKILL') {
+        if (cleaned.has(pid)) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+        cleaned.add(pid);
+      }
+      return originalKill(pid, signal);
+    });
+    try {
+      await expect(executePrePrStage(adapter(''), task, tmpdir(), () => {}, new AbortController().signal)).resolves.toBeUndefined();
+      expect(kill.mock.calls.filter(([, signal]) => signal === 'SIGKILL')).toHaveLength(1);
+    } finally { kill.mockRestore(); }
+  });
 
   it('cleans up inherited-pipe descendants when the CLI exits normally', async () => {
     const root = await mkdtemp(join(tmpdir(), 'helmsman-stage-exit-test-'));

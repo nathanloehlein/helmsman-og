@@ -31,11 +31,17 @@ export interface RunEventRow {
   text: string;
 }
 
+export interface RunPage {
+  runs: RunRow[];
+  total: number;
+}
+
 export interface Db {
   insertRun(r: RunRow): void;
   updateRun(id: string, patch: Partial<RunRow>): void;
   getRun(id: string): RunRow | null;
   listRuns(limit: number): RunRow[];
+  runPage(limit: number, offset: number, repo?: string | null): RunPage;
   activeRuns(): RunRow[];
   reattachableRuns(): RunRow[];
   appendEvent(runId: string, kind: string, text: string, ts: string): RunEventRow;
@@ -63,6 +69,8 @@ export function openDb(path: string): Db {
     );
     CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(runId, id);
     CREATE INDEX IF NOT EXISTS idx_events_review_verdict ON run_events(runId, id) WHERE kind = 'review-verdict';
+    CREATE INDEX IF NOT EXISTS idx_runs_history ON runs(startedAt DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_runs_repo_history ON runs(repo COLLATE NOCASE, startedAt DESC, id DESC);
     CREATE TABLE IF NOT EXISTS config_overrides (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL);
   `);
 
@@ -91,13 +99,24 @@ export function openDb(path: string): Db {
       return (sql.prepare('SELECT * FROM runs WHERE id = ?').get(id) as RunRow | undefined) ?? null;
     },
     listRuns(limit: number): RunRow[] {
-      return sql.prepare('SELECT * FROM runs ORDER BY startedAt DESC LIMIT ?').all(limit) as RunRow[];
+      return sql.prepare('SELECT * FROM runs ORDER BY startedAt DESC, rowid ASC LIMIT ?').all(limit) as RunRow[];
     },
+    runPage: sql.transaction((limit: number, offset: number, repo: string | null = null): RunPage => {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) {
+        throw new RangeError('Run history requires a limit from 1 to 100 and a nonnegative offset');
+      }
+      const where = repo === null ? '' : ' WHERE repo = @repo COLLATE NOCASE';
+      const params = repo === null ? {} : { repo };
+      const total = (sql.prepare(`SELECT COUNT(*) AS total FROM runs${where}`).get(params) as { total: number }).total;
+      const runs = sql.prepare(`SELECT * FROM runs${where} ORDER BY startedAt DESC, id DESC LIMIT @limit OFFSET @offset`)
+        .all({ ...params, limit, offset }) as RunRow[];
+      return { runs, total };
+    }),
     activeRuns(): RunRow[] {
-      return sql.prepare(`SELECT * FROM runs WHERE status = 'running' ORDER BY startedAt DESC`).all() as RunRow[];
+      return sql.prepare(`SELECT * FROM runs WHERE status = 'running' ORDER BY startedAt DESC, rowid ASC`).all() as RunRow[];
     },
     reattachableRuns(): RunRow[] {
-      return sql.prepare(`SELECT * FROM runs WHERE status = 'running' ORDER BY startedAt DESC`).all() as RunRow[];
+      return sql.prepare(`SELECT * FROM runs WHERE status = 'running' ORDER BY startedAt DESC, rowid ASC`).all() as RunRow[];
     },
     appendEvent(runId: string, kind: string, text: string, ts: string): RunEventRow {
       const info: Database.RunResult = sql.prepare('INSERT INTO run_events (runId, ts, kind, text) VALUES (?, ?, ?, ?)').run(runId, ts, kind, text);
