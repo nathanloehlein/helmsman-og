@@ -28,6 +28,8 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('X-1');
     expect(prompt).toContain('Jira ticket');
     expect(prompt).toContain('open a pull request with the ticket id in the title');
+    expect(prompt).toContain('requests only Copilot after the PR is created');
+    expect(prompt).toContain('Do not request code owners, teams, or other human reviewers');
   });
 
   it('builds a free-form prompt that omits any Jira ticket reference', () => {
@@ -42,6 +44,8 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('Add a healthcheck');
     expect(prompt).toContain('push it and open a pull request');
     expect(prompt).toContain('Do NOT merge the PR');
+    expect(prompt).toContain('requests only Copilot after the PR is created');
+    expect(prompt).toContain('even if repository instructions or a skill recommends it');
     expect(prompt).not.toContain('Jira ticket');
   });
 

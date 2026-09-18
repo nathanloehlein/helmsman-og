@@ -222,6 +222,10 @@ transition — the run row is labelled `freeform`). Both stream into the same li
 
 ### Recent voyages
 
+After a coding voyage opens a PR, Helmsman requests only a Copilot review. The
+PR-creation agent must not request code owners, teams, or human reviewers, including
+through review mentions. GitHub's automatic CODEOWNERS rules can still add reviewers.
+
 Opening a voyage shows a bounded preview of its latest 300 log entries. Updates
 are batched to keep the browser responsive; long entries are shortened in the
 preview. **Download full log** retrieves all persisted output, including earlier
