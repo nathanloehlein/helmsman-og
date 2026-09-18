@@ -6,7 +6,7 @@ import type { AgentTask } from './agents/adapter';
 
 const task: AgentTask = { ticketId: 'TEST-1', title: 'Fix pagination', repo: 'owner/repo', jiraBaseUrl: '' };
 const attribution = agentAttribution('codex', {}, 'review agent');
-const footer = '_Helmsman review agent · model: gpt-6-astra · effort: medium_';
+const footer = '_Helmsman · gpt-6-astra - med_';
 
 describe('agent attribution', () => {
   it.each(['codex', 'pre-pr:codex'])('reports the actual %s defaults and explicit arguments', (adapter) => {
@@ -44,8 +44,9 @@ describe('agent bylines', () => {
     expect(appendAgentByline('Review findings.\n', attribution)).toBe(`Review findings.\n\n${footer}`);
     expect(appendAgentByline('', attribution)).toBe(footer);
     expect(appendAgentByline(null as unknown as string, attribution)).toBe(footer);
+    expect(appendAgentByline('', agentAttribution('codex', { effort: 'minimal' }, 'PR author'))).toBe('_Helmsman · gpt-6-astra - min_');
     expect(appendAgentByline('PR body', agentAttribution('command', {}, 'PR author')))
-      .toBe('PR body\n\n_Helmsman PR author · model: not reported · effort: not reported_');
+      .toBe('PR body\n\n_Helmsman · not reported - not reported_');
   });
 
   it('is idempotent and replaces recognized trailing attribution without changing the report', () => {
@@ -53,8 +54,9 @@ describe('agent bylines', () => {
     expect(appendAgentByline(body, attribution)).toBe(body);
     expect(stripAgentByline(body)).toBe('Review findings.');
     expect(appendAgentByline(`${body}\n\n${footer}`, attribution)).toBe(body);
+    expect(appendAgentByline('Review findings.\n\n_Helmsman review agent · model: gpt-6-astra · effort: medium_', attribution)).toBe(body);
     expect(appendAgentByline(body, agentAttribution('codex', { model: 'gpt-5.6-terra', effort: 'high' }, 'PR author')))
-      .toBe('Review findings.\n\n_Helmsman PR author · model: gpt-5.6-terra · effort: high_');
+      .toBe('Review findings.\n\n_Helmsman · gpt-5.6-terra - high_');
   });
 
   it.each([

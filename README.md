@@ -224,8 +224,8 @@ transition — the run row is labelled `freeform`). Both stream into the same li
 
 Agent-authored PR descriptions, review summaries, inline findings, and replies end
 with a short attribution line, for example:
-`_Helmsman review agent · model: gpt-5.6-sol · effort: medium_`.
-Authors use `Helmsman PR author`. Helmsman appends the footer when publishing PRs
+`_Helmsman · gpt-5.6-sol - med_`. Authors and reviewers use the same format,
+with `med` for medium and `min` for minimal. Helmsman appends the footer when publishing PRs
 and reviews; agent prompts require it on direct comments and replies too. Bylines
 use the effective execution settings, including Codex defaults. Unreported provider
 defaults and custom-command settings are explicitly marked rather than guessed.

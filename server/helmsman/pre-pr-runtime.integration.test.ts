@@ -127,7 +127,7 @@ describe('pre-PR runtime with real git and fake CLIs', () => {
       const result = await env.run();
       expect(result.code, result.output).toBe(0);
       const prs = JSON.parse(await readFile(env.state, 'utf8'));
-      expect(prs[0]?.body).toBe(`${body}\n\n_Helmsman PR author · model: author-model · effort: high_`);
+      expect(prs[0]?.body).toBe(`${body}\n\n_Helmsman · author-model - high_`);
       const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
       const author = steps.find(step => step.stage === 'implement');
       expect(author.id).toBe(writerId === 'codex' ? 'codex' : 'claude');
@@ -143,7 +143,7 @@ describe('pre-PR runtime with real git and fake CLIs', () => {
       const result = await env.run();
       expect(result.code, result.output).toBe(0);
       const prs = JSON.parse(await readFile(env.state, 'utf8'));
-      expect(prs[0]?.body).toBe('Implemented and checked.\n\n_Helmsman PR author · model: gpt-6-astra · effort: medium_');
+      expect(prs[0]?.body).toBe('Implemented and checked.\n\n_Helmsman · gpt-6-astra - med_');
       const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
       const author = steps.find(step => step.stage === 'implement');
       expect(author.args).toContain('gpt-6-astra');
@@ -160,7 +160,7 @@ describe('pre-PR runtime with real git and fake CLIs', () => {
         const result = await env.run();
         expect(result.code, result.output).toBe(0);
         const prs = JSON.parse(await readFile(env.state, 'utf8'));
-        expect(prs[0]?.body).toBe(`${content}\n\n_Helmsman PR author · model: author-model · effort: medium_`);
+        expect(prs[0]?.body).toBe(`${content}\n\n_Helmsman · author-model - med_`);
       }
       const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
       expect(steps.filter(step => step.stage === 'edit-pr')).toHaveLength(1);

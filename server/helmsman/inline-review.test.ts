@@ -4,7 +4,7 @@ import { parseInlineReviewComments, publishInlineReview, type InlineReviewCommen
 const github = { token: 'test-token', repo: 'owner/repo', author: 'reviewer' };
 const sha = 'a'.repeat(40);
 const comment: InlineReviewComment = { path: 'src/example.ts', line: 11, side: 'RIGHT', body: 'Guard absent values.\n\n```suggestion\nreturn input?.value;\n```' };
-const defaultByline = '_Helmsman review agent · model: not reported · effort: not reported_';
+const defaultByline = '_Helmsman · not reported - not reported_';
 const attributedComment = { ...comment, body: `${comment.body}\n\n${defaultByline}` };
 const patch = '@@ -10,4 +10,4 @@\n context\n-old\n+new\n context\n context';
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -100,7 +100,7 @@ describe('publishInlineReview', () => {
 
   it('replaces agent-written bylines after fallback assembly and preserves inline suggestions and source comments', async () => {
     const attribution = { role: 'review agent' as const, model: 'gpt-5.5', effort: 'high' };
-    const byline = '_Helmsman review agent · model: gpt-5.5 · effort: high_';
+    const byline = '_Helmsman · gpt-5.5 - high_';
     const previousByline = '_Helmsman review agent · model: stale · effort: low_';
     const signed = { ...comment, body: `${comment.body}\n\n${previousByline}` };
     const missing = { ...signed, path: 'absent.ts' };
@@ -112,7 +112,7 @@ describe('publishInlineReview', () => {
     }, fetcher)).toEqual({ ok: true });
     const posted = payload(fetcher);
     expect(posted.body.endsWith(byline)).toBe(true);
-    expect(posted.body.match(/_Helmsman review agent/g)).toHaveLength(1);
+    expect(posted.body.match(/_Helmsman ·/g)).toHaveLength(1);
     expect(posted.body).not.toContain(previousByline);
     expect(posted.body).toContain('absent.ts:11 (RIGHT)');
     expect(posted.comments).toEqual([{ ...comment, body: `${comment.body}\n\n${byline}` }]);
