@@ -86,7 +86,11 @@ function parseWorktrees(output: string): Worktree[] {
     if (!path) return [];
     const branch = fields.find((field) => field.startsWith('branch '))?.slice(7);
     return [{
-      path,
+      // Git reports worktree paths with forward slashes on Windows, while every
+      // path this module is handed comes from node:path. Normalize once here so
+      // the reported path and every comparison against it agree. A no-op for
+      // absolute POSIX paths.
+      path: resolve(path),
       branch: branch?.replace(/^refs\/heads\//, '') ?? null,
       commit: fields.find((field) => field.startsWith('HEAD '))?.slice(5) ?? '',
       bare: fields.includes('bare'),
@@ -303,7 +307,7 @@ export async function mutateLocalGit(
           await git(path, ['config', '--remove-section', `branch.${action.branch}`]);
         }
       } else {
-        const tree = state.json.worktrees.find(item => item.path === action.path) as Worktree | undefined;
+        const tree = state.json.worktrees.find(item => item.path === resolve(action.path)) as Worktree | undefined;
         if (!tree) return fail(404, 'Worktree is not registered with this repository.');
         if (tree.deletionBlockedReason) return fail(409, tree.deletionBlockedReason);
         if (tree.commit !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before deleting.');

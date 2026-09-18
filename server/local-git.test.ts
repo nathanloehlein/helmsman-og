@@ -3,15 +3,28 @@ import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getLocalGit, mutateLocalGit } from './local-git';
+import { allowsControlCharsInPaths, directoryLinkType, hasShebangShims, prependPath } from './test-support/platform';
 
 const run = promisify(execFile);
+
+// Every test here drives real git several times. Under full-suite parallel
+// load on Windows that exceeds the 5s default, though each test passes in
+// isolation, so the ceiling is raised rather than the work trimmed.
+vi.setConfig({ testTimeout: 60_000 });
 let root: string;
 let checkout: string;
 
 async function git(...args: string[]): Promise<string> {
   return (await run('git', ['-C', checkout, ...args], { encoding: 'utf8' })).stdout;
+}
+
+// `git worktree list` prints Windows paths with forward slashes, so compare
+// separator-insensitively rather than against a node:path string.
+async function worktreeIsListed(target: string): Promise<boolean> {
+  const slashes = (value: string): string => value.split(String.fromCharCode(92)).join('/');
+  return slashes(await git('worktree', 'list')).includes(slashes(target));
 }
 
 beforeEach(async () => {
@@ -27,7 +40,9 @@ afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 describe('getLocalGit', () => {
   it('lists local branches, upstreams and linked, detached, locked and prunable worktrees without changing them', async () => {
-    const lockedPath = join(root, 'linked with spaces\nand newline');
+    // A newline in a path exercises the porcelain parser, but NTFS rejects
+    // control characters, so Windows settles for the spaces.
+    const lockedPath = join(root, allowsControlCharsInPaths ? 'linked with spaces\nand newline' : 'linked with spaces here');
     const detachedPath = join(root, 'detached checkout');
     const stalePath = join(root, 'stale checkout');
     await git('branch', 'feature/harbor');
@@ -169,7 +184,9 @@ describe('local Git mutations', () => {
     expect(results.map(result => result.status)).toEqual([200, 404]);
   });
 
-  it('atomically preserves a branch advanced after the preflight SHA check', async () => {
+  // Drives git through a #!/bin/sh shim placed on PATH as `git`, which
+  // Windows cannot execute.
+  it.skipIf(!hasShebangShims)('atomically preserves a branch advanced after the preflight SHA check', async () => {
     await git('branch', 'feature/race');
     const expectedCommit = await sha();
     const advanced = (await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'advanced')).trim();
@@ -183,7 +200,7 @@ fi
 exec "$HELMSMAN_TEST_GIT_BIN" "$@"
 `, { mode: 0o755 });
     const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN, HELMSMAN_TEST_REPLACEMENT: process.env.HELMSMAN_TEST_REPLACEMENT };
-    Object.assign(process.env, { PATH: `${wrapperDir}:${process.env.PATH ?? ''}`, HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_REPLACEMENT: advanced });
+    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_REPLACEMENT: advanced });
     try {
       expect((await mutate({ action: 'delete-branch', branch: 'feature/race', expectedCommit, force: true })).status).toBe(409);
       expect((await git('rev-parse', 'refs/heads/feature/race')).trim()).toBe(advanced);
@@ -214,7 +231,9 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     expect((await git('symbolic-ref', 'refs/heads/alias')).trim()).toBe('refs/heads/main');
   });
 
-  it('never dereferences a branch changed into a symbolic alias after preflight', async () => {
+  // Drives git through a #!/bin/sh shim placed on PATH as `git`, which
+  // Windows cannot execute.
+  it.skipIf(!hasShebangShims)('never dereferences a branch changed into a symbolic alias after preflight', async () => {
     await git('branch', 'feature/race');
     const expectedCommit = await sha();
     const realGit = (await run('which', ['git'], { encoding: 'utf8' })).stdout.trim();
@@ -227,7 +246,7 @@ fi
 exec "$HELMSMAN_TEST_GIT_BIN" "$@"
 `, { mode: 0o755 });
     const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN };
-    Object.assign(process.env, { PATH: `${wrapperDir}:${process.env.PATH ?? ''}`, HELMSMAN_TEST_GIT_BIN: realGit });
+    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit });
     try {
       await mutate({ action: 'delete-branch', branch: 'feature/race', expectedCommit, force: true });
       expect((await git('rev-parse', 'refs/heads/main')).trim()).toBe(expectedCommit);
@@ -261,7 +280,7 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     const result = await mutate({ action: 'delete-worktree', path, expectedCommit: await sha() }, { activeWorktreePaths: () => ++calls === 1 ? [] : [path] });
     expect(result.status).toBe(409);
     expect(result.json.error).toMatch(/active run/);
-    expect(await git('worktree', 'list')).toContain(path);
+    expect(await worktreeIsListed(path)).toBe(true);
   });
 
   it('refuses dirty or untracked worktrees without a force escape hatch', async () => {
@@ -270,7 +289,7 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     await writeFile(join(path, 'untracked.txt'), 'keep');
     expect((await mutate({ action: 'delete-worktree', path, expectedCommit: await sha() })).status).toBe(409);
     expect((await mutate({ action: 'delete-worktree', path, expectedCommit: await sha(), force: true })).status).toBe(400);
-    expect(await git('worktree', 'list')).toContain(path);
+    expect(await worktreeIsListed(path)).toBe(true);
   });
 
   it('preserves ignored files that Git would otherwise silently delete', async () => {
@@ -281,7 +300,7 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     const result = await mutate({ action: 'delete-worktree', path, expectedCommit: await sha() });
     expect(result.status).toBe(409);
     expect(result.json.error).toMatch(/ignored files/);
-    expect(await git('worktree', 'list')).toContain(path);
+    expect(await worktreeIsListed(path)).toBe(true);
   });
 
   it('rejects mismatched or missing GitHub origin identity', async () => {
@@ -300,12 +319,12 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     const action = { action: 'delete-branch', branch: 'feature/keep', expectedCommit: await sha() };
     const moved = join(root, 'elsewhere');
     await rename(checkout, moved);
-    await symlink(moved, checkout, 'dir');
+    await symlink(moved, checkout, directoryLinkType());
     expect((await mutate(action)).json.error).toMatch(/outside its expected location/);
     await rm(checkout);
     await rename(moved, checkout);
     await rename(join(checkout, '.git'), moved);
-    await symlink(moved, join(checkout, '.git'), 'dir');
+    await symlink(moved, join(checkout, '.git'), directoryLinkType());
     expect((await mutate(action)).json.error).toMatch(/metadata outside/);
     expect((await git('branch', '--list', 'feature/keep')).trim()).toBe('feature/keep');
   });
@@ -502,7 +521,9 @@ describe('bulk branch cleanup', () => {
     expect((await mutate({ action: 'preview-delete-untracked-branches', force })).status).toBe(400);
   });
 
-  it('reports completed deletion accurately if Git refuses branch metadata cleanup', async () => {
+  // Drives git through a #!/bin/sh shim placed on PATH as `git`, which
+  // Windows cannot execute.
+  it.skipIf(!hasShebangShims)('reports completed deletion accurately if Git refuses branch metadata cleanup', async () => {
     await git('branch', 'feature/one');
     await git('config', 'branch.feature/one.description', 'temporary settings');
     const cleanup = (await preview()).json.cleanup!;
@@ -516,7 +537,7 @@ fi
 exec "$HELMSMAN_TEST_GIT_BIN" "$@"
 `, { mode: 0o755 });
     const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN };
-    Object.assign(process.env, { PATH: `${wrapperDir}:${process.env.PATH ?? ''}`, HELMSMAN_TEST_GIT_BIN: realGit });
+    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit });
     try {
       const result = await mutate(confirm(cleanup));
       expect(result.status).toBe(200);
@@ -531,7 +552,9 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     }
   });
 
-  it('preserves every target if one branch advances at the atomic deletion step', async () => {
+  // Drives git through a #!/bin/sh shim placed on PATH as `git`, which
+  // Windows cannot execute.
+  it.skipIf(!hasShebangShims)('preserves every target if one branch advances at the atomic deletion step', async () => {
     await git('branch', 'feature/one');
     await git('branch', 'feature/two');
     const cleanup = (await preview()).json.cleanup!;
@@ -546,7 +569,7 @@ fi
 exec "$HELMSMAN_TEST_GIT_BIN" "$@"
 `, { mode: 0o755 });
     const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN, HELMSMAN_TEST_REPLACEMENT: process.env.HELMSMAN_TEST_REPLACEMENT };
-    Object.assign(process.env, { PATH: `${wrapperDir}:${process.env.PATH ?? ''}`, HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_REPLACEMENT: advanced });
+    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_REPLACEMENT: advanced });
     try {
       expect((await mutate(confirm(cleanup))).status).toBe(409);
       expect((await git('rev-parse', 'refs/heads/feature/one')).trim()).toBe(cleanup.expectedHead);
