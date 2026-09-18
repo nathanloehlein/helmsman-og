@@ -376,6 +376,10 @@ html, body {
 .recent-rerun:disabled { opacity: 0.3; cursor: not-allowed; }
 .recent-rerun svg { width: 13px; height: 13px; }
 .agent-row, .recent-run { cursor: pointer; }
+.lane.agent-row, .lane.recent-run { flex-wrap: wrap; }
+.voyage-identity, .run-tab-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; max-width: 100%; }
+.voyage-identity .ticket-id { white-space: normal; overflow-wrap: anywhere; }
+.voyage-id { display: inline-block; max-width: 100%; padding: 2px 5px; border: 1px solid var(--line-faint); border-radius: var(--radius); color: var(--text-dim); background: var(--panel-hi); font-size: 10px; line-height: 1.3; overflow-wrap: anywhere; }
 
 /* the amber link rail: grows to fill, ends in a ring; state by stroke pattern */
 .lane-rail { flex: 2 1 60px; min-width: 48px; height: 12px; position: relative; margin: 0 4px; }
@@ -581,7 +585,7 @@ select { text-transform: none; }
   font-size: 12px; color: var(--text-dim);
 }
 .run-tab.is-active .run-tab-select { color: var(--text); }
-.run-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-tab-dot {
   flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%;
   border: 1px solid var(--accent-dim); background: transparent;

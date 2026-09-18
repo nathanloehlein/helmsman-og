@@ -13,6 +13,7 @@ import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './l
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
 import { REQUIRED_PR_APPROVALS } from './logic/prReviews';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
+import { shortVoyageId } from './logic/voyageId';
 import { defaultTriageFilters, filterTriageTickets, TRIAGE_PRIORITIES, TRIAGE_DATE_OPTIONS, type TriageFilters } from './logic/triageFilters';
 import { DEFAULT_TRIAGE_PAGE_SIZE, TRIAGE_PAGE_SIZES, paginateTriageTickets, type TriageColumn, type TriagePages, type TriagePageSize } from './logic/triagePagination';
 
@@ -382,7 +383,7 @@ export function renderDashboard(
           (run, i) => `
       <li class="lane agent-row" data-runid="${esc(run.id)}">
         <span class="lane-no mono">${laneNo(i)}</span>
-        <span class="ticket-id">${ticketLabel(run.ticketId, jiraBaseUrl)}</span>
+        <span class="voyage-identity"><span class="ticket-id">${ticketLabel(run.ticketId, jiraBaseUrl)}</span>${renderVoyageId(run.id)}</span>
         <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
         ${laneRail('live')}
         <span class="agent-elapsed mono">${formatRelativeTime(run.startedAt, now)}</span>
@@ -455,7 +456,7 @@ export function renderDashboard(
       <li class="lane recent-run" data-runid="${esc(run.id)}">
         <span class="lane-no mono">${laneNo(i)}</span>
         ${renderVoyageResult(run)}
-        <span class="ticket-id">${ticketLabel(run.ticketId || 'freeform', jiraBaseUrl)}</span>
+        <span class="voyage-identity"><span class="ticket-id">${ticketLabel(run.ticketId || 'freeform', jiraBaseUrl)}</span>${renderVoyageId(run.id)}</span>
         <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
         ${laneRail(statusInfo.laneState)}
         <span class="agent-cost mono">${costText}</span>
@@ -543,6 +544,13 @@ export function renderDashboard(
   }, `${banner}${renderRack(layout, panelDefs)}<div class="runs-drawer-slot"></div>`);
 }
 
+function renderVoyageId(id: unknown): string {
+  const shortId = shortVoyageId(id);
+  return shortId && typeof id === 'string'
+    ? `<span class="voyage-id mono" title="${esc(id)}" aria-label="Voyage ${esc(shortId)}">${esc(shortId)}</span>`
+    : '';
+}
+
 export interface RunTabView {
   id: string;
   label: string;
@@ -556,7 +564,7 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
       <div class="run-tab${t.id === activeId ? ' is-active' : ''}" data-tabid="${esc(t.id)}">
         <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}">
           <span class="run-tab-dot${t.complete ? ' is-complete' : ''}" aria-hidden="true"></span>
-          <span class="run-tab-label">${esc(t.label)}</span>
+          <span class="run-tab-identity"><span class="run-tab-label">${esc(t.label)}</span>${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}</span>
         </button>
         ${!t.id.startsWith('err-') ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Link to ${esc(t.label)}">↗</a>` : ''}
         <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}">${ICON_CLOSE}</button>
@@ -572,7 +580,7 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
   const collapseBtn: string =
     tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'crew tasks', collapsed) : '';
   const logToolbar = activeId && !activeId.startsWith('err-') && /^[a-z\d_-]{1,128}$/i.test(activeId)
-    ? `<div class="run-log-toolbar mono"><span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
+    ? `<div class="run-log-toolbar mono">${renderVoyageId(activeId)}<span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
     : '';
   return `
     <div class="run-tabs" role="tablist">${header}${strip}${collapseBtn}</div>
@@ -794,7 +802,7 @@ export function renderVoyage(run: RunSummary): string {
   return `<li class="recent-run" data-runid="${esc(run.id)}">
     <a class="app-link lane runs-voyage-link" href="${esc(href)}">
       ${renderVoyageResult(run)}
-      <span class="ticket-id">${esc(title)}${pr}</span>
+      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span>${renderVoyageId(run.id)}</span>
       <span class="agent-repo mono">${esc(run.repo.split('/').pop() ?? run.repo)}</span>
       ${startedAt}
       <span class="chip ${status.chipClass}">${esc(status.label)}</span>

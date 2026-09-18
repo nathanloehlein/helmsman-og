@@ -196,6 +196,8 @@ describe('renderDashboard', () => {
     rows.forEach((rowEl) => {
       expect(rowEl.dataset.runid).toBeTruthy();
       expect(rowEl.querySelector('.agent-stop')).not.toBeNull();
+      expect(rowEl.querySelector('.voyage-id')?.textContent).toBe(rowEl.dataset.runid);
+      expect(rowEl.querySelector('.voyage-id')?.getAttribute('title')).toBe(rowEl.dataset.runid);
     });
     const agentListHtml: string = el.querySelector('.agent-list')!.innerHTML;
     expect(agentListHtml).toContain('ABC-1');
@@ -384,6 +386,7 @@ describe('renderDashboard', () => {
     const recentRunsHtml: string = el.querySelector('.recent-runs-list')!.innerHTML;
     expect(recentRunsHtml).not.toContain('ABC-1');
     expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-result')?.getAttribute('aria-label')).toBe('Review recommendation: Request changes');
+    expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-id')?.textContent).toBe('run-2');
     const link: HTMLAnchorElement | null = el.querySelector<HTMLAnchorElement>('a[href="https://github.com/org/beta/pull/42"]');
     expect(link).not.toBeNull();
   });
@@ -914,6 +917,18 @@ describe('renderRunsDrawer', () => {
     expect(html).toContain('run-drawer-pr');
     expect(html).toContain('href="/api/agents/run-1/log/download"');
     expect(html).toContain('Download full log');
+  });
+
+  it('shows the same short ID in the tab and log toolbar while preserving full links', () => {
+    const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ id })], id);
+    for (const selector of ['.run-tab .voyage-id', '.run-log-toolbar .voyage-id']) {
+      expect(el.querySelector(selector)?.textContent).toBe('b5fcda706766');
+      expect(el.querySelector(selector)?.getAttribute('title')).toBe(id);
+    }
+    expect(el.querySelector('.run-tab')?.getAttribute('data-tabid')).toBe(id);
+    expect(el.querySelector('.run-log-download')?.getAttribute('href')).toBe(`/api/agents/${id}/log/download`);
   });
 
   it('escapes malicious labels', () => {

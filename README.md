@@ -232,6 +232,11 @@ The **Recent voyages** panel lists completed/failed/stopped runs. Click any to r
 stored log (replayed from SQLite), final status, cost, and PR link — the same drawer used
 for live runs.
 
+Voyage rows and log tabs show a stable short ID derived from the persisted run ID.
+UUIDs use their first 12 hexadecimal characters; automatic reviews retain their
+`slack-` or `github-` prefix followed by 12 hexadecimal characters. Hover the ID
+to see the full value. Links and log downloads continue to use the full run ID.
+
 ### PR controls
 
 PR panes show the title, author, overall state, checks, and your submitted review

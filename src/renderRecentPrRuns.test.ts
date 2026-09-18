@@ -53,6 +53,15 @@ describe('recent PR voyages', () => {
     expect(element.querySelectorAll('.recent-run')).toHaveLength(0);
   });
 
+  it('shows a short source ID while retaining the full ID in voyage navigation', () => {
+    const id = 'github-1234567890abcdef0123456789abcdef';
+    const element = mount(renderRecentPrRuns([run(id)], 'org/a'));
+    expect(element.querySelector('.voyage-id')?.textContent).toBe('github-1234567890ab');
+    expect(element.querySelector('.voyage-id')?.getAttribute('title')).toBe(id);
+    expect(element.querySelector('.recent-run')?.getAttribute('data-runid')).toBe(id);
+    expect(element.querySelector('.runs-voyage-link')?.getAttribute('href')).toBe(`/runs?run=${id}`);
+  });
+
   it('includes recent voyages on the PR page and escapes their labels', () => {
     const element = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
       repos: ['org/a'], selectedRepo: 'org/a', themeId: DEFAULT_THEME_ID,
