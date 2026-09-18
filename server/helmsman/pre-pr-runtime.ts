@@ -9,10 +9,11 @@ import { codexAdapter } from './agents/codex';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { runPrePrWorkflow, type PrePrReviewerId } from './pre-pr-workflow';
 import { selectReviewModel, type ReviewScope } from './review-policy';
+import { DEFAULT_PRE_PR_SETTINGS, normalizePrePrSettings, type PrePrSettings } from '../../src/logic/prePrSettings';
 
 const exec = promisify(execFile);
 const adapters: Record<PrePrReviewerId, AgentAdapter> = { codex: codexAdapter, 'claude-code': claudeCodeAdapter };
-const STAGE_TIMEOUT = 45 * 60_000;
+const STAGE_TIMEOUT = DEFAULT_PRE_PR_SETTINGS.stageTimeoutMinutes * 60_000;
 
 export function githubRepository(remote: string): string | null {
   const match = remote.trim().match(/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i);
@@ -131,8 +132,9 @@ export async function executePrePrStage(adapter: AgentAdapter, task: AgentTask, 
   });
 }
 
-export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrReviewerId; runsDir: string }, emit: (event: AgentEvent) => void): Promise<number> {
+export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrReviewerId; runsDir: string; settings?: PrePrSettings }, emit: (event: AgentEvent) => void): Promise<number> {
   const cwd = process.cwd();
+  const settings = normalizePrePrSettings(input.settings);
   const abort = new AbortController();
   const stopped = () => abort.abort();
   process.once('SIGTERM', stopped);
@@ -159,9 +161,11 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
     if (!adapters[input.writerId]) throw new Error('Unsupported writer CLI');
     const reviewerIds: PrePrReviewerId[] = [];
     for (const id of [input.writerId, input.writerId === 'codex' ? 'claude-code' : 'codex'] as PrePrReviewerId[]) {
+      if (reviewerIds.length >= settings.reviewerCount) break;
       if (await installed(id === 'codex' ? 'codex' : 'claude')) reviewerIds.push(id);
       else if (id === input.writerId) throw new Error('The writer CLI is unavailable');
     }
+    emit({ kind: 'phase', text: `Pre-PR gate: ${reviewerIds.length} reviewer(s), up to ${settings.maxRounds} rounds, ${settings.stageTimeoutMinutes} minutes per session` });
     const initialHead = await git(['rev-parse', 'HEAD']);
     const branch = await git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
     if (await git(['status', '--porcelain', '--untracked-files=all'])) throw new Error('Author worktree must start clean');
@@ -192,7 +196,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
         const delta = nextCost - stageCost;
         stageCost = nextCost;
         emit({ ...safe, ...(delta > 0 ? { costUsd: delta } : {}) });
-      }, abort.signal);
+      }, abort.signal, settings.stageTimeoutMinutes * 60_000);
     };
     const snapshot = async () => {
       const headSha = await git(['rev-parse', 'HEAD']);
@@ -200,7 +204,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
       return { baseSha, headSha, branch: await git(['symbolic-ref', '--quiet', '--short', 'HEAD']), clean: !(await git(['status', '--porcelain', '--untracked-files=all'])) };
     };
     return await runPrePrWorkflow(input.task, {
-      writerId: input.writerId, reviewerIds, snapshot, isStopped: () => abort.signal.aborted,
+      writerId: input.writerId, reviewerIds, maxRounds: settings.maxRounds, snapshot, isStopped: () => abort.signal.aborted,
       onPhase: text => emit({ kind: 'phase', text }),
       runAuthor: async (stage, context) => {
         metadataPath = join(artifactDir, `${stage}-${context.round}.json`);

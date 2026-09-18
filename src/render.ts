@@ -14,6 +14,7 @@ import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOp
 import { REQUIRED_PR_APPROVALS } from './logic/prReviews';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
 import { shortVoyageId } from './logic/voyageId';
+import { PRE_PR_CONFIG_KEYS, PRE_PR_SETTING_DEFINITIONS } from './logic/prePrSettings';
 import { defaultTriageFilters, filterTriageTickets, TRIAGE_PRIORITIES, TRIAGE_DATE_OPTIONS, type TriageFilters } from './logic/triageFilters';
 import { DEFAULT_TRIAGE_PAGE_SIZE, TRIAGE_PAGE_SIZES, paginateTriageTickets, type TriageColumn, type TriagePages, type TriagePageSize } from './logic/triagePagination';
 
@@ -43,8 +44,11 @@ export const CONFIG_HELP: Record<string, string> = {
   SLACK_BROWSER_SURFACE: 'Optional cmux browser surface containing signed-in Slack. Set this when multiple Slack browser surfaces are open. Example: surface:17',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
   AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
-  AGENT_MAX_ATTEMPTS: 'Maximum times a single voyage retries before it is abandoned. Example: 3',
+  AGENT_MAX_ATTEMPTS: 'Total attempts for existing-PR voyages, including the initial attempt. New coding voyages use the separate pre-PR review rounds. Example: 1',
   AGENT_MAX_COST_USD: 'Per-voyage spend ceiling in USD; the voyage stops once exceeded. Blank means no cap. Example: 5.00',
+  PRE_PR_REVIEWER_COUNT: 'Independent reviewer sessions per round: 1 uses the writer\'s CLI; 2 also uses the other supported CLI when installed. An installed reviewer that fails blocks publication. Example: 2',
+  PRE_PR_MAX_ROUNDS: 'Maximum review rounds, including the initial review. Each additional round allows fixes followed by every reviewer reviewing again. Unresolved findings block the PR. Example: 3',
+  PRE_PR_STAGE_TIMEOUT_MINUTES: 'Time limit in minutes for each implementation, fix, or reviewer session. A timed-out session blocks publication and retains the worktree. Example: 45',
   AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart. Example: 60000',
   REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
   JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry. Example: AIROBUILD',
@@ -1080,7 +1084,8 @@ export interface ConfigViewOpts {
 }
 
 function configRowsHtml(uiConfig: UiConfig): string {
-  const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {});
+  const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {})
+    .filter(([key]) => !PRE_PR_CONFIG_KEYS.some((reviewKey) => reviewKey === key));
   if (entries.length === 0) return '<div class="empty-note">No configuration keys.</div>';
   return entries
     .map(([key, value]) => {
@@ -1098,6 +1103,32 @@ function configRowsHtml(uiConfig: UiConfig): string {
       </div>`;
     })
     .join('');
+}
+
+function prePrConfigPanel(uiConfig: UiConfig): string {
+  const labels = {
+    reviewerCount: 'Reviewers per round',
+    maxRounds: 'Maximum review rounds',
+    stageTimeoutMinutes: 'Session timeout (minutes)',
+  };
+  const rows = PRE_PR_SETTING_DEFINITIONS.map(({ key, envKey, defaultValue, min, max }) => {
+    const value = uiConfig.config?.[envKey] ?? defaultValue;
+    const isOverridden = uiConfig.overridden?.includes(envKey) ?? false;
+    return `
+      <div class="config-row" data-key="${envKey}">
+        <label class="config-key" for="config-${envKey}">${labels[key]}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}</label>
+        <input id="config-${envKey}" class="config-input" type="number" min="${min}" max="${max}" step="1" required value="${esc(String(value))}" aria-describedby="help-${envKey}">
+        <button class="config-save" data-key="${envKey}">Save</button>
+        <span class="config-error" role="alert"></span>
+      </div>
+      <div class="config-warning" id="help-${envKey}">${esc(CONFIG_HELP[envKey] ?? '')} Range: ${min}–${max}; default: ${defaultValue}. <span class="mono">${envKey}</span></div>`;
+  }).join('');
+  return `
+      <section class="panel config-panel pre-pr-config-panel" aria-labelledby="pre-pr-config-title">
+        <div class="panel-head"><span class="panel-title" id="pre-pr-config-title">Pre-PR review</span></div>
+        <div class="config-warning">Adversarial reviews run before a new coding voyage publishes its PR. Every reviewer must approve the final commit. Changes apply to newly launched voyages; running voyages keep their settings. Supported CLIs: Codex and Claude Code. With only one installed, one reviewer runs.</div>
+        <div class="config-list">${rows}</div>
+      </section>`;
 }
 
 function jiraTokenRowHtml(tokenSet: boolean): string {
@@ -1136,6 +1167,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
           ${configRowsHtml(uiConfig)}
         </div>
       </section>
+      ${prePrConfigPanel(uiConfig)}
 `);
 }
 

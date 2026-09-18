@@ -294,7 +294,7 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
       }
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;
-      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR) : adapter;
+      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, cfg.prePr) : adapter;
       await startRun(taskObj, {
         ...baseRunnerDeps(cfg, jira),
         adapter: runAdapter,

@@ -1,3 +1,5 @@
+import { DEFAULT_PRE_PR_SETTINGS, PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue, type PrePrSettings } from '../src/logic/prePrSettings';
+
 export interface JiraConfig {
   baseUrl: string;
   email: string;
@@ -30,6 +32,7 @@ export interface AppConfig {
   agentAdapter: 'claude-code' | 'command' | 'codex';
   agentCmd: string | null;
   maxCostUsd: number | null;
+  prePr: PrePrSettings;
 }
 
 type Env = Record<string, string | undefined>;
@@ -93,6 +96,10 @@ export function loadConfig(env: Env): AppConfig {
   const maxCostRaw: string | null = req(env, 'AGENT_MAX_COST_USD');
   const parsedMaxCost: number = maxCostRaw ? parseFloat(maxCostRaw) : NaN;
   const maxCostUsd: number | null = Number.isFinite(parsedMaxCost) ? parsedMaxCost : null;
+  const prePr: PrePrSettings = { ...DEFAULT_PRE_PR_SETTINGS };
+  for (const definition of PRE_PR_SETTING_DEFINITIONS) {
+    prePr[definition.key] = parsePrePrSettingValue(env[definition.envKey], definition) ?? definition.defaultValue;
+  }
   return {
     jira,
     github,
@@ -108,6 +115,7 @@ export function loadConfig(env: Env): AppConfig {
     agentAdapter,
     agentCmd,
     maxCostUsd,
+    prePr,
   };
 }
 

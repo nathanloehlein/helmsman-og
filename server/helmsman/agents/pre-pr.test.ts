@@ -15,7 +15,15 @@ describe('durable pre-PR adapter', () => {
     expect(command.cmd).toBe(process.execPath);
     expect(command.args[0]).toBe('--import');
     expect(command.args[2]).toMatch(/pre-pr-cli\.ts$/);
-    expect(JSON.parse(command.args[3] ?? '')).toEqual({ task: { ...task, model: 'selected-model', effort: 'low' }, writerId: writer.id, runsDir: '/tmp/run files' });
+    expect(JSON.parse(command.args[3] ?? '')).toEqual({ task: { ...task, model: 'selected-model', effort: 'low' }, writerId: writer.id, runsDir: '/tmp/run files',
+      settings: { reviewerCount: 2, maxRounds: 3, stageTimeoutMinutes: 45 } });
+  });
+
+  it('snapshots settings into the durable command without following later config edits', () => {
+    const settings = { reviewerCount: 1, maxRounds: 5, stageTimeoutMinutes: 90 };
+    const adapter = prePrAdapter(codexAdapter, '/tmp', settings);
+    settings.maxRounds = 1;
+    expect(JSON.parse(adapter.buildCommand(task).args[3] ?? '').settings).toEqual({ reviewerCount: 1, maxRounds: 5, stageTimeoutMinutes: 90 });
   });
 
   it('does not bypass the gate for unsupported adapters or existing PRs', () => {

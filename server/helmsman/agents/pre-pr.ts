@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { normalizePrePrSettings, type PrePrSettings } from '../../../src/logic/prePrSettings';
 import type { AgentAdapter, AgentEvent, AgentEventKind } from './adapter';
 
 const KINDS = new Set<AgentEventKind>(['phase', 'tool', 'log', 'result', 'error', 'review-verdict', 'run-complete']);
@@ -8,8 +9,9 @@ export function isPrePrAdapter(id: string): boolean {
   return id === `${PREFIX}codex` || id === `${PREFIX}claude-code`;
 }
 
-export function prePrAdapter(writer: AgentAdapter, runsDir: string): AgentAdapter {
+export function prePrAdapter(writer: AgentAdapter, runsDir: string, settings?: PrePrSettings): AgentAdapter {
   if (!['codex', 'claude-code'].includes(writer.id)) throw new Error('Pre-PR review requires the Codex or Claude Code adapter');
+  const reviewSettings = normalizePrePrSettings(settings);
   return {
     id: `${PREFIX}${writer.id}`,
     buildCommand(task) {
@@ -17,7 +19,7 @@ export function prePrAdapter(writer: AgentAdapter, runsDir: string): AgentAdapte
       return {
         cmd: process.execPath,
         args: ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../pre-pr-cli.ts', import.meta.url)),
-          JSON.stringify({ task, writerId: writer.id, runsDir })],
+          JSON.stringify({ task, writerId: writer.id, runsDir, settings: reviewSettings })],
       };
     },
     parseLine(line) {

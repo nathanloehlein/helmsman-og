@@ -424,7 +424,7 @@ describe('renderDashboard', () => {
 
     el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
 
-    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-row:not(.config-secret-row)');
+    const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-panel:not(.pre-pr-config-panel) .config-row:not(.config-secret-row)');
     expect(rows.length).toBe(2);
     const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
@@ -433,6 +433,47 @@ describe('renderDashboard', () => {
     expect(attemptsRow).not.toBeNull();
     expect(attemptsRow!.textContent).toContain('overridden');
     expect(adapterRow!.textContent).not.toContain('overridden');
+  });
+
+  it('groups pre-PR settings in one panel with bounded numeric inputs and defaults', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+    const panel = el.querySelector('.pre-pr-config-panel');
+    expect(panel?.textContent).toContain('running voyages keep their settings');
+    expect(panel?.textContent).toContain('With only one installed, one reviewer runs');
+    for (const [key, value, min, max] of [
+      ['PRE_PR_REVIEWER_COUNT', '2', '1', '2'],
+      ['PRE_PR_MAX_ROUNDS', '3', '1', '5'],
+      ['PRE_PR_STAGE_TIMEOUT_MINUTES', '45', '5', '180'],
+    ]) {
+      const row = panel?.querySelector(`.config-row[data-key="${key}"]`);
+      const input = row?.querySelector<HTMLInputElement>('.config-input');
+      expect(input?.type).toBe('number');
+      expect(input?.value).toBe(value);
+      expect(input?.min).toBe(min);
+      expect(input?.max).toBe(max);
+      expect(input?.step).toBe('1');
+      expect(input?.required).toBe(true);
+      expect(row?.querySelector('label')?.getAttribute('for')).toBe(input?.id);
+      expect(el.querySelector(`#${input?.getAttribute('aria-describedby')}`)?.textContent).toContain(key);
+      expect(row?.querySelector('.config-save')?.getAttribute('data-key')).toBe(key);
+    }
+  });
+
+  it('shows persisted pre-PR settings only once and marks overrides', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({
+      config: { PRE_PR_REVIEWER_COUNT: 1, PRE_PR_MAX_ROUNDS: 5, PRE_PR_STAGE_TIMEOUT_MINUTES: 90 },
+      overridden: ['PRE_PR_MAX_ROUNDS'],
+    }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+    for (const [key, value] of [
+      ['PRE_PR_REVIEWER_COUNT', '1'], ['PRE_PR_MAX_ROUNDS', '5'], ['PRE_PR_STAGE_TIMEOUT_MINUTES', '90'],
+    ]) {
+      expect(el.querySelectorAll(`.config-row[data-key="${key}"]`)).toHaveLength(1);
+      expect(el.querySelector<HTMLInputElement>(`.pre-pr-config-panel [data-key="${key}"] .config-input`)?.value).toBe(value);
+    }
+    expect(el.querySelector('.pre-pr-config-panel [data-key="PRE_PR_MAX_ROUNDS"] .config-overridden')).not.toBeNull();
+    expect(el.querySelector('.pre-pr-config-panel [data-key="PRE_PR_REVIEWER_COUNT"] .config-overridden')).toBeNull();
   });
 
   it('renders a write-only JIRA_API_TOKEN update row that never carries a value', () => {

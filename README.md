@@ -224,18 +224,23 @@ transition — the run row is labelled `freeform`). Both stream into the same li
 
 Every new coding voyage implements and commits locally, then passes an adversarial
 review before Helmsman pushes the branch or opens a PR. A fresh reviewer session
-uses the writer's CLI; if the other supported CLI is installed, a second session
-uses it too. Currently supported CLIs are Codex and Claude Code. Authenticate both
-if both are installed: a broken alternate reviewer blocks publication rather than
-silently reducing the review gate.
+uses the writer's CLI; by default, if the other supported CLI is installed, a second
+session uses it too. **Config → Pre-PR review** controls reviewers per round (1–2),
+maximum rounds (1–5), and the timeout for each session (5–180 minutes). Settings are
+captured when a voyage launches; changes do not affect running voyages. One reviewer
+means a fresh session of the writer's CLI; two adds the other supported CLI when
+installed. With only one installed, one reviewer runs. Currently supported CLIs are
+Codex and Claude Code. Authenticate both when using two reviewers: an installed but
+broken alternate reviewer blocks publication rather than silently reducing the gate.
 
 Reviewers inspect the same pinned commit in separate detached worktrees and focus
 on material logic, structure, acceptance criteria, UX, and external effects. Codex
 reviewers require the installed `$review-agent` skill; each CLI delegates relevant
 areas to focused leaf agents. Reviews default to low effort and use medium for
 larger changes across areas. The author fixes verified findings, then **all**
-reviewers review the new commit again. There are at most three review rounds
-(two remediation rounds). Every reviewer must approve with no findings; incomplete
+reviewers review the new commit again. By default there are at most three review
+rounds (two remediation rounds); setting one round permits no fix-and-review cycle.
+Every reviewer must approve with no findings; incomplete
 reviews, missing tools, changed revisions, and exhausted rounds block publication.
 
 Helmsman publishes the reviewed commit itself, targeting the repository's default
@@ -249,8 +254,8 @@ The workflow runs in the existing durable run host and survives server restarts.
 
 This gate applies to new coding voyages, not existing-PR feedback reruns. The generic
 `command` adapter cannot launch a new coding voyage because it cannot provide this
-review contract. `AGENT_MAX_ATTEMPTS` does not multiply the three review rounds.
-Each author or reviewer session has a 45-minute timeout. The existing post-PR review
+review contract. `AGENT_MAX_ATTEMPTS` does not multiply `PRE_PR_MAX_ROUNDS`.
+Each author, fix, or reviewer session has a 45-minute timeout by default. The existing post-PR review
 and Copilot request still run after successful publication.
 
 ### Recent voyages
@@ -487,8 +492,11 @@ Slack text fields are blank by default and the watcher is off. See
 | --- | --- | --- | --- |
 | `AGENT_ADAPTER` | `codex` | `codex`, `claude-code`, or `command`; install/sign in to that CLI on the server machine. Unknown values fall back to Codex. | Live |
 | `AGENT_CMD` | Empty | Executable and argument template for the command adapter; see [Agent backends](#agent-backends). Does not invoke a shell. | Live |
-| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts for existing-PR voyages, including the initial attempt; `1` means no retry. New coding voyages always use one workflow with up to three pre-PR review rounds. | Live |
+| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts for existing-PR voyages, including the initial attempt; `1` means no retry. New coding voyages use one workflow, with review rounds controlled by `PRE_PR_MAX_ROUNDS`. | Live |
 | `AGENT_MAX_COST_USD` | Empty (no cap) | Cost limit in USD across attempts, enforced when the adapter reports cost. It cannot bound spend for adapters that do not report cost, including the current Codex and command adapters. | Live |
+| `PRE_PR_REVIEWER_COUNT` | `2` | Integer `1`–`2`. Independent reviewer sessions per round: `1` uses the writer's CLI, `2` adds the other supported CLI if installed. Only Codex and Claude Code are supported. One installed CLI means one reviewer; an installed reviewer that fails blocks publication. Set in **Config → Pre-PR review**. | Live; new voyages only |
+| `PRE_PR_MAX_ROUNDS` | `3` | Integer `1`–`5`. Total review rounds, including the initial round. `3` permits up to two fix-and-review cycles; `1` permits none. Every reviewer must approve the final commit; unresolved findings block publication when rounds are exhausted. | Live; new voyages only |
+| `PRE_PR_STAGE_TIMEOUT_MINUTES` | `45` | Integer `5`–`180`. Timeout for each implementation, fix, or reviewer session, not the whole voyage. Timeout blocks publication and preserves the author worktree. | Live; new voyages only |
 | `AGENT_MAX_CONCURRENCY` | `3` | Maximum simultaneous runs across repositories. The separate one-run-per-repository limit still applies. | Restart |
 | `AUTO_CLAIM_INTERVAL_MS` | `60000` | Interval in milliseconds for the optional ticket auto-claim scheduler. Does not enable auto-claim or control either PR watcher. | Config-editable; restart timer |
 | `AGENTS_ROOT` | Server working directory | Parent directory of target repo checkouts, e.g. `/absolute/path/to/agent-repos`; not the path to a single checkout. | Restart |

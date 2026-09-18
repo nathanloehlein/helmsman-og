@@ -1,9 +1,11 @@
 import { loadConfig, type AppConfig } from '../config';
 import type { Db } from './db';
 import { SLACK_CONFIG_KEYS } from './slack/config';
+import { PRE_PR_CONFIG_KEYS, PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue } from '../../src/logic/prePrSettings';
 
 export const EDITABLE_KEYS: readonly string[] = [
   ...SLACK_CONFIG_KEYS,
+  ...PRE_PR_CONFIG_KEYS,
   'GITHUB_REVIEW_WATCH_ENABLED',
   'AGENT_ADAPTER',
   'AGENT_CMD',
@@ -28,6 +30,7 @@ export function publicConfig(cfg: AppConfig): Record<string, unknown> {
     AGENT_CMD: cfg.agentCmd,
     AGENT_MAX_ATTEMPTS: cfg.maxAttempts,
     AGENT_MAX_COST_USD: cfg.maxCostUsd,
+    ...Object.fromEntries(PRE_PR_SETTING_DEFINITIONS.map(({ key, envKey }) => [envKey, cfg.prePr[key]])),
     AUTO_CLAIM_INTERVAL_MS: cfg.autoClaimIntervalMs,
     REPO_PROJECT_MAP: Object.entries(cfg.repoProjectMap).map(([repo, project]: [string, string]): string => `${repo}=${project}`).join(','),
     JIRA_PROJECT: cfg.jira?.project ?? null,
@@ -65,6 +68,10 @@ export class ConfigStore {
     }
     if (['SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
       throw new Error(`${key} must be true or false`);
+    }
+    const prePrSetting = PRE_PR_SETTING_DEFINITIONS.find(({ envKey }) => envKey === key);
+    if (prePrSetting && value.trim() !== '' && parsePrePrSettingValue(value, prePrSetting) === undefined) {
+      throw new Error(`${key} must be a whole number from ${prePrSetting.min} to ${prePrSetting.max}`);
     }
     this.db.setConfigOverride(key, value, now());
   }

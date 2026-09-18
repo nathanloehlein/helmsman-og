@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import type { PrePrSettings } from '../../src/logic/prePrSettings';
 
 const exec = promisify(execFile);
 const cliPath = fileURLToPath(new URL('./pre-pr-cli.ts', import.meta.url));
 const tsx = import.meta.resolve('tsx');
 
-async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote') {
+async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote', settings?: PrePrSettings) {
   const root = await mkdtemp(join(tmpdir(), 'helmsman-runtime-'));
   const cwd = join(root, 'author');
   const bin = join(root, 'bin');
@@ -81,7 +82,7 @@ if(id === 'git') {
   for (const executable of ['git', 'gh', ...(mode === 'unavailable' ? [] : ['codex']), 'claude']) {
     await writeFile(join(bin, executable), script); await chmod(join(bin, executable), 0o755);
   }
-  const input = { task: { ticketId: 'T-1', title: 'Fix issue', repo: 'example/project', jiraBaseUrl: '', model: 'author-model', effort: 'medium' }, writerId: 'codex', runsDir: join(root, 'runs') };
+  const input = { task: { ticketId: 'T-1', title: 'Fix issue', repo: 'example/project', jiraBaseUrl: '', model: 'author-model', effort: 'medium' }, writerId: 'codex', runsDir: join(root, 'runs'), settings };
   return { root, cwd, state, transcript, async run() {
     try {
       const output = await exec(process.execPath, ['--import', tsx, cliPath, JSON.stringify(input)], {
@@ -96,6 +97,30 @@ if(id === 'git') {
 }
 
 describe('pre-PR runtime with real git and fake CLIs', () => {
+  it('uses only the writer CLI when one reviewer is configured, even with another installed', async () => {
+    const env = await fixture('auth', { reviewerCount: 1, maxRounds: 2, stageTimeoutMinutes: 10 });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(0);
+      expect(result.output).toContain('1 reviewer(s), up to 2 rounds, 10 minutes per session');
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.filter(step => step.stage === 'review').map(step => step.id)).toEqual(['codex']);
+      expect(result.output).toContain('"prNumber":42');
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('stops without fixes or publication after the configured final review round', async () => {
+    const env = await fixture('fix', { reviewerCount: 2, maxRounds: 1, stageTimeoutMinutes: 45 });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(1);
+      expect(result.output).toContain('unresolved material findings after 1 review rounds');
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.map(step => step.stage)).toEqual(['implement', 'review', 'review']);
+      await expect(readFile(env.state)).rejects.toThrow();
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
   it('implements, obtains both reviews, fixes and re-reviews before publishing the approved commit', async () => {
     const env = await fixture('fix');
     try {

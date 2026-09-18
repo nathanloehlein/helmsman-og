@@ -1,12 +1,53 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from './db';
 import { loadConfig } from '../config';
-import { ConfigStore, publicConfig } from './config-store';
+import { ConfigStore, EDITABLE_KEYS, publicConfig } from './config-store';
 
 let db: Db;
 afterEach(() => db?.close());
 
 describe('ConfigStore', () => {
+  it('exposes effective pre-PR defaults and updates overrides immediately', () => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({}, db);
+    expect(publicConfig(store.current())).toMatchObject({
+      PRE_PR_REVIEWER_COUNT: 2,
+      PRE_PR_MAX_ROUNDS: 3,
+      PRE_PR_STAGE_TIMEOUT_MINUTES: 45,
+    });
+    store.setOverride('PRE_PR_REVIEWER_COUNT', '1', () => '2026-09-17T00:00:00.000Z');
+    store.setOverride('PRE_PR_MAX_ROUNDS', '5', () => '2026-09-17T00:00:00.000Z');
+    store.setOverride('PRE_PR_STAGE_TIMEOUT_MINUTES', '180', () => '2026-09-17T00:00:00.000Z');
+    expect(store.current().prePr).toEqual({ reviewerCount: 1, maxRounds: 5, stageTimeoutMinutes: 180 });
+    expect(publicConfig(store.current())).toMatchObject({
+      PRE_PR_REVIEWER_COUNT: 1,
+      PRE_PR_MAX_ROUNDS: 5,
+      PRE_PR_STAGE_TIMEOUT_MINUTES: 180,
+    });
+  });
+
+  it.each([
+    ['PRE_PR_REVIEWER_COUNT', '0'], ['PRE_PR_REVIEWER_COUNT', '3'],
+    ['PRE_PR_MAX_ROUNDS', '0'], ['PRE_PR_MAX_ROUNDS', '6'],
+    ['PRE_PR_STAGE_TIMEOUT_MINUTES', '4'], ['PRE_PR_STAGE_TIMEOUT_MINUTES', '181'],
+    ['PRE_PR_MAX_ROUNDS', '2.5'], ['PRE_PR_MAX_ROUNDS', '2x'],
+    ['PRE_PR_MAX_ROUNDS', '1e0'], ['PRE_PR_MAX_ROUNDS', 'Infinity'],
+  ])('rejects invalid %s=%s without changing stored values', (key, value) => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({}, db);
+    expect(() => store.setOverride(key, value, () => '2026-09-17T00:00:00.000Z')).toThrow(/whole number/);
+    expect(store.overrides()).toEqual({});
+  });
+
+  it('uses defaults for blank pre-PR overrides even when the environment sets another value', () => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({ PRE_PR_REVIEWER_COUNT: '1', PRE_PR_MAX_ROUNDS: '5', PRE_PR_STAGE_TIMEOUT_MINUTES: '180' }, db);
+    for (const key of ['PRE_PR_REVIEWER_COUNT', 'PRE_PR_MAX_ROUNDS', 'PRE_PR_STAGE_TIMEOUT_MINUTES']) {
+      store.setOverride(key, ' ', () => '2026-09-17T00:00:00.000Z');
+    }
+    expect(store.current().prePr).toEqual({ reviewerCount: 2, maxRounds: 3, stageTimeoutMinutes: 45 });
+  });
+
   it('returns loadConfig(env) unchanged when there are no overrides', () => {
     db = openDb(':memory:');
     const store: ConfigStore = new ConfigStore({}, db);
@@ -86,7 +127,7 @@ describe('ConfigStore', () => {
     const store: ConfigStore = new ConfigStore({}, db);
     const keys: string[] = Object.keys(publicConfig(store.current()));
     for (const key of keys) {
-      expect(() => store.setOverride(key, 'x', () => '2026-08-24T00:00:00.000Z')).not.toThrow();
+      expect(EDITABLE_KEYS).toContain(key);
     }
     db.close();
   });
