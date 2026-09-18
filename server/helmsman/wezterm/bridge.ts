@@ -4,6 +4,7 @@ import type { CmuxTab } from '../cmux/model';
 import { keyToBytes } from './keys';
 import { focusedPaneId, toTabs, type WezClient, type WezPane } from './model';
 import { resolveSocket } from './socket';
+import { providerFromTitle } from '../../../src/logic/agentProvider';
 
 export type RunWez = (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
 
@@ -114,9 +115,15 @@ export function createWezTermBridge(options: WezTermBridgeOptions = {}): Bridge 
     }
   }
 
-  /** The only place user-controlled text reaches the terminal. Argv only. */
+  /**
+   * The only place user-controlled text reaches the terminal. Argv only, and
+   * `--` terminates the options: without it wezterm parses text beginning with
+   * a hyphen as its own flag. `--help` is the dangerous case -- it prints help
+   * and exits 0, so the send looks successful while nothing was typed, and with
+   * enter=true the Enter then lands on whatever the pane already held.
+   */
   async function sendText(pane: string, text: string): Promise<{ code: number; stderr: string }> {
-    const res = await run(['cli', 'send-text', '--pane-id', pane, '--no-paste', text]);
+    const res = await run(['cli', 'send-text', '--pane-id', pane, '--no-paste', '--', text]);
     return { code: res.code, stderr: res.stderr };
   }
 
@@ -157,10 +164,13 @@ export function createWezTermBridge(options: WezTermBridgeOptions = {}): Bridge 
 
   /**
    * cmux pushes tree changes over `cmux events`; wezterm has no equivalent, so
-   * poll the pane list and fire only when its shape actually changes. The
-   * fingerprint deliberately ignores titles and cwd — the panel re-fetches on
-   * every change, and a title that updates per keystroke would make this a
-   * busy loop.
+   * poll the pane list and fire only when its shape actually changes.
+   *
+   * The fingerprint tracks the derived provider rather than the raw title: the
+   * panel's action buttons depend on it, so starting an agent in an existing
+   * pane has to raise an event even though no id changed. Using the title
+   * itself would instead fire on every title update, which for many shells is
+   * every keystroke.
    */
   function watchEvents(onChange: () => void): () => void {
     let stopped = false;
@@ -168,7 +178,9 @@ export function createWezTermBridge(options: WezTermBridgeOptions = {}): Bridge 
     let inFlight = false;
 
     const fingerprint = (tabs: CmuxTab[]): string =>
-      tabs.map((t) => `${t.windowRef}/${t.workspaceRef}/${t.surfaceRef}/${t.selected}`).join(',');
+      tabs
+        .map((t) => `${t.windowRef}/${t.workspaceRef}/${t.surfaceRef}/${t.selected}/${providerFromTitle(t.surfaceTitle) ?? ''}`)
+        .join(',');
 
     const tick = async (): Promise<void> => {
       // setInterval does not wait, and a list can take seconds — wezterm blocks

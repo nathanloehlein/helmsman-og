@@ -43,6 +43,14 @@ describe('cmuxPanel', () => {
     expect(providerOf(tab({ type: 'terminal', surfaceTitle: 'myclaude' }))).toBeNull();
   });
 
+  // A shell titled with its cwd would otherwise be offered Approve, which
+  // types `y` and Enter into it.
+  it('providerOf ignores directory components in a title', () => {
+    expect(providerOf(tab({ type: 'terminal', surfaceTitle: '/Users/alice/.codex' }))).toBeNull();
+    expect(providerOf(tab({ type: 'terminal', surfaceTitle: '/work/claude/config' }))).toBeNull();
+    expect(providerOf(tab({ type: 'terminal', surfaceTitle: 'C:\\Users\\alice\\codex' }))).toBeNull();
+  });
+
   it('providerOf keeps cmux agent-sessions working, refined by title', () => {
     expect(providerOf(tab({ type: 'agent-session' }))).toBe('claude');
     expect(providerOf(tab({ type: 'agent-session', surfaceTitle: 'codex' }))).toBe('codex');

@@ -16,22 +16,36 @@ export interface WezPane {
 
 /**
  * WezTerm reports cwd as a URL (`file:///C:/Users/natha/`), not a path.
- * fileURLToPath rejects a non-localhost authority, which WezTerm can emit for a
- * remote domain, so fall back to decoding the pathname by hand.
+ *
+ * A drive-letter URL is normalized before any platform-dependent conversion,
+ * because fileURLToPath disagrees across platforms: on Windows it yields
+ * `C:\Users\natha`, on macOS and Linux it happily returns `/C:/Users/natha`,
+ * leading slash and all. Handling it here means the same URL produces the same
+ * drive path everywhere, so behaviour does not depend on where helmsman runs.
  */
 export function cwdFromUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   if (!raw.startsWith('file://')) return raw;
+
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(new URL(raw).pathname);
+  } catch {
+    return null;
+  }
+
+  if (/^\/[a-zA-Z]:/.test(pathname)) {
+    const drivePath = pathname.slice(1);
+    return process.platform === 'win32' ? drivePath.replace(/\//g, '\\') : drivePath;
+  }
+
+  // Not a drive letter: a POSIX path, or a UNC share wezterm reports for a
+  // remote domain. fileURLToPath handles both, and rejects an authority it
+  // cannot map, in which case the decoded pathname is the best available.
   try {
     return fileURLToPath(raw);
   } catch {
-    try {
-      const path = decodeURIComponent(new URL(raw).pathname);
-      // A Windows path arrives as `/C:/Users/...`; strip the leading slash.
-      return /^\/[a-zA-Z]:/.test(path) ? path.slice(1) : path;
-    } catch {
-      return null;
-    }
+    return pathname;
   }
 }
 

@@ -38,15 +38,15 @@ describe('wezterm bridge.send', () => {
   it('passes user text as a single argv element (no shell)', async () => {
     const { calls, run } = recorder();
     await createWezTermBridge({ run, socket: SOCK }).send('0', 'rm -rf $(pwd); echo pwned', false);
-    expect(calls).toEqual([['cli', 'send-text', '--pane-id', '0', '--no-paste', 'rm -rf $(pwd); echo pwned']]);
+    expect(calls).toEqual([['cli', 'send-text', '--pane-id', '0', '--no-paste', '--', 'rm -rf $(pwd); echo pwned']]);
   });
 
   it('sends Enter as a carriage return, since wezterm has no send-key', async () => {
     const { calls, run } = recorder();
     await createWezTermBridge({ run, socket: SOCK }).send('0', 'ls', true);
     expect(calls).toEqual([
-      ['cli', 'send-text', '--pane-id', '0', '--no-paste', 'ls'],
-      ['cli', 'send-text', '--pane-id', '0', '--no-paste', '\r'],
+      ['cli', 'send-text', '--pane-id', '0', '--no-paste', '--', 'ls'],
+      ['cli', 'send-text', '--pane-id', '0', '--no-paste', '--', '\r'],
     ]);
   });
 
@@ -62,7 +62,7 @@ describe('wezterm bridge.sendKey', () => {
   it('translates a key to bytes and writes them as text', async () => {
     const { calls, run } = recorder();
     await createWezTermBridge({ run, socket: SOCK }).sendKey('3', 'ctrl+c');
-    expect(calls).toEqual([['cli', 'send-text', '--pane-id', '3', '--no-paste', '\x03']]);
+    expect(calls).toEqual([['cli', 'send-text', '--pane-id', '3', '--no-paste', '--', '\x03']]);
   });
 
   it('rejects an unknown key instead of typing it into the pane', async () => {
@@ -213,5 +213,68 @@ describe('wezterm bridge.watchEvents concurrency', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Without a `--` terminator wezterm parses leading-hyphen text as its own flag.
+// `--help` is the dangerous one: it prints help and exits 0, so the send looks
+// successful while nothing was typed, and enter=true then lands Enter on
+// whatever the pane already held.
+describe('wezterm bridge with leading-hyphen payloads', () => {
+  it('terminates options before user text in send', async () => {
+    const { calls, run } = recorder();
+    const res = await createWezTermBridge({ run, socket: SOCK }).send('0', '--help', true);
+    expect(res).toEqual({ ok: true });
+    expect(calls[0]).toEqual(['cli', 'send-text', '--pane-id', '0', '--no-paste', '--', '--help']);
+    expect(calls[1]).toEqual(['cli', 'send-text', '--pane-id', '0', '--no-paste', '--', '\r']);
+  });
+
+  it('terminates options for every hyphen-shaped payload', async () => {
+    for (const text of ['--help', '-h', '--no-paste', '--pane-id']) {
+      const { calls, run } = recorder();
+      await createWezTermBridge({ run, socket: SOCK }).send('0', text, false);
+      expect(calls[0]!.slice(-2)).toEqual(['--', text]);
+    }
+  });
+
+  it('terminates options in sendKey too', async () => {
+    const { calls, run } = recorder();
+    await createWezTermBridge({ run, socket: SOCK }).sendKey('0', 'escape');
+    expect(calls[0]).toEqual(['cli', 'send-text', '--pane-id', '0', '--no-paste', '--', '\x1b']);
+  });
+});
+
+// providerOf drives the panel's action buttons and is derived from the title,
+// so a pane becoming an agent has to raise an event even though no id changed.
+describe('wezterm bridge.watchEvents provider transitions', () => {
+  const pane = (title: string): string =>
+    JSON.stringify([{ window_id: 0, tab_id: 0, pane_id: 0, title, is_active: true }]);
+
+  async function transitions(from: string, to: string): Promise<number> {
+    vi.useFakeTimers();
+    try {
+      let stdout = pane(from);
+      const onChange = vi.fn();
+      const stop = createWezTermBridge({ run: () => ok(stdout), pollMs: 10, socket: SOCK }).watchEvents(onChange);
+      await vi.advanceTimersByTimeAsync(35);
+      stdout = pane(to);
+      await vi.advanceTimersByTimeAsync(35);
+      stop();
+      return onChange.mock.calls.length;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('fires when a shell starts an agent', async () => {
+    expect(await transitions('zsh', 'codex')).toBe(1);
+  });
+
+  it('fires when an agent exits back to a shell', async () => {
+    expect(await transitions('claude.exe', 'cmd.exe')).toBe(1);
+  });
+
+  it('stays quiet for a title change that does not change the provider', async () => {
+    expect(await transitions('zsh', 'zsh: vim README.md')).toBe(0);
   });
 });

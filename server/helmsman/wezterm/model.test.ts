@@ -14,7 +14,11 @@ const pane = (over: Partial<WezPane> = {}): WezPane => ({
 
 describe('cwdFromUrl', () => {
   it('decodes a Windows file URL to a path', () => {
-    expect(cwdFromUrl('file:///C:/Users/natha/')).toMatch(/^C:[\\/]Users[\\/]natha/);
+    const cwd = cwdFromUrl('file:///C:/Users/natha/');
+    expect(cwd).toMatch(/^C:[\\/]Users[\\/]natha/);
+    // fileURLToPath keeps the leading slash on macOS and Linux, so drive
+    // letters are normalized before it is consulted. Must hold everywhere.
+    expect(cwd!.startsWith('/')).toBe(false);
   });
 
   it('decodes percent-escapes', () => {

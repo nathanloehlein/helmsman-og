@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { detachedHost, cmuxHost, weztermHost, pickHost, parseCmuxWorkspaceRef, parseWezPaneId, type LaunchSpec } from './run-host';
+import { detachedHost, cmuxHost, weztermHost, pickHost, parseCmuxWorkspaceRef, parseWezPaneId, type LaunchSpec, type WezRunner } from './run-host';
 
 const WRAPPER = join(__dirname, 'run-wrapper.mjs');
 
@@ -89,12 +89,20 @@ describe('parseWezPaneId', () => {
 });
 
 describe('weztermHost argv', () => {
+  const SOCK = (): string => '/run/gui-sock-1';
+
   it('spawns the wrapper into its own window and workspace, no untrusted shell data', async () => {
     const calls: string[][] = [];
-    const run = async (argv: string[]) => { calls.push(argv); return { stdout: '7\n', code: 0 }; };
+    const sockets: Array<string | null> = [];
+    const run = async (argv: string[], socket: string | null) => {
+      calls.push(argv);
+      sockets.push(socket);
+      return { stdout: '7' + String.fromCharCode(10), code: 0 };
+    };
     const dir = mkdtempSync(join(tmpdir(), 'host-'));
-    const ref = await weztermHost(WRAPPER, run).launch(spec(dir, 'codex', ['exec', 'title with spaces']));
-    expect(ref).toEqual({ kind: 'wezterm', paneId: '7' });
+    const ref = await weztermHost(WRAPPER, run, SOCK).launch(spec(dir, 'codex', ['exec', 'title with spaces']));
+    expect(ref).toEqual({ kind: 'wezterm', paneId: '7', socket: '/run/gui-sock-1' });
+    expect(sockets).toEqual(['/run/gui-sock-1']);
     const argv = calls[0]!;
     expect(argv.slice(0, 3)).toEqual(['wezterm', 'cli', 'spawn']);
     // --workspace is only honoured alongside --new-window
@@ -105,28 +113,78 @@ describe('weztermHost argv', () => {
     expect(argv.join(' ')).not.toContain('title with spaces');
   });
 
+  it('refuses to launch when wezterm is not running, rather than spawning a mux server', async () => {
+    const run = async () => { throw new Error('should not run'); };
+    const dir = mkdtempSync(join(tmpdir(), 'host-'));
+    await expect(weztermHost(WRAPPER, run, () => null).launch(spec(dir, 'node', []))).rejects.toThrow(/not running/);
+  });
+
   it('reports liveness by looking for the pane in the list', async () => {
-    const run = async () => ({ stdout: JSON.stringify([{ pane_id: 7 }, { pane_id: 2 }]), code: 0 });
-    const host = weztermHost(WRAPPER, run);
-    expect(await host.isAlive({ kind: 'wezterm', paneId: '7' })).toBe(true);
-    expect(await host.isAlive({ kind: 'wezterm', paneId: '99' })).toBe(false);
+    const run = async (): Promise<{ stdout: string; code: number }> => ({ stdout: JSON.stringify([{ pane_id: 7 }, { pane_id: 2 }]), code: 0 });
+    const host = weztermHost(WRAPPER, run, SOCK);
+    expect(await host.isAlive({ kind: 'wezterm', paneId: '7', socket: '/s' })).toBe(true);
+    expect(await host.isAlive({ kind: 'wezterm', paneId: '99', socket: '/s' })).toBe(false);
   });
 
   it('stops via kill-pane', async () => {
     const calls: string[][] = [];
     const run = async (argv: string[]) => { calls.push(argv); return { stdout: '', code: 0 }; };
-    await weztermHost(WRAPPER, run).stop({ kind: 'wezterm', paneId: '7' });
+    await weztermHost(WRAPPER, run, SOCK).stop({ kind: 'wezterm', paneId: '7', socket: '/s' });
     expect(calls[0]).toEqual(['wezterm', 'cli', 'kill-pane', '--pane-id', '7']);
   });
 
   it('swallows errors from stop', async () => {
     const run = async () => { throw new Error('socket down'); };
-    await expect(weztermHost(WRAPPER, run).stop({ kind: 'wezterm', paneId: '7' })).resolves.toBeUndefined();
+    await expect(weztermHost(WRAPPER, run, SOCK).stop({ kind: 'wezterm', paneId: '7', socket: '/s' })).resolves.toBeUndefined();
   });
 
   it('ignores a ref belonging to another host', async () => {
     const run = async () => { throw new Error('should not run'); };
-    expect(await weztermHost(WRAPPER, run).isAlive({ kind: 'detached', pid: 1 })).toBe(false);
+    expect(await weztermHost(WRAPPER, run, SOCK).isAlive({ kind: 'detached', pid: 1 })).toBe(false);
+  });
+});
+
+// A pane id only identifies a pane within the mux server that owns it, and ids
+// restart from 0 in a new one. Without the socket on the ref, a second GUI
+// appearing mid-run would be discovered instead and its pane 7 mistaken for
+// ours -- stop would kill a stranger's pane, and isAlive would call a live run
+// dead, which lets recovery delete its worktree.
+describe('weztermHost pins the socket it launched against', () => {
+  const PANES_A = JSON.stringify([{ pane_id: 7 }]);
+  const PANES_B = JSON.stringify([{ pane_id: 7 }]);
+
+  function twoSockets(): { run: WezRunner; seen: Array<{ argv: string[]; socket: string | null }> } {
+    const seen: Array<{ argv: string[]; socket: string | null }> = [];
+    const run: WezRunner = async (argv, socket) => {
+      seen.push({ argv, socket });
+      if (argv.includes('spawn')) return { stdout: '7', code: 0 };
+      return { stdout: socket === '/sock-a' ? PANES_A : PANES_B, code: 0 };
+    };
+    return { run, seen };
+  }
+
+  it('uses the launch socket for liveness and stop even after discovery moves on', async () => {
+    const { run, seen } = twoSockets();
+    const dir = mkdtempSync(join(tmpdir(), 'host-'));
+    let discovered = '/sock-a';
+
+    const host = weztermHost(WRAPPER, run, () => discovered);
+    const ref = await host.launch(spec(dir, 'node', []));
+    expect(ref).toEqual({ kind: 'wezterm', paneId: '7', socket: '/sock-a' });
+
+    // A second GUI starts and becomes the discovered target.
+    discovered = '/sock-b';
+
+    await host.isAlive(ref);
+    await host.stop(ref);
+    expect(seen.slice(1).map((c) => c.socket)).toEqual(['/sock-a', '/sock-a']);
+  });
+
+  it('falls back to discovery for a ref persisted before the socket was recorded', async () => {
+    const { run, seen } = twoSockets();
+    const host = weztermHost(WRAPPER, run, () => '/sock-b');
+    expect(await host.isAlive({ kind: 'wezterm', paneId: '7' })).toBe(true);
+    expect(seen[0]!.socket).toBe('/sock-b');
   });
 });
 

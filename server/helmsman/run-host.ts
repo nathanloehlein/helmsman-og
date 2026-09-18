@@ -16,7 +16,7 @@ export interface LaunchSpec {
 export type HostRef =
   | { kind: 'detached'; pid: number }
   | { kind: 'cmux'; workspace: string }
-  | { kind: 'wezterm'; paneId: string };
+  | { kind: 'wezterm'; paneId: string; socket?: string | null };
 
 export interface RunHost {
   kind: HostRef['kind'];
@@ -113,15 +113,18 @@ export function cmuxHost(wrapperPath: string, run: ArgvRunner = defaultRun): Run
 }
 
 /**
- * Runs `wezterm` with the socket resolved, since `wezterm cli` cannot find the
- * GUI's socket on Windows by itself. argv[0] is the literal 'wezterm' so the
- * built argv stays readable and assertable; the configured binary is
- * substituted here, because on Windows the installer's PATH entry is not
- * visible to an already-running shell.
+ * A wezterm runner is given the socket to use, rather than resolving one
+ * itself: a pane id only means anything within the mux server that owns it.
  */
-export const weztermRun: ArgvRunner = async (argv: string[]): Promise<{ stdout: string; code: number }> => {
+export type WezRunner = (argv: string[], socket: string | null) => Promise<{ stdout: string; code: number }>;
+
+/**
+ * argv[0] is the literal 'wezterm' so the built argv stays readable and
+ * assertable; the configured binary is substituted here, because on Windows the
+ * installer's PATH entry is not visible to an already-running shell.
+ */
+export const weztermRun: WezRunner = async (argv: string[], socket: string | null) => {
   const [, ...args] = argv;
-  const socket = resolveSocket();
   const env: NodeJS.ProcessEnv = { ...process.env, ...(socket ? { WEZTERM_UNIX_SOCKET: socket } : {}) };
   const { stdout } = await execFileAsync(process.env.WEZTERM_BIN || 'wezterm', args, { env });
   return { stdout, code: 0 };
@@ -136,11 +139,31 @@ export function parseWezPaneId(stdout: string): string {
 /** Keeps run windows out of the workspace the user is looking at. */
 const RUN_WORKSPACE = (): string => process.env.WEZTERM_RUN_WORKSPACE || 'helmsman-runs';
 
-export function weztermHost(wrapperPath: string, run: ArgvRunner = weztermRun): RunHost {
+export function weztermHost(
+  wrapperPath: string,
+  run: WezRunner = weztermRun,
+  resolve: () => string | null = resolveSocket,
+): RunHost {
+  /**
+   * Pane ids are only unique within one mux server, and they restart from 0 in
+   * a new one. Resolving the socket per operation means a second GUI started
+   * mid-run could become the discovered target: stop would then kill an
+   * unrelated pane that happens to reuse the id, and isAlive would call a live
+   * run dead, which lets recovery remove its worktree. So the socket is
+   * resolved once, at launch, and travels with the ref.
+   *
+   * A ref persisted before this carries no socket; fall back to discovery for
+   * those rather than refusing to manage them.
+   */
+  const socketFor = (ref: Extract<HostRef, { kind: 'wezterm' }>): string | null =>
+    ref.socket ?? resolve();
+
   return {
     kind: 'wezterm',
 
     async launch(spec: LaunchSpec): Promise<HostRef> {
+      const socket = resolve();
+      if (socket === null) throw new Error('wezterm is not running');
       writeSpecFile(spec);
       // --workspace requires --new-window; together they put the run in its own
       // window on a workspace the user is not currently viewing, which is the
@@ -150,14 +173,14 @@ export function weztermHost(wrapperPath: string, run: ArgvRunner = weztermRun): 
         '--new-window', '--workspace', RUN_WORKSPACE(),
         '--cwd', spec.cwd,
         '--', 'node', wrapperPath, spec.specPath,
-      ]);
-      return { kind: 'wezterm', paneId: parseWezPaneId(stdout) };
+      ], socket);
+      return { kind: 'wezterm', paneId: parseWezPaneId(stdout), socket };
     },
 
     async isAlive(ref: HostRef): Promise<boolean> {
       if (ref.kind !== 'wezterm') return false;
       try {
-        const { stdout } = await run(['wezterm', 'cli', 'list', '--format', 'json']);
+        const { stdout } = await run(['wezterm', 'cli', 'list', '--format', 'json'], socketFor(ref));
         const panes = JSON.parse(stdout) as Array<{ pane_id: number }>;
         return Array.isArray(panes) && panes.some((p) => String(p.pane_id) === ref.paneId);
       } catch {
@@ -168,7 +191,7 @@ export function weztermHost(wrapperPath: string, run: ArgvRunner = weztermRun): 
     async stop(ref: HostRef): Promise<void> {
       if (ref.kind !== 'wezterm') return;
       try {
-        await run(['wezterm', 'cli', 'kill-pane', '--pane-id', ref.paneId]);
+        await run(['wezterm', 'cli', 'kill-pane', '--pane-id', ref.paneId], socketFor(ref));
       } catch {}
     },
   };
@@ -179,10 +202,11 @@ export function weztermHost(wrapperPath: string, run: ArgvRunner = weztermRun): 
  * silently daemonizes a headless wezterm-mux-server, and probing for
  * availability must not be the thing that creates it.
  */
-export const hasWezTerm = async (run: ArgvRunner = weztermRun): Promise<boolean> => {
-  if (resolveSocket() === null) return false;
+export const hasWezTerm = async (run: WezRunner = weztermRun): Promise<boolean> => {
+  const socket = resolveSocket();
+  if (socket === null) return false;
   try {
-    const { code } = await run(['wezterm', 'cli', 'list', '--format', 'json']);
+    const { code } = await run(['wezterm', 'cli', 'list', '--format', 'json'], socket);
     return code === 0;
   } catch {
     return false;
