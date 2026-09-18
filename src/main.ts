@@ -14,7 +14,7 @@ import './style.css';
 import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
 import { renderRunsView } from './renderRuns';
 import { loadDashboard, POLL_MS, LOCAL_POLL_MS, type DashboardResponse } from './data/live';
-import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, runTabStatus, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
+import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderVoyageRetry, runTabStatus, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
 import type { RunTabView, PrViewState } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import { fetchTriage, type TriageGroupsView } from './data/triage';
@@ -26,6 +26,7 @@ import { fetchReviewRequests, fetchRepoOpenPrs, type PrListState, type PrInboxSt
 import {
   launchAgent,
   launchRun,
+  retryRun,
   openRunStream,
   getRun,
   fetchAgents,
@@ -121,6 +122,7 @@ export class DashboardView {
   private destroyed = false;
   private copyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
   private copying = new WeakSet<HTMLButtonElement>();
+  private runRetries = new Map<string, { pending: boolean; error?: string }>();
   private snapshot: DashboardSnapshot | null = null;
   private snapshotRepo: string | null | undefined = undefined;
   private contentView: PageView | null = null;
@@ -600,6 +602,7 @@ export class DashboardView {
         if (next) recent.replaceWith(next);
       }
     }
+    this.paintRunRetries();
   }
 
   private paintLocalRuns(): void {
@@ -711,6 +714,7 @@ export class DashboardView {
       ? focused.dataset.view : null;
     const sameView = this.root.querySelector<HTMLElement>('.helm')?.dataset.page === this.view;
     this.paintView();
+    this.paintRunRetries();
     if (focusedTab) {
       const view = sameView ? focusedTab : this.view;
       const tabs = Array.from(this.root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
@@ -1673,6 +1677,47 @@ export class DashboardView {
     void this.handleCmuxSend(target);
   }
 
+  private paintRunRetries(): void {
+    this.root.querySelectorAll<HTMLButtonElement>('button[data-retry-run-id]').forEach(button => {
+      const state = this.runRetries.get(button.dataset.retryRunId ?? '');
+      button.disabled = state?.pending ?? false;
+      button.setAttribute('aria-busy', String(state?.pending ?? false));
+      const label = button.querySelector('span');
+      if (label) label.textContent = state?.pending ? 'Retrying…' : 'Retry';
+      if (state?.pending || state?.error) button.dataset.retryState = state.pending ? 'pending' : 'error';
+      else delete button.dataset.retryState;
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-retry-feedback-for]').forEach(feedback => {
+      const state = this.runRetries.get(feedback.dataset.retryFeedbackFor ?? '');
+      feedback.textContent = state?.error ?? '';
+      if (state?.error) feedback.dataset.retryState = 'error';
+      else delete feedback.dataset.retryState;
+    });
+  }
+
+  private async handleRetryRun(button: HTMLButtonElement): Promise<void> {
+    const runId = button.dataset.retryRunId;
+    if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId) || this.runRetries.get(runId)?.pending) return;
+    this.runRetries.set(runId, { pending: true });
+    this.paintRunRetries();
+    try {
+      const result = await retryRun(runId);
+      if (this.destroyed) return;
+      this.runRetries.delete(runId);
+      const previous = this.runTabs.find(tab => tab.runId === runId);
+      const run = this.runs.find(item => item.id === runId);
+      const label = previous?.label ?? run?.ticketId ?? 'Retry';
+      this.openRunTab(result.runId, label);
+      this.focusRunTab(result.runId);
+      void this.refresh();
+    } catch (error: unknown) {
+      if (this.destroyed) return;
+      this.runRetries.set(runId, { pending: false, error: error instanceof Error ? error.message : 'Voyage retry failed.' });
+    } finally {
+      if (!this.destroyed) this.paintRunRetries();
+    }
+  }
+
   private async copyRunId(button: HTMLButtonElement): Promise<void> {
     const id = button.dataset.copyRunId;
     if (!id || !/^[a-z\d_-]{1,128}$/i.test(id) || this.copying.has(button)) return;
@@ -1700,6 +1745,13 @@ export class DashboardView {
       event.preventDefault();
       event.stopPropagation();
       if (!copyButton.disabled) void this.copyRunId(copyButton);
+      return;
+    }
+    const retryButton = target.closest<HTMLButtonElement>('button[data-retry-run-id]');
+    if (retryButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!retryButton.disabled) void this.handleRetryRun(retryButton);
       return;
     }
     const slackReview = target.closest<HTMLButtonElement>('[data-slack-review-request]');
@@ -2187,6 +2239,11 @@ export class DashboardView {
     element.dataset.runStatus = status.kind;
     const badge = element.querySelector<HTMLElement>('.run-tab-status');
     if (badge) badge.textContent = status.label;
+    if (tab.runId === this.activeTabId) {
+      const retrySlot = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-retry');
+      if (retrySlot) retrySlot.innerHTML = tab.status === 'failed' ? renderVoyageRetry(tab.runId) : '';
+      this.paintRunRetries();
+    }
   }
 
   private async finalizeTab(runId: string): Promise<void> {
@@ -2249,6 +2306,7 @@ export class DashboardView {
     const drawerCollapsed: boolean = this.collapsed.has('runs:drawer') && this.runTabs.length > 0;
     this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId, drawerCollapsed);
     this.runDrawerEl.classList.toggle('is-collapsed', drawerCollapsed);
+    this.paintRunRetries();
     const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
     if (!active) return;
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');

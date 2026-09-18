@@ -373,6 +373,15 @@ html, body {
 .recent-rerun:hover:not(:disabled) { color: var(--accent); border-color: var(--line-strong); }
 .recent-rerun:disabled { opacity: 0.3; cursor: not-allowed; }
 .recent-rerun svg { width: 13px; height: 13px; }
+.voyage-retry { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 4px 7px; border: 1px solid var(--line-faint); border-radius: var(--radius); background: transparent; color: var(--text-dim); font: inherit; font-size: 11px; cursor: pointer; }
+.voyage-retry svg { width: 13px; height: 13px; }
+.voyage-retry:hover:not(:disabled) { color: var(--text); border-color: var(--review); background: color-mix(in srgb, var(--review) 10%, var(--panel)); }
+.voyage-retry:focus-visible { outline: 2px solid var(--review); outline-offset: 2px; }
+.voyage-retry:disabled, .voyage-retry[data-retry-state="pending"] { opacity: 0.6; cursor: progress; }
+.voyage-retry[data-retry-state="error"] { color: var(--bad); border-color: var(--bad); }
+.voyage-retry-feedback { flex: 1 0 100%; color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; cursor: default; }
+.voyage-retry-feedback:empty { display: none; }
+.voyage-retry-feedback[data-retry-state="error"] { color: var(--bad); }
 .agent-row, .recent-run { cursor: pointer; }
 .lane.agent-row, .lane.recent-run { flex-wrap: wrap; }
 .voyage-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; max-width: 100%; }
@@ -386,10 +395,16 @@ html, body {
 .voyage-id[data-copy-state] svg { color: currentColor; }
 .voyage-copy-feedback { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 2; padding: 3px 6px; border: 1px solid currentColor; border-radius: inherit; background: var(--panel); color: inherit; white-space: nowrap; pointer-events: none; }
 .voyage-copy-feedback:empty { display: none; }
-.voyage-history-row { display: flex; align-items: center; gap: 8px; padding-right: 14px; }
+.voyage-history-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-right: 14px; }
+.voyage-history-row > .voyage-retry-feedback { padding: 0 0 8px 14px; }
 .voyage-history-row > .runs-voyage-link { flex: 1; min-width: 0; }
 .voyage-history-row > .runs-voyage-link:hover { background: transparent; }
 .voyage-history-row > .voyage-id { flex: 0 0 auto; max-width: 40%; }
+@media (max-width: 480px) {
+  .voyage-history-row { gap: 4px 8px; padding-bottom: 8px; }
+  .voyage-history-row > .runs-voyage-link { flex-basis: 100%; }
+  .voyage-history-row > .voyage-id { margin-left: 14px; max-width: 60%; }
+}
 
 /* the amber link rail: grows to fill, ends in a ring; state by stroke pattern */
 .lane-rail { flex: 2 1 60px; min-width: 48px; height: 12px; position: relative; margin: 0 4px; }
@@ -618,6 +633,8 @@ select { text-transform: none; }
 .run-log-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 10px 16px; font-size: 11px; color: var(--text-dim); background: var(--panel); border-bottom: 1px solid var(--line); }
 .run-log-download { color: var(--accent); }
 .run-drawer.is-collapsed .run-log-toolbar { display: none; }
+.run-drawer-retry { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.run-drawer-retry:empty, .run-drawer.is-collapsed .run-drawer-retry { display: none; }
 .run-line-log-notice { color: var(--text-dim); font-style: italic; }
 .run-line-tool { color: var(--text-dim); border-left-color: var(--line-strong); }
 .run-line-error, .run-line-stderr { color: var(--bad); border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 6%, var(--bg)); }

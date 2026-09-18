@@ -21,6 +21,7 @@ export interface RunRow {
   specPath?: string | null;
   logOffset?: number | null;
   taskJson?: string | null;
+  launchJson?: string | null;
 }
 
 export interface RunEventRow {
@@ -54,7 +55,7 @@ export interface Db {
   close(): void;
 }
 
-const COLS: string[] = ['id', 'ticketId', 'repo', 'adapter', 'status', 'attempt', 'prNumber', 'startedAt', 'endedAt', 'costUsd', 'worktreePath', 'hostKind', 'hostRef', 'logPath', 'exitPath', 'specPath', 'logOffset', 'taskJson'];
+const COLS: string[] = ['id', 'ticketId', 'repo', 'adapter', 'status', 'attempt', 'prNumber', 'startedAt', 'endedAt', 'costUsd', 'worktreePath', 'hostKind', 'hostRef', 'logPath', 'exitPath', 'specPath', 'logOffset', 'taskJson', 'launchJson'];
 
 export function openDb(path: string): Db {
   const sql: Database.Database = new Database(path);
@@ -77,7 +78,7 @@ export function openDb(path: string): Db {
   const existing = new Set((sql.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[]).map((c) => c.name));
   const addCols: [string, string][] = [
     ['hostKind', 'TEXT'], ['hostRef', 'TEXT'], ['logPath', 'TEXT'], ['exitPath', 'TEXT'],
-    ['specPath', 'TEXT'], ['logOffset', 'INTEGER'], ['taskJson', 'TEXT'],
+    ['specPath', 'TEXT'], ['logOffset', 'INTEGER'], ['taskJson', 'TEXT'], ['launchJson', 'TEXT'],
   ];
   for (const [name, type] of addCols) {
     if (!existing.has(name)) sql.exec(`ALTER TABLE runs ADD COLUMN ${name} ${type}`);
@@ -86,7 +87,7 @@ export function openDb(path: string): Db {
 
   return {
     insertRun(r: RunRow): void {
-      const full = { hostKind: null, hostRef: null, logPath: null, exitPath: null, specPath: null, logOffset: null, taskJson: null, ...r };
+      const full = { hostKind: null, hostRef: null, logPath: null, exitPath: null, specPath: null, logOffset: null, taskJson: null, launchJson: null, ...r };
       sql.prepare(`INSERT INTO runs (${COLS.join(',')}) VALUES (${COLS.map((c) => '@' + c).join(',')})`).run(full);
     },
     updateRun(id: string, patch: Partial<RunRow>): void {

@@ -16,6 +16,7 @@ export interface RunnerDeps {
   adapter: AgentAdapter;
   host: RunHost;
   runsDir: string;
+  launchJson?: string;
   createWorktree: (repo: string, runId: string) => Promise<{ path: string; branch: string }>;
   createWorktreeFromBranch?: (repo: string, runId: string, branch: string) => Promise<{ path: string; branch: string }>;
   createReviewWorktree?: (repo: string, runId: string, prNumber: number, headSha: string) => Promise<{ path: string; branch: string }>;
@@ -300,7 +301,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     id: runId, ticketId: task.ticketId, repo: task.repo, adapter: deps.adapter.id,
     status: 'running', attempt: 1, prNumber: task.prNumber ?? null, startedAt: deps.now(),
     endedAt: null, costUsd: null, worktreePath: null,
-    logPath, exitPath, specPath, logOffset: 0, taskJson: JSON.stringify(task),
+    logPath, exitPath, specPath, logOffset: 0, taskJson: JSON.stringify(task), launchJson: deps.launchJson ?? null,
   };
   deps.db.insertRun(initial);
   if (task.reviewComplexity) {

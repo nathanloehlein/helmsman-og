@@ -391,7 +391,7 @@ describe('renderDashboard', () => {
     expect(link).not.toBeNull();
   });
 
-  it('puts an enabled re-run button on ticket runs and a disabled one on non-ticket runs', () => {
+  it('retains ticket relaunch and retries failed freeform voyages by their original run ID', () => {
     const el: HTMLDivElement = root();
     const runs: RunSummary[] = [
       { id: 'r1', ticketId: 'ABC-2', repo: 'org/beta', status: 'succeeded', attempt: 1, prNumber: 42, startedAt: NOW.toISOString(), costUsd: 1 },
@@ -400,11 +400,14 @@ describe('renderDashboard', () => {
     renderDashboard(el, snapshot(), NOW, [], [], null, runs);
     const rows = el.querySelectorAll<HTMLElement>('.recent-run');
     const ticketBtn = rows[0]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
-    const freeformBtn = rows[1]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
+    const freeformBtn = rows[1]!.querySelector<HTMLButtonElement>('[data-retry-run-id]');
     expect(ticketBtn.disabled).toBe(false);
     expect(ticketBtn.dataset.ticket).toBe('ABC-2');
     expect(ticketBtn.dataset.repo).toBe('org/beta');
-    expect(freeformBtn.disabled).toBe(true);
+    expect(freeformBtn?.disabled).toBe(false);
+    expect(freeformBtn?.dataset.retryRunId).toBe('r2');
+    expect(rows[1]?.querySelector('.recent-rerun')).toBeNull();
+    expect(rows[1]?.querySelector('[data-retry-feedback-for="r2"]')?.getAttribute('role')).toBe('status');
   });
 
   it('shows the empty note in the recent-runs panel when there are none', () => {
@@ -989,6 +992,44 @@ describe('renderRunsDrawer', () => {
     expect(el.querySelector('.runs-voyage-link [data-copy-run-id]')).toBeNull();
     expect(el.querySelector('.recent-run > [data-copy-run-id]')?.getAttribute('data-copy-run-id')).toBe(id);
     expect(el.querySelector('.voyage-id')?.textContent).toBe('b5fcda706766');
+  });
+
+  it.each(['failed', 'running', 'queued', 'succeeded', 'stopped'])('offers a separate Retry button only for failed history voyages: %s', status => {
+    const el = document.createElement('div');
+    const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
+    el.innerHTML = renderVoyage({ id, ticketId: 'Freeform', repo: 'org/repo', status, attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null });
+    const retry = el.querySelector<HTMLButtonElement>('[data-retry-run-id]');
+    expect(!!retry).toBe(status === 'failed');
+    if (status === 'failed') {
+      expect(retry?.dataset.retryRunId).toBe(id);
+      expect(retry?.type).toBe('button');
+      expect(retry?.textContent).toBe('Retry');
+      expect(retry?.getAttribute('aria-label')).toBe(`Retry failed voyage ${id}`);
+      expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('data-retry-feedback-for')).toBe(id);
+      expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('aria-live')).toBe('polite');
+    }
+    expect(el.querySelectorAll('a button, button button, button a')).toHaveLength(0);
+  });
+
+  it('shows Retry in a persistent drawer slot only for the active failed voyage', () => {
+    const el = document.createElement('div');
+    const tabs = [tab({ id: 'failed-run', status: 'failed', complete: true }), tab({ id: 'running-run', status: 'running' })];
+    el.innerHTML = renderRunsDrawer(tabs, 'failed-run');
+    expect(el.querySelectorAll('[data-retry-run-id]')).toHaveLength(1);
+    expect(el.querySelector('.run-drawer-retry [data-retry-run-id]')?.getAttribute('data-retry-run-id')).toBe('failed-run');
+    expect(el.querySelector('.run-drawer-retry')?.nextElementSibling?.classList.contains('run-drawer-body')).toBe(true);
+    expect(el.querySelectorAll('a button, button button, button a')).toHaveLength(0);
+    el.innerHTML = renderRunsDrawer(tabs, 'running-run');
+    expect(el.querySelector('[data-retry-run-id]')).toBeNull();
+    expect(el.querySelector('.run-drawer-retry')?.innerHTML).toBe('');
+  });
+
+  it.each(['err-launch', '', 'invalid/id', 'x'.repeat(129)])('omits Retry for synthetic or invalid failed voyage IDs: %s', id => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ id, status: 'failed', complete: true })], id);
+    expect(el.querySelector('[data-retry-run-id]')).toBeNull();
+    el.innerHTML = renderVoyage({ id, ticketId: 'Task', repo: 'org/repo', status: 'failed', attempt: 1, prNumber: null, startedAt: NOW.toISOString(), costUsd: null });
+    expect(el.querySelector('[data-retry-run-id]')).toBeNull();
   });
 
   it('provides body, footer, and pr shells', () => {

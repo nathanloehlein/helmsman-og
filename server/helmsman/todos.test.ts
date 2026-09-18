@@ -21,6 +21,31 @@ function store(path = ':memory:', now = () => '2026-09-18T12:00:00.000Z'): TodoS
 const input = { title: 'Fix retry flow', repo: 'owner/repo', description: 'Retry the failed request without duplicating the save.' };
 
 describe('local todos', () => {
+  it('atomically claims a blocked todo for a fresh retry without letting older runs reclaim it', () => {
+    const db = store();
+    const todo = db.create(input);
+    db.claim(todo.id, 'failed-run');
+    db.finishRun('failed-run', 'failed');
+    expect(db.claim(todo.id, 'wrong-run', 'unrelated')).toBeNull();
+    expect(db.claim(todo.id, 'retry-run', 'failed-run')).toMatchObject({ state: 'in_progress', runId: 'retry-run' });
+    expect(db.claim(todo.id, 'duplicate', 'failed-run')).toBeNull();
+    expect(db.finishRun('failed-run', 'failed')).toBe(false);
+    db.finishRun('retry-run', 'succeeded');
+    expect(db.claim(todo.id, 'another', 'retry-run')).toBeNull();
+  });
+
+  it('uses edited todo requirements on retry and rejects missing descriptions', () => {
+    const db = store();
+    const todo = db.create(input);
+    db.claim(todo.id, 'failed-run');
+    db.finishRun('failed-run', 'failed');
+    db.update(todo.id, { description: '' });
+    expect(() => db.claim(todo.id, 'retry-run', 'failed-run')).toThrow('Add a description');
+    expect(db.get(todo.id)).toMatchObject({ state: 'blocked', runId: 'failed-run' });
+    db.update(todo.id, { state: 'todo', description: 'Updated requirements' });
+    expect(db.claim(todo.id, 'retry-run', 'failed-run')).toMatchObject({ description: 'Updated requirements', runId: 'retry-run' });
+  });
+
   it('creates drafts with stable defaults and trims text', () => {
     const db = store();
     const todo = db.create({ title: '  Draft voyage  ', repo: ' owner/repo ' });

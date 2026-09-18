@@ -10,7 +10,7 @@ export interface TodoStore {
   create(input: unknown): Todo;
   update(id: string, patch: unknown): Todo | null;
   remove(id: string): boolean;
-  claim(id: string, runId: string): Todo | null;
+  claim(id: string, runId: string, retryRunId?: string): Todo | null;
   release(id: string, runId: string): boolean;
   finishRun(runId: string, status: 'succeeded' | 'failed' | 'stopped'): boolean;
   close(): void;
@@ -114,15 +114,15 @@ export function openTodoStore(path: string, now: () => string = () => new Date()
       ensureMutable(get(id));
       return sql.prepare('DELETE FROM todos WHERE sequence = ?').run(sequence(id)).changes > 0;
     }).immediate,
-    claim: sql.transaction((id: string, runId: string): Todo | null => {
+    claim: sql.transaction((id: string, runId: string, retryRunId?: string): Todo | null => {
       if (typeof runId !== 'string' || !runId.trim()) throw new TodoValidationError('Run ID is required');
       const current = get(id);
-      if (!current || current.state !== 'todo') return null;
+      if (!current || (retryRunId ? current.runId !== retryRunId || !['todo', 'blocked'].includes(current.state) : current.state !== 'todo')) return null;
       if (!current.description.trim()) throw new TodoValidationError('Add a description before starting a voyage');
       if (sql.prepare('SELECT 1 FROM todos WHERE runId = ?').get(runId)) {
         throw new TodoConflictError('Run is already linked to a todo');
       }
-      sql.prepare("UPDATE todos SET state = 'in_progress', runId = ?, updatedAt = ? WHERE sequence = ? AND state = 'todo'")
+      sql.prepare("UPDATE todos SET state = 'in_progress', runId = ?, updatedAt = ? WHERE sequence = ?")
         .run(runId, now(), sequence(id));
       return get(id);
     }).immediate,

@@ -35,6 +35,16 @@ describe('db', () => {
     expect(r?.costUsd).toBe(1.5);
   });
 
+  it('persists original launch intent separately from execution metadata', () => {
+    db = openDb(':memory:');
+    const launchJson = JSON.stringify({ repo: 'o/r', mode: 'freeform', task: 'Original requirements' });
+    db.insertRun(run({ status: 'failed', launchJson }));
+    expect(db.getRun('r1')?.launchJson).toBe(launchJson);
+    expect(db.getRun('r1')?.taskJson).toBeNull();
+    db.updateRun('r1', { taskJson: '{"model":"gpt-5.5"}' });
+    expect(db.getRun('r1')?.launchJson).toBe(launchJson);
+  });
+
   it('lists active runs only', () => {
     db = openDb(':memory:');
     db.insertRun(run({ id: 'a', status: 'running' }));
@@ -139,10 +149,12 @@ describe('db', () => {
     const plan = migrated.prepare("EXPLAIN QUERY PLAN SELECT text FROM run_events WHERE runId = ? AND kind = 'review-verdict' ORDER BY id DESC LIMIT 1").all('old') as { detail: string }[];
     expect(plan.some((step) => step.detail.includes('idx_events_review_verdict'))).toBe(true);
     migrated.close();
-    db.updateRun('old', { hostKind: 'detached', hostRef: '{"kind":"detached","pid":9}', logPath: '/l', exitPath: '/e', specPath: '/s', logOffset: 42, taskJson: '{"ticketId":"T-1"}' });
+    expect(db.getRun('old')?.launchJson).toBeNull();
+    db.updateRun('old', { hostKind: 'detached', hostRef: '{"kind":"detached","pid":9}', logPath: '/l', exitPath: '/e', specPath: '/s', logOffset: 42, taskJson: '{"ticketId":"T-1"}', launchJson: '{"repo":"o/r","ticketId":"T-1"}' });
     const row = db.getRun('old')!;
     expect(row.hostKind).toBe('detached');
     expect(row.logOffset).toBe(42);
+    expect(row.launchJson).toBe('{"repo":"o/r","ticketId":"T-1"}');
     expect(db.reattachableRuns().map((r) => r.id)).toContain('old');
     db.close();
   });

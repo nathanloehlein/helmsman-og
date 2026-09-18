@@ -106,6 +106,21 @@ function deps(db: Db, adapter: AgentAdapter, host: RunHost, runsDir: string): Ru
 }
 
 describe('startRun', () => {
+  it('retains original launch intent when worktree preparation fails before agent execution', async () => {
+    const db = openDb(':memory:');
+    try {
+      const launchJson = JSON.stringify({ repo: task.repo, ticketId: task.ticketId, mode: 'ticket' });
+      const host = singleAttemptHost([], true);
+      const launch = vi.spyOn(host, 'launch');
+      await startRun(task, {
+        ...deps(db, jsonAdapter(), host, freshRunsDir()), launchJson,
+        createWorktree: async () => { throw new Error('Checkout unavailable'); },
+      });
+      expect(db.getRun('run-1')).toMatchObject({ status: 'failed', launchJson, taskJson: JSON.stringify(task), worktreePath: null });
+      expect(launch).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
   it('preserves a failed pre-PR worktree and reports its location without queuing publication side effects', async () => {
     const db = openDb(':memory:');
     try {

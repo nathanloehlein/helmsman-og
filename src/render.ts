@@ -479,7 +479,7 @@ export function renderDashboard(
         <span class="agent-cost mono">${costText}</span>
         ${prLink}
         <span class="chip ${statusInfo.chipClass}">${statusInfo.label}</span>
-        ${rerunBtn}
+        ${run.status === 'failed' ? renderVoyageRetry(run.id) : rerunBtn}
       </li>`;
         })
         .join('')
@@ -568,6 +568,11 @@ function renderVoyageId(id: unknown): string {
     : '';
 }
 
+export function renderVoyageRetry(id: string): string {
+  if (typeof id !== 'string' || id.startsWith('err-') || !/^[a-z\d_-]{1,128}$/i.test(id)) return '';
+  return `<button type="button" class="voyage-retry" data-retry-run-id="${esc(id)}" aria-label="Retry failed voyage ${esc(id)}" title="Start a fresh voyage with the original task and settings">${ICON_REDO}<span>Retry</span></button><span class="voyage-retry-feedback" data-retry-feedback-for="${esc(id)}" role="status" aria-live="polite"></span>`;
+}
+
 export interface RunTabView {
   id: string;
   label: string;
@@ -609,12 +614,14 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
     tabs.length === 0 ? '<span class="run-drawer-title mono">CREW TASKS</span>' : '';
   const collapseBtn: string =
     tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'crew tasks', collapsed) : '';
+  const activeTab = tabs.find(tab => tab.id === activeId);
   const logToolbar = activeId && !activeId.startsWith('err-') && /^[a-z\d_-]{1,128}$/i.test(activeId)
     ? `<div class="run-log-toolbar mono">${renderVoyageId(activeId)}<span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
     : '';
   return `
     <div class="run-tabs" role="tablist" aria-label="Open voyages">${header}${strip}${collapseBtn}</div>
     ${logToolbar}
+    <div class="run-drawer-retry">${activeTab?.status === 'failed' ? renderVoyageRetry(activeTab.id) : ''}</div>
     <div class="run-drawer-body mono" id="run-log-panel" role="tabpanel"${activeId ? ` aria-labelledby="run-tab-${esc(encodeURIComponent(activeId))}"` : ' aria-label="Voyage output"'} tabindex="0">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
@@ -847,6 +854,7 @@ export function renderVoyage(run: RunSummary): string {
       <span class="chip ${status.chipClass}">${esc(status.label)}</span>
     </a>
     ${renderVoyageId(run.id)}
+    ${run.status === 'failed' ? renderVoyageRetry(run.id) : ''}
   </li>`;
 }
 

@@ -8,6 +8,7 @@ import type { BugsResponse, PrFileDiff } from '../../src/types';
 import type { CmuxTab } from './cmux/model';
 import { isAllowedKey } from './cmux/keys';
 import type { SlackState } from '../../src/data/slack';
+import { retryIntent, RetryError, type LaunchIntent } from './retry';
 
 export interface ApiResult {
   status: number;
@@ -58,7 +59,7 @@ export interface RouterDeps {
   bugs: (repo: string | null) => Promise<BugsResponse>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { todoId?: string; ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }) => string;
+  launch: (body: LaunchIntent & { retryOf?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
@@ -180,6 +181,37 @@ export async function handleApi(
     if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'invalid run ID' } };
     const run = deps.db.getRun(runId);
     return run ? { status: 200, json: toRunSummary(run, deps.db) } : { status: 404, json: { error: 'run not found' } };
+  }
+  const retryMatch = path.match(/^\/api\/agents\/([^/]+)\/retry$/);
+  if (retryMatch && method === 'POST') {
+    const runId = retryMatch[1];
+    if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'invalid run ID' } };
+    const run = deps.db.getRun(runId);
+    if (!run) return { status: 404, json: { error: 'Voyage not found.' } };
+    try {
+      const intent = retryIntent(run);
+      const allowed = deps.context?.().repos;
+      if (allowed && !allowed.some(repo => repo.toLowerCase() === intent.repo.toLowerCase())) {
+        return { status: 409, json: { error: 'This repository is no longer configured. Configure it before retrying the voyage.' } };
+      }
+      const gate = deps.canStart(intent.repo);
+      if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'Cannot start another voyage.' } };
+      if (intent.mode === 'todo') {
+        if (deps.jiraEnabled?.() !== false) return { status: 409, json: { error: 'Disable Jira in Config to retry a todo voyage.' } };
+        const todo = intent.todoId ? deps.todos?.get(intent.todoId) : null;
+        if (!todo || todo.repo !== run.repo || todo.runId !== run.id || !['todo', 'blocked'].includes(todo.state) || !todo.description.trim()) {
+          return { status: 409, json: { error: 'The todo must still belong to this failed voyage, have a description, and be To do or Blocked. Start changed or completed todos from Todos.' } };
+        }
+      } else if (intent.mode === 'ticket' && deps.jiraEnabled?.() === false) {
+        return { status: 409, json: { error: 'Enable Jira in Config before retrying a Jira voyage.' } };
+      }
+      return { status: 200, json: { runId: deps.launch({ ...intent, retryOf: run.id }) } };
+    } catch (error) {
+      if (error instanceof RetryError || error instanceof TodoConflictError || error instanceof TodoValidationError) {
+        return { status: 409, json: { error: error.message } };
+      }
+      throw error;
+    }
   }
   if (path === '/api/agents/launch' && method === 'POST') {
     const b = _body as { todoId?: string; ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string; model?: string; effort?: string } | null;

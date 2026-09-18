@@ -33,6 +33,7 @@ import { AutoClaimScheduler, type BacklogItem } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
 import { fetchQueueIssues } from '../jira';
 import { jiraTask } from './jira-task';
+import { launchIntentJson, RetryError, type LaunchIntent } from './retry';
 import { createBridge } from './cmux/bridge';
 import { openSlackStore } from './slack/store';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
@@ -225,36 +226,39 @@ void recoverRuns(db, { reattach: (row: RunRow) => dispatchReattach(row) })
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: { todoId?: string; ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string; runId?: string; headSha?: string }): string {
+function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf?: string }): string {
   const runId: string = body.runId ?? randomUUID();
   if (db.getRun(runId) || pm.hasRun(runId)) return runId;
   const cfg: AppConfig = configStore.current();
+  const adapterId = body.adapter ?? cfg.agentAdapter;
+  if (body.retryOf && adapterId === 'command' && !cfg.agentCmd) throw new RetryError('The original command agent is no longer configured. Configure it before retrying.');
   let localTodo = body.mode === 'todo' && body.todoId ? todos.get(body.todoId) : null;
   if (body.mode === 'todo') {
     if (cfg.jiraEnabled) throw new TodoConflictError('Disable Jira before launching todos.');
     if (!localTodo) throw new TodoConflictError('Todo not found.');
     const gate = pm.canStart(localTodo.repo);
     if (!gate.ok) throw new TodoConflictError(gate.reason ?? 'Cannot start voyage.');
-    localTodo = todos.claim(localTodo.id, runId);
+    localTodo = todos.claim(localTodo.id, runId, body.retryOf);
     if (!localTodo) throw new TodoConflictError('Todo is no longer ready to launch.');
     body = { ...body, repo: localTodo.repo, ticketId: localTodo.id, title: localTodo.title };
-  } else if (body.ticketId && todos.get(body.ticketId) && !body.task && !body.mode) {
+  } else if (body.ticketId && todos.get(body.ticketId) && !body.task && (!body.mode || body.mode === 'ticket')) {
     throw new TodoConflictError('Local todos must be launched from Todos with Jira disabled.');
-  } else if (!cfg.jiraEnabled && body.ticketId && !body.task && !body.mode) {
+  } else if (!cfg.jiraEnabled && body.ticketId && !body.task && (!body.mode || body.mode === 'ticket')) {
     throw new TodoConflictError('Jira is disabled. Start a voyage from Todos.');
   }
+  const launchJson = launchIntentJson(body);
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(runId, body.repo, () => {
     control.stopped = true;
     void control.stop?.();
   });
   const adapter: AgentAdapter =
-    cfg.agentAdapter === 'command' && cfg.agentCmd
+    adapterId === 'command' && cfg.agentCmd
       ? commandAdapter(cfg.agentCmd)
-      : cfg.agentAdapter === 'claude-code'
+      : adapterId === 'claude-code'
         ? claudeCodeAdapter
         : codexAdapter;
-  if (cfg.agentAdapter === 'command' && !cfg.agentCmd) {
+  if (adapterId === 'command' && !cfg.agentCmd) {
     process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using codex\n');
   }
   const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
@@ -271,7 +275,7 @@ function launch(body: { todoId?: string; ticketId?: string; title?: string; repo
           const failedRow: RunRow = {
             id: runId, ticketId: 'rerun', repo: body.repo, adapter: adapter.id,
             status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
-            endedAt: ts, costUsd: null, worktreePath: null,
+            endedAt: ts, costUsd: null, worktreePath: null, launchJson,
           };
           db.insertRun(failedRow);
           const message: string = `could not resolve PR #${body.prNumber ?? '?'} for rerun`;
@@ -293,7 +297,7 @@ function launch(body: { todoId?: string; ticketId?: string; title?: string; repo
           const failedRow: RunRow = {
             id: runId, ticketId: 'review', repo: body.repo, adapter: adapter.id,
             status: 'failed', attempt: 1, prNumber: body.prNumber ?? null, startedAt: ts,
-            endedAt: ts, costUsd: null, worktreePath: null,
+            endedAt: ts, costUsd: null, worktreePath: null, launchJson,
           };
           db.insertRun(failedRow);
           const message: string = `could not resolve PR #${body.prNumber ?? '?'} for review`;
@@ -325,6 +329,7 @@ function launch(body: { todoId?: string; ticketId?: string; title?: string; repo
       const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, cfg.prePr) : adapter;
       await startRun(taskObj, {
         ...baseRunnerDeps(cfg, jira),
+        launchJson,
         adapter: runAdapter,
         ...(isPrePrAdapter(runAdapter.id) ? { maxAttempts: 1, preserveWorktreeOnFailure: true } : {}),
         genId: () => runId,
@@ -339,9 +344,9 @@ function launch(body: { todoId?: string; ticketId?: string; title?: string; repo
       const message = error instanceof Error ? error.message : String(error);
       if (db.getRun(runId)) db.updateRun(runId, { status: 'failed', endedAt: ts });
       else db.insertRun({
-        id: runId, ticketId: body.mode ?? body.ticketId ?? 'freeform', repo: body.repo,
+        id: runId, ticketId: body.ticketId ?? body.mode ?? 'freeform', repo: body.repo,
         adapter: adapter.id, status: 'failed', attempt: 1, prNumber: body.prNumber ?? null,
-        startedAt: ts, endedAt: ts, costUsd: null, worktreePath: null,
+        startedAt: ts, endedAt: ts, costUsd: null, worktreePath: null, launchJson,
       });
       db.appendEvent(runId, 'error', message, ts);
       db.appendEvent(runId, 'run-complete', 'failed', ts);
