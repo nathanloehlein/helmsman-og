@@ -14,9 +14,9 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function setup(extra: (url: URL) => Promise<Response> | Response | null) {
+async function setup(extra: (url: URL) => Promise<Response> | Response | null, authored = [pr('org/other', 99)]) {
   const snapshot = await loadMockSnapshot();
-  snapshot.myOpenPrs = [pr('org/other', 99)];
+  snapshot.myOpenPrs = authored;
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
     const url = new URL(String(input), 'http://localhost');
     const custom = extra(url);
@@ -35,6 +35,12 @@ async function setup(extra: (url: URL) => Promise<Response> | Response | null) {
   return { root, view };
 }
 
+function chooseRepo(root: HTMLElement, repo: string): void {
+  const select = root.querySelector<HTMLSelectElement>('.repo-select')!;
+  select.value = repo;
+  select.dispatchEvent(new Event('change'));
+}
+
 beforeEach(() => {
   document.body.innerHTML = '<div id="app"></div>';
   localStorage.clear();
@@ -46,6 +52,95 @@ afterEach(() => {
 });
 
 describe('PR list navigation and refresh', () => {
+  it('scopes review queries and authored PRs to the header and restores all repositories', async () => {
+    const requests: (string | null)[] = [];
+    const authored = [pr('org/a', 101), pr('org/b', 202), pr('org/other', 303)];
+    const reviews = [pr('org/a', 11), pr('org/b', 22)];
+    const { root } = await setup((url) => {
+      if (url.pathname !== '/api/pr/review-requests') return null;
+      const repo = url.searchParams.get('repo');
+      requests.push(repo);
+      return json(list(reviews.filter(item => !repo || item.repo === repo)));
+    }, authored);
+    root.querySelector<HTMLButtonElement>('[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(2));
+    expect(root.querySelectorAll('.pr-authored .pr-list-row')).toHaveLength(3);
+
+    chooseRepo(root, 'org/b');
+    expect(root.querySelectorAll('.pr-review-requests .pr-list-row, .pr-authored .pr-list-row')).toHaveLength(0);
+    await vi.waitFor(() => expect(requests).toContain('org/b'));
+    await vi.waitFor(() => expect(root.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(1));
+    expect(root.querySelector('.pr-review-requests .pr-list-row')?.getAttribute('data-repo')).toBe('org/b');
+    await vi.waitFor(() => expect(root.querySelectorAll('.pr-authored .pr-list-row')).toHaveLength(1));
+    expect(root.querySelector('.pr-authored .pr-list-row')?.getAttribute('data-number')).toBe('202');
+
+    chooseRepo(root, '');
+    expect(root.querySelectorAll('.pr-review-requests .pr-list-row, .pr-authored .pr-list-row')).toHaveLength(0);
+    await vi.waitFor(() => expect(root.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(2));
+    await vi.waitFor(() => expect(root.querySelectorAll('.pr-authored .pr-list-row')).toHaveLength(3));
+    expect(requests).toEqual([null, 'org/b', null]);
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('');
+  });
+
+  it('ignores outdated review responses when switching A to B and back to A', async () => {
+    const firstA = deferred<Response>();
+    const b = deferred<Response>();
+    const secondA = deferred<Response>();
+    let aRequests = 0;
+    const requests: string[] = [];
+    const { root } = await setup((url) => {
+      if (url.pathname !== '/api/pr/review-requests') return null;
+      const repo = url.searchParams.get('repo');
+      if (!repo) return json(list([pr('org/other', 99)]));
+      requests.push(repo);
+      if (repo === 'org/b') return b.promise;
+      return ++aRequests === 1 ? firstA.promise : secondA.promise;
+    });
+    root.querySelector<HTMLButtonElement>('[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-review-requests [data-number="99"]')).not.toBeNull());
+
+    chooseRepo(root, 'org/a');
+    expect(root.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(0);
+    await vi.waitFor(() => expect(aRequests).toBe(1));
+    chooseRepo(root, 'org/b');
+    await vi.waitFor(() => expect(requests).toContain('org/b'));
+    chooseRepo(root, 'org/a');
+    await vi.waitFor(() => expect(aRequests).toBe(2));
+
+    firstA.resolve(json(list([pr('org/a', 101)])));
+    b.resolve(json(list([pr('org/b', 202)])));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(root.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(0);
+    secondA.resolve(json(list([pr('org/a', 303)])));
+    await vi.waitFor(() => expect(root.querySelector('.pr-review-requests .pr-list-row')?.getAttribute('data-number')).toBe('303'));
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/a');
+    expect(root.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(1);
+    expect(requests).toEqual(['org/a', 'org/b', 'org/a']);
+  });
+
+  it('lets an explicit PR lookup override the panel without changing the header or personal list scope', async () => {
+    const requests: (string | null)[] = [];
+    const { root, view } = await setup((url) => {
+      if (url.pathname !== '/api/pr/review-requests') return null;
+      const repo = url.searchParams.get('repo');
+      requests.push(repo);
+      return json(list([pr(repo ?? 'org/a', 11)]));
+    }, [pr('org/a', 101), pr('org/b', 202)]);
+    root.querySelector<HTMLButtonElement>('[data-view="prs"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-review-requests .pr-list-row')).not.toBeNull());
+    chooseRepo(root, 'org/a');
+    await vi.waitFor(() => expect(root.querySelectorAll('.pr-authored .pr-list-row')).toHaveLength(1));
+    root.querySelector<HTMLInputElement>('.pr-lookup-input')!.value = 'org/b#22';
+    root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-number')).toBe('22'));
+    expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/b');
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/a');
+    await view.refresh();
+    expect(requests.at(-1)).toBe('org/a');
+    expect(root.querySelector('.pr-authored .pr-list-row')?.getAttribute('data-repo')).toBe('org/a');
+    expect(root.querySelector('.pr-review-requests .pr-list-row')?.getAttribute('data-repo')).toBe('org/a');
+  });
+
   it('keeps personal lists on PR, deduplicates slow requests, preserves lookup input, and opens rows by keyboard', async () => {
     const requested = deferred<Response>();
     let requests = 0;
@@ -56,7 +151,7 @@ describe('PR list navigation and refresh', () => {
       return requested.promise;
     });
     expect(root.querySelector('.pr-authored')).toBeNull();
-    expect(root.querySelector('[data-panel="repoprs"]')?.textContent).toContain('Select a repository');
+    expect(root.querySelector('[data-panel="repoprs"]')?.textContent).toContain('Select a galleon');
     root.querySelector<HTMLButtonElement>('[data-view="prs"]')!.click();
     const lookup = root.querySelector<HTMLInputElement>('.pr-lookup-input')!;
     lookup.value = 'Keep my draft input';

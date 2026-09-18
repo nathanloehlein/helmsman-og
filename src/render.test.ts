@@ -253,7 +253,7 @@ describe('renderDashboard', () => {
     expect(text).toContain('nloehlein@godaddy.com');
     expect(text).toContain(`Helmsman v${__APP_VERSION__}`);
     expect(text).toContain(`updated ${__BUILD_DATE__}`);
-    expect(text).toContain('2 repos tracked');
+    expect(text).toContain('2 galleons tracked');
     expect(text).toContain('1 underway');
   });
 
@@ -279,7 +279,7 @@ describe('renderDashboard', () => {
     renderDashboard(el, snapshot(), NOW, [], ['org/zeta', 'org/alpha', 'other/beta'], null);
     const labels: string[] = Array.from(el.querySelectorAll<HTMLOptionElement>('.repo-select option'))
       .map((o) => o.textContent ?? '');
-    expect(labels).toEqual(['All repos', 'alpha', 'beta', 'zeta']);
+    expect(labels).toEqual(['All galleons', 'alpha', 'beta', 'zeta']);
   });
 
   it('shows the attempt against maxAttempts when caps are provided', () => {
@@ -1171,14 +1171,14 @@ describe('renderDashboard helm rack', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot({ myOpenPrs: [{ number: 99, title: 'Personal PR', repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() }] }), NOW);
     const panel = el.querySelector('.faceplate[data-panel="repoprs"]');
-    expect(panel?.textContent).toContain('Select a repository to see its open PRs.');
+    expect(panel?.textContent).toContain('Select a galleon to see its open PRs.');
     expect(panel?.querySelector('.pr-list-row')).toBeNull();
   });
 
   it('shows a repository-specific empty message after loading', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], [], undefined, DEFAULT_THEME_ID, undefined, null, { prs: [], loading: false, degraded: false, truncated: false });
-    expect(el.querySelector('[data-panel="repoprs"]')?.textContent).toContain('No open pull requests in this repository.');
+    expect(el.querySelector('[data-panel="repoprs"]')?.textContent).toContain('No open pull requests in this galleon.');
   });
 
   it('renders the same scoped repository body for background panel refreshes', () => {
@@ -1193,7 +1193,7 @@ describe('renderDashboard helm rack', () => {
     expect(el.textContent).not.toContain('Other repo');
     el.innerHTML = renderRepoPrs(null, state);
     expect(el.querySelector('.pr-list-row')).toBeNull();
-    expect(el.textContent).toContain('Select a repository');
+    expect(el.textContent).toContain('Select a galleon');
   });
 
   it('honors a custom layout: stacked panels share a slot with tabs', () => {
@@ -1390,7 +1390,7 @@ describe('renderPrView + renderPrDiff', () => {
     expect(el.querySelector<HTMLAnchorElement>('.pr-authored .pr-list-github')?.href).toBe('https://github.com/pulls');
     const repo = mount(renderRepoPrs('org/alpha', truncated));
     expect(repo.querySelector<HTMLAnchorElement>('.pr-list-github')?.href).toBe('https://github.com/org/alpha/pulls');
-    expect(repo.textContent).not.toContain('No open pull requests in this repository.');
+    expect(repo.textContent).not.toContain('No open pull requests in this galleon.');
   });
 
   it('distinguishes empty review requests from empty authored PRs', () => {

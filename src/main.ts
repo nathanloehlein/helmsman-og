@@ -144,6 +144,7 @@ export class DashboardView {
   private lastDashboardRefresh: number = -Infinity;
   private dashboardRepo: string | null | undefined = undefined;
   private lastReviewRequestsRefresh: number = -Infinity;
+  private reviewRequestsRepo: string | null | undefined = undefined;
   private lastRepoPrsRefresh: number = -Infinity;
   private repoPrsRepo: string | null | undefined = undefined;
   private readonly onVisibilityChange = (): void => {
@@ -157,7 +158,7 @@ export class DashboardView {
   };
   private repoPrsSeq: number = 0;
   private reviewRequestsSeq: number = 0;
-  private reviewRequestsPending: Promise<void> | null = null;
+  private reviewRequestsPending: { repo: string | null; seq: number; promise: Promise<void> } | null = null;
   private repoPrsPending: { repo: string | null; seq: number; promise: Promise<void> } | null = null;
   private prViewSeq: number = 0;
   private dashboardUnavailable: boolean = false;
@@ -292,7 +293,7 @@ export class DashboardView {
         this.paintTriage();
         this.root.querySelector<HTMLSelectElement>('[data-triage-page-size]')?.focus({ preventScroll: true });
       } else if (control.matches('.repo-select')) {
-        void this.navigate({ ...this.route, view: this.view, repo: control.value || null, pr: null, run: null });
+        void this.navigate({ ...this.route, view: this.view, repo: control.value || null, prRepo: null, pr: null, run: null });
       } else if (control.matches('.theme-select')) {
         this.themeId = control.value;
         applyTheme(this.themeId);
@@ -308,7 +309,12 @@ export class DashboardView {
         this.paintTodoList();
       }
       const form = control.closest<HTMLFormElement>('[data-todo-form]');
-      if (form) this.todos.draft = readTodoForm(form);
+      if (form) {
+        const draft = readTodoForm(form);
+        if (!this.todos.editingId && this.todos.draft?.repo === undefined && !control.matches('[name="repo"]')) {
+          this.todos.draft = { ...draft, repo: undefined };
+        } else this.todos.draft = draft;
+      }
     }, { signal: this.rootEvents.signal });
     this.root.addEventListener('paste', (event: ClipboardEvent): void => void this.handlePasteImage(event), { signal: this.rootEvents.signal });
 
@@ -352,6 +358,8 @@ export class DashboardView {
     ++this.routeSeq;
     ++this.refreshSeq;
     ++this.prViewSeq;
+    ++this.reviewRequestsSeq;
+    ++this.repoPrsSeq;
     ++this.localGitSeq;
     ++this.slackSeq;
     ++this.todosSeq;
@@ -381,7 +389,7 @@ export class DashboardView {
     this.stopCmuxScreenPoll();
     this.stopCapture();
     this.cmuxCapturing = false;
-    const scope = route.repo && (route.view !== 'prs' && route.view !== 'runs' || this.repos.includes(route.repo)) ? route.repo : null;
+    const scope = route.repo;
     const scopeChanged = this.selectedRepo !== scope;
     if (scopeChanged) {
       this.snapshot = null;
@@ -390,6 +398,20 @@ export class DashboardView {
       this.lastDashboardRefresh = -Infinity;
       this.dashboardUnavailable = false;
       this.triagePages = { backlog: 1, todo: 1, mine: 1 };
+      this.triageGroups = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
+      this.triageDegraded = false;
+      ++this.triageSeq;
+      this.bugsResponse = null;
+      ++this.bugsSeq;
+      ++this.refreshSeq;
+      this.refreshPending = null;
+      ++this.reviewRequestsSeq;
+      this.reviewRequestsPending = null;
+      this.reviewRequestsRepo = undefined;
+      this.lastReviewRequestsRefresh = -Infinity;
+      this.reviewRequests = { prs: [], loading: true, degraded: false, truncated: false };
+      this.repoPrs = { prs: [], loading: false, degraded: false, truncated: false };
+      this.repoPrsRepo = undefined;
       ++this.repoPrsSeq;
       ++this.localGitSeq;
       this.localGitPending = null;
@@ -410,7 +432,7 @@ export class DashboardView {
     if (route.pane) this.collapsed.delete(`${route.view}:${route.pane === 'tabs' ? 'list' : route.pane === 'screen' ? 'detail' : route.pane}`);
     if (route.run || route.pane === 'tasks') this.collapsed.delete('runs:drawer');
     if (route.view === 'prs' || route.view === 'runs') {
-      this.prView = { repo: route.pr ? route.repo : null, number: route.pr, pr: null, diff: null, loading: Boolean(route.pr) };
+      this.prView = { repo: route.pr ? route.prRepo ?? route.repo : null, number: route.pr, pr: null, diff: null, loading: Boolean(route.pr) };
     }
     if (!route.run) this.activeTabId = null;
     this.paint();
@@ -436,7 +458,8 @@ export class DashboardView {
     } else if (route.view === 'prs') await this.loadReviewRequests(false);
     else if (route.view === 'dashboard') await this.loadRepoPrs(false);
     if (seq !== this.routeSeq) return;
-    if ((route.view === 'prs' || route.view === 'runs') && route.repo && route.pr) await this.loadPrView(route.repo, route.pr, false);
+    const prRepo = route.prRepo ?? route.repo;
+    if ((route.view === 'prs' || route.view === 'runs') && prRepo && route.pr) await this.loadPrView(prRepo, route.pr, false);
     if (seq !== this.routeSeq) return;
     if (route.view !== 'dashboard' && route.view !== 'prs' && route.view !== 'runs' && route.view !== 'config') this.paint();
     if (route.run) {
@@ -484,7 +507,7 @@ export class DashboardView {
       if (!head || head.querySelector('.pane-link')) continue;
       const link = document.createElement('a');
       link.className = 'pane-link app-link';
-      link.href = routeHref({ ...this.route, view: this.view, pane, repo: this.route.repo ?? this.selectedRepo });
+      link.href = routeHref({ ...this.route, view: this.view, pane, repo: this.selectedRepo });
       link.textContent = '↗';
       link.setAttribute('aria-label', `Link to ${panel.querySelector('.panel-title, .faceplate-title')?.textContent ?? pane}`);
       head.append(link);
@@ -626,10 +649,11 @@ export class DashboardView {
 
   private prInbox(): PrInboxState {
     const unavailable = this.dashboardUnavailable || this.degraded.includes('github');
+    const authored = this.snapshotRepo === this.selectedRepo ? this.snapshot?.myOpenPrs ?? [] : [];
     return {
       reviewRequests: this.reviewRequests,
       authored: {
-        prs: this.degraded.includes('github') ? [] : this.snapshot?.myOpenPrs ?? [],
+        prs: this.degraded.includes('github') ? [] : authored.filter(pr => !this.selectedRepo || pr?.repo?.toLowerCase() === this.selectedRepo.toLowerCase()),
         loading: !this.snapshot && !unavailable,
         degraded: unavailable,
         truncated: false,
@@ -640,29 +664,34 @@ export class DashboardView {
   private paintPrInbox(): void {
     if (this.view !== 'prs') return;
     const inbox: HTMLElement | null = this.root.querySelector('.pr-inbox');
-    if (inbox) inbox.innerHTML = renderPrLists(this.prInbox());
+    if (inbox) inbox.innerHTML = renderPrLists(this.prInbox(), this.selectedRepo);
     this.bindPaneLinks();
     this.paintSlackReviewRequests();
   }
 
   private loadReviewRequests(force: boolean = true): Promise<void> {
     if (!force && document.hidden) return Promise.resolve();
-    if (this.reviewRequestsPending) return this.reviewRequestsPending;
-    if (!force && Date.now() - this.lastReviewRequestsRefresh < POLL_MS) return Promise.resolve();
+    if (this.reviewRequestsPending?.repo === this.selectedRepo && this.reviewRequestsPending.seq === this.reviewRequestsSeq) {
+      return this.reviewRequestsPending.promise;
+    }
+    const repo = this.selectedRepo;
+    if (!force && this.reviewRequestsRepo === repo && Date.now() - this.lastReviewRequestsRefresh < POLL_MS) return Promise.resolve();
+    this.reviewRequestsRepo = repo;
     this.lastReviewRequestsRefresh = Date.now();
     const pending: Promise<void> = this.fetchReviewRequests().finally(() => {
-      if (this.reviewRequestsPending === pending) this.reviewRequestsPending = null;
+      if (this.reviewRequestsPending?.promise === pending) this.reviewRequestsPending = null;
     });
-    this.reviewRequestsPending = pending;
+    this.reviewRequestsPending = { repo, seq: this.reviewRequestsSeq, promise: pending };
     return pending;
   }
 
   private async fetchReviewRequests(): Promise<void> {
     const seq: number = ++this.reviewRequestsSeq;
+    const repo = this.selectedRepo;
     this.reviewRequests = { ...this.reviewRequests, loading: true };
     this.paintPrInbox();
-    const result = await fetchReviewRequests();
-    if (seq !== this.reviewRequestsSeq) return;
+    const result = await fetchReviewRequests(repo);
+    if (seq !== this.reviewRequestsSeq || repo !== this.selectedRepo || this.destroyed) return;
     this.reviewRequests = { ...result, loading: false };
     this.paintPrInbox();
   }
@@ -762,7 +791,7 @@ export class DashboardView {
       return;
     }
     if (!this.snapshot || this.snapshotRepo !== this.selectedRepo) {
-      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? 'Helm unavailable for this repository. Try refreshing.' : 'Loading Helm…'}</div>`));
+      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? 'Helm unavailable for this galleon. Try refreshing.' : 'Loading Helm…'}</div>`));
       return;
     }
     const preBody: HTMLElement | null =
@@ -874,7 +903,7 @@ export class DashboardView {
       else count.removeAttribute('title');
     }
     const repos = shell.querySelector('[data-footer-repos]');
-    if (repos) repos.textContent = `${this.repos.length} repo${this.repos.length === 1 ? '' : 's'} tracked`;
+    if (repos) repos.textContent = `${this.repos.length} galleon${this.repos.length === 1 ? '' : 's'} tracked`;
     const running = shell.querySelector('[data-footer-running]');
     if (running) running.textContent = `${opts.readout?.running ?? '—'} underway`;
   }
@@ -898,7 +927,7 @@ export class DashboardView {
     const focusToggle = focused instanceof HTMLElement && center.contains(focused) && focused.hasAttribute('data-slack-toggle');
     const scrollTop = center.querySelector('.slack-popover')?.scrollTop ?? 0;
     const template = document.createElement('template');
-    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.slackError);
+    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.slackError, undefined, this.selectedRepo);
     const nextToggle = template.content.querySelector<HTMLButtonElement>('[data-slack-toggle]');
     const nextPopover = template.content.querySelector<HTMLElement>('.slack-popover');
     const toggle = center.querySelector<HTMLButtonElement>('[data-slack-toggle]');
@@ -2025,7 +2054,7 @@ export class DashboardView {
       this.prView = { ...this.prView, pr: refreshed };
     }
     if (t.panel.isConnected) {
-      t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab);
+      t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab, this.selectedRepo);
       this.paintSlackReviewRequests();
     }
     void this.loadReviewRequests();
@@ -2077,7 +2106,7 @@ export class DashboardView {
   }
 
   private async loadPrView(repo: string, number: number, updateRoute: boolean = true): Promise<void> {
-    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, repo, pr: number, pane: this.view === 'runs' ? 'newrun' : 'lookup' });
+    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, repo: this.selectedRepo, prRepo: repo, pr: number, pane: this.view === 'runs' ? 'newrun' : 'lookup' });
     const seq: number = ++this.prViewSeq;
     this.prView = { repo, number, pr: null, diff: null, loading: true };
     if (this.view === 'prs' || this.view === 'runs') this.paint();
@@ -2088,7 +2117,7 @@ export class DashboardView {
   }
 
   private async enterPrView(repo?: string, number?: number): Promise<void> {
-    await this.navigate(parseRoute(new URL(routeHref({ view: 'prs', repo: repo ?? this.selectedRepo, pr: number ?? null, pane: number ? 'lookup' : null }), window.location.origin)));
+    await this.navigate(parseRoute(new URL(routeHref({ view: 'prs', repo: this.selectedRepo, prRepo: repo ?? null, pr: number ?? null, pane: number ? 'lookup' : null }), window.location.origin)));
   }
 
   private handlePrListClick(row: HTMLElement): void {
@@ -2262,7 +2291,7 @@ export class DashboardView {
     if (this.destroyed || !this.runTabs.includes(tab) || runId !== this.activeTabId) return;
     const prEl = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
     if (prEl) {
-      prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true);
+      prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true, this.selectedRepo);
       this.paintSlackReviewRequests();
     }
   }

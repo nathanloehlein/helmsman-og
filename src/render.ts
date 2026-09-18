@@ -53,11 +53,11 @@ export const CONFIG_HELP: Record<string, string> = {
   PRE_PR_MAX_ROUNDS: 'Maximum review rounds, including the initial review. Each additional round allows fixes followed by every reviewer reviewing again. Unresolved findings block the PR. Example: 3',
   PRE_PR_STAGE_TIMEOUT_MINUTES: 'Time limit in minutes for each implementation, fix, or reviewer session. A timed-out session blocks publication and retains the worktree. Example: 45',
   AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart. Example: 60000',
-  REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
-  JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry. Example: AIROBUILD',
+  REPO_PROJECT_MAP: 'Comma-separated galleon=jiraProject pairs, mapping each galleon to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
+  JIRA_PROJECT: 'Default Jira project for All galleons. Map individual galleons with REPO_PROJECT_MAP. Example: AIROBUILD',
   JIRA_ASSIGNEE: 'Jira account that claimed tickets are assigned to — currentUser() or an accountId. Example: currentUser()',
   JIRA_JQL: 'Optional JQL filter that narrows which tickets appear in the backlog queue. Example: labels = agent-ready AND priority >= High',
-  GITHUB_REPO: 'Default owner/repo used for GitHub PR lookups when none is otherwise provided. Example: gdcorp-partners/airo-app-builder',
+  GITHUB_REPO: 'Default galleon (owner/name) used for GitHub PR lookups when none is otherwise provided. Example: gdcorp-partners/airo-app-builder',
   GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Out to sea and Ship\'s log panels. Example: nloehlein-godaddy',
 };
 
@@ -254,8 +254,9 @@ export interface HelmHeadOpts {
 }
 
 export function renderHelmHead(opts: HelmHeadOpts): string {
-  const sorted: string[] = [...opts.repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
-  const scopeOptions: string = ['<option value="">All repos</option>']
+  const sorted: string[] = [...new Set([...opts.repos, ...(opts.selectedRepo ? [opts.selectedRepo] : [])])]
+    .sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
+  const scopeOptions: string = ['<option value="">All galleons</option>']
     .concat(
       sorted.map(
         (repo) => `<option value="${esc(repo)}"${repo === opts.selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
@@ -272,7 +273,7 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
       const value = opts.readout?.[key];
       const known = typeof value === 'number' && Number.isFinite(value);
       const label = key === 'running' ? 'underway' : key === 'queued' ? 'queue' : 'review';
-      return `<span class="seg"><b class="seg7" data-fleet-count="${key}"${known ? '' : ' title="Not loaded for this repository"'}>${known ? value : '—'}</b> ${label}</span>`;
+      return `<span class="seg"><b class="seg7" data-fleet-count="${key}"${known ? '' : ' title="Not loaded for this galleon"'}>${known ? value : '—'}</b> ${label}</span>`;
     }).join('')}
   </div>`;
   return `
@@ -281,7 +282,7 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
         <span class="nameplate-mark" aria-hidden="true">${HELM_EMBLEM}</span>
         <div class="nameplate-scope">
           <span class="nameplate-name">Helmsman <span class="nameplate-alpha">Alpha</span></span>
-          <select class="repo-select" aria-label="Scope by repository">${scopeOptions}</select>
+          <select class="repo-select" aria-label="Scope by galleon">${scopeOptions}</select>
         </div>
       </div>
       ${readout}
@@ -303,7 +304,7 @@ export function renderAppShell(opts: HelmHeadOpts, content: string): string {
         <span class="footer-attr">nloehlein@godaddy.com</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span>Helmsman v${esc(__APP_VERSION__)}</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span>updated ${esc(__BUILD_DATE__)}</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} repo${opts.repos.length === 1 ? '' : 's'} tracked</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} galleon${opts.repos.length === 1 ? '' : 's'} tracked</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-running>${running} underway</span>
       </div>
     </footer>
@@ -481,7 +482,7 @@ export function renderDashboard(
             ${jiraEnabled ? `<input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
             <input class="newrun-title" type="text" placeholder="Title (optional)">` : ''}
             <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
-            <select class="newrun-repo" aria-label="Repository for new voyage">${newRunRepoOptions}</select>
+            <select class="newrun-repo" aria-label="Galleon for new voyage">${newRunRepoOptions}</select>
             ${tuningSelects('newrun')}
             <button class="newrun-launch">Launch voyage</button>
           </div>
@@ -500,7 +501,7 @@ export function renderDashboard(
     underway: {
       lamp: underwayKnown && underway.length ? 'queued' : 'idle',
       count: underwayKnown ? underway.length : null,
-      body: `${jiraEnabled && underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
+      body: `${jiraEnabled && underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a galleon to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
     },
     recent: {
       lamp: 'idle',
@@ -608,7 +609,7 @@ function prTimestamp(value: unknown, fallback: string): string {
   return `<time datetime="${esc(date.toISOString())}" title="${esc(date.toLocaleString(undefined, { timeZoneName: 'short' }))}">${esc(label)}</time>`;
 }
 
-export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false): string {
+export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false, selectedRepo: string | null = null): string {
   if (!pr) return '<div class="pr-panel empty-note">No PR found.</div>';
   const stateLabel: string = pr.merged ? 'Merged' : pr.draft ? 'Draft' : pr.state === 'closed' ? 'Closed' : 'Open';
   const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
@@ -652,8 +653,8 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
     ? '<textarea class="pr-rerun-feedback" aria-label="Feedback for the crew to address" placeholder="Feedback for the crew to address"></textarea>'
     : '';
   const rerun: string = canRerun
-    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Relaunch with feedback</button>' : ''}<button class="pr-review-agent">Code review with crew</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Link to crew review ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Link to relaunch ↗</a>` : ''}</div></div>`
-    : '<div class="pr-no-rerun empty-note">Crew actions unavailable: this repo is not checked out locally.</div>';
+    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Relaunch with feedback</button>' : ''}<button class="pr-review-agent">Code review with crew</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Link to crew review ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Link to relaunch ↗</a>` : ''}</div></div>`
+    : '<div class="pr-no-rerun empty-note">Crew actions unavailable: this galleon is not checked out locally.</div>';
   return `
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">
       <div class="pr-panel-head">
@@ -725,13 +726,13 @@ function slackReviewButton(repo: string, number: number): string {
   </span>`;
 }
 
-function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false): string {
+function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false, selectedRepo: string | null = null): string {
   const prs: OpenPr[] = validListPrs(state);
   const rows: string = prs.map((pr) => {
     const chip = reviewChip(pr.reviewDecision ?? '');
     const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
     return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} PR #${pr.number}: ${esc(title)}">
-      <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
+      <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
       <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span></span>
       ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
       ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
@@ -759,9 +760,9 @@ function scopeRepoPrs(repo: string | null, state?: PrListState): PrListState | u
 }
 
 export function renderRepoPrs(repo: string | null, state?: PrListState): string {
-  if (!repo) return '<div class="empty-note">Select a repository to see its open PRs.</div>';
+  if (!repo) return '<div class="empty-note">Select a galleon to see its open PRs.</div>';
   const repoUrl: string = `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}/pulls`;
-  return `${renderPrList(scopeRepoPrs(repo, state), 'No open pull requests in this repository.')}
+  return `${renderPrList(scopeRepoPrs(repo, state), 'No open pull requests in this galleon.', false, repo)}
     ${state?.truncated ? `<div class="empty-note">${githubPrListLink(repoUrl)}</div>` : ''}`;
 }
 
@@ -769,17 +770,19 @@ function githubPrListLink(url: string): string {
   return `<a class="pr-list-github" href="${esc(url)}" target="_blank" rel="noopener noreferrer">View all on GitHub ↗</a>`;
 }
 
-function renderPrListPanel(title: string, className: string, state: PrListState | undefined, emptyMessage: string, githubUrl: string): string {
+function renderPrListPanel(title: string, className: string, state: PrListState | undefined, emptyMessage: string, githubUrl: string, selectedRepo: string | null): string {
   return `<section class="panel pr-list-panel ${className}">
     <div class="panel-head"><span class="panel-title">${title}</span><span class="mono pr-list-count">${validListPrs(state).length}</span></div>
-    ${renderPrList(state, emptyMessage, className === 'pr-authored')}
+    ${renderPrList(state, emptyMessage, className === 'pr-authored', selectedRepo)}
     <div class="empty-note">${githubPrListLink(githubUrl)}</div>
   </section>`;
 }
 
-export function renderPrLists(lists?: PrInboxState): string {
-  return `${renderPrListPanel('Review requests', 'pr-review-requests', lists?.reviewRequests, 'No PRs awaiting your review.', 'https://github.com/pulls/review-requested')}
-    ${renderPrListPanel('My open PRs', 'pr-authored', lists?.authored, 'You have no open pull requests.', 'https://github.com/pulls')}`;
+export function renderPrLists(lists?: PrInboxState, selectedRepo: string | null = null): string {
+  const reviewUrl = selectedRepo ? `https://github.com/pulls?q=${encodeURIComponent(`is:open is:pr review-requested:@me repo:${selectedRepo}`)}` : 'https://github.com/pulls/review-requested';
+  const authoredUrl = selectedRepo ? `https://github.com/pulls?q=${encodeURIComponent(`is:open is:pr author:@me repo:${selectedRepo}`)}` : 'https://github.com/pulls';
+  return `${renderPrListPanel('Review requests', 'pr-review-requests', lists?.reviewRequests, 'No PRs awaiting your review.', reviewUrl, selectedRepo)}
+    ${renderPrListPanel('My open PRs', 'pr-authored', lists?.authored, 'You have no open pull requests.', authoredUrl, selectedRepo)}`;
 }
 
 function diffLineClass(line: string): string {
@@ -839,7 +842,7 @@ export function renderRecentPrRuns(runs: RunSummary[], repo: string | null): str
       <span class="panel-count mono">${recent.length}${matches.length > recent.length ? ` of ${matches.length}` : ''}</span>
       <a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'recent' }))}">All voyages ↗</a>
     </div>
-    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(run => renderVoyage(run, undefined, repo)).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
+    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(run => renderVoyage(run, undefined, repo)).join('') : '<li class="empty-note">No recent PR voyages for this galleon scope.</li>'}</ul>
   </section>`;
 }
 
@@ -849,7 +852,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
   const panel: string = state.loading
     ? '<div class="pr-panel empty-note">Loading PR…</div>'
     : state.number
-      ? renderPrPanel(state.pr, canRerun)
+      ? renderPrPanel(state.pr, canRerun, false, opts.selectedRepo)
       : '<div class="pr-panel empty-note">Enter a PR above to review it.</div>';
   const diffSection: string = state.pr && !state.loading
     ? `<section class="panel pr-diff-panel">
@@ -858,12 +861,12 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
       </section>`
     : '';
   return renderAppShell({ active: 'prs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
-      <div class="pr-inbox pr-inbox-grid">${renderPrLists(opts.lists)}</div>
+      <div class="pr-inbox pr-inbox-grid">${renderPrLists(opts.lists, opts.selectedRepo)}</div>
       ${renderRecentPrRuns(opts.runs ?? [], opts.selectedRepo)}
       <section class="panel pr-lookup-panel">
         <div class="panel-head"><span class="panel-title">Review a PR</span></div>
         <div class="pr-lookup-form">
-          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" value="${esc(value)}" />
+          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/name#number" value="${esc(value)}" />
           <button class="pr-lookup-go">Load PR</button>
         </div>
         <div class="pr-lookup-result">${panel}</div>
@@ -971,7 +974,7 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
   const launchable: boolean = selectedRepo !== null;
   const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, selectedRepo);
   const statusRow = (t: Ticket, base: string | null): string => triageStatusRow(t, base, selectedRepo);
-  const scopeHint: string = launchable ? '' : 'Select a repo to launch a voyage.';
+  const scopeHint: string = launchable ? '' : 'Select a galleon to launch a voyage.';
   const filters = opts.filters ?? defaultTriageFilters();
   const pageSize = TRIAGE_PAGE_SIZES.find(size => size === opts.pageSize) ?? DEFAULT_TRIAGE_PAGE_SIZE;
   const now = Date.now();

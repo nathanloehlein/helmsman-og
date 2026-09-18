@@ -116,7 +116,8 @@ describe('renderRunsView', () => {
     expect(el.querySelector('.pr-rerun')).not.toBeNull();
     const link = el.querySelector('[data-pane="newrun"] .app-link')?.getAttribute('href');
     const params = new URL(link ?? '', 'https://helmsman.test').searchParams;
-    expect(params.get('repo')).toBe('org/alpha');
+    expect(params.get('repo')).toBeNull();
+    expect(params.get('prRepo')).toBe('org/alpha');
     expect(params.get('pr')).toBe('42');
   });
 
@@ -143,7 +144,7 @@ describe('renderRunsView', () => {
     expect(voyageUrl.pathname).toBe('/runs');
     expect(voyageUrl.searchParams.get('run')).toBe('run-1');
     expect(voyageUrl.searchParams.get('repo')).toBe('org/alpha');
-    expect(el.querySelector('[data-pane="recent"] .app-link')?.getAttribute('href')).toBe('/runs?pane=recent&repo=org%2Falpha');
+    expect(el.querySelector('[data-pane="recent"] .app-link')?.getAttribute('href')).toBe('/runs?repo=org%2Falpha&pane=recent');
   });
 
   it('escapes text and excludes invalid run identifiers from links', () => {

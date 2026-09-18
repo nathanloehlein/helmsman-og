@@ -192,7 +192,7 @@ export async function handleApi(
       const intent = retryIntent(run);
       const allowed = deps.context?.().repos;
       if (allowed && !allowed.some(repo => repo.toLowerCase() === intent.repo.toLowerCase())) {
-        return { status: 409, json: { error: 'This repository is no longer configured. Configure it before retrying the voyage.' } };
+        return { status: 409, json: { error: 'This galleon is no longer configured. Configure it before retrying the voyage.' } };
       }
       const gate = deps.canStart(intent.repo);
       if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'Cannot start another voyage.' } };
@@ -231,17 +231,17 @@ export async function handleApi(
         throw error;
       }
     }
-    if (typeof b?.repo !== 'string' || !b.repo.trim()) return { status: 400, json: { error: 'repo required' } };
+    if (typeof b?.repo !== 'string' || !b.repo.trim()) return { status: 400, json: { error: 'Galleon required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
     const tuning: { model?: string; effort?: string } = { model: b.model, effort: b.effort };
     if (b.mode === 'rerun') {
-      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
+      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'Galleon and PR number required' } };
       const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'rerun', feedback: b.feedback, ...tuning });
       return { status: 200, json: { runId } };
     }
     if (b.mode === 'review') {
-      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'repo and prNumber required' } };
+      if (typeof b.prNumber !== 'number' || !Number.isFinite(b.prNumber)) return { status: 400, json: { error: 'Galleon and PR number required' } };
       const runId: string = deps.launch({ repo: b.repo, prNumber: b.prNumber, mode: 'review', ...tuning });
       return { status: 200, json: { runId } };
     }
@@ -252,7 +252,7 @@ export async function handleApi(
     }
     if (typeof b.ticketId === 'string' && deps.todos?.get(b.ticketId)) return { status: 409, json: { error: 'Local todos must be launched from Todos with Jira disabled.' } };
     if (deps.jiraEnabled?.() === false) return { status: 409, json: { error: 'Jira is disabled. Start a voyage from Todos.' } };
-    if (!b.ticketId) return { status: 400, json: { error: 'ticketId and repo required' } };
+    if (!b.ticketId) return { status: 400, json: { error: 'Ticket ID and galleon required' } };
     const runId = deps.launch({ ticketId: b.ticketId, title: b.title, repo: b.repo, ...tuning });
     return { status: 200, json: { runId } };
   }
@@ -280,23 +280,23 @@ export async function handleApi(
   }
   if (path === '/api/pr/review-requests' && method === 'GET') {
     const repo: string | null = query.get('repo');
-    if (repo !== null && !isGithubRepo(repo)) return { status: 400, json: { error: 'repo must be owner/name' } };
+    if (repo !== null && !isGithubRepo(repo)) return { status: 400, json: { error: 'Galleon must be owner/name' } };
     return { status: 200, json: await deps.reviewRequestedPrs(repo) };
   }
   if (path === '/api/pr/open' && method === 'GET') {
     const repo: string | null = query.get('repo');
-    if (!repo || !isGithubRepo(repo)) return { status: 400, json: { error: 'repo must be owner/name' } };
+    if (!repo || !isGithubRepo(repo)) return { status: 400, json: { error: 'Galleon must be owner/name' } };
     return { status: 200, json: await deps.repoOpenPrs(repo) };
   }
   if (path === '/api/repo/local' && method === 'POST') {
     const body = _body && typeof _body === 'object' && !Array.isArray(_body) ? _body as Record<string, unknown> : null;
-    if (typeof body?.repo !== 'string' || !isGithubRepo(body.repo)) return { status: 400, json: { error: 'repo must be owner/name' } };
+    if (typeof body?.repo !== 'string' || !isGithubRepo(body.repo)) return { status: 400, json: { error: 'Galleon must be owner/name' } };
     if (!deps.localGitAction) return { status: 503, json: { error: 'Local Git actions are unavailable.' } };
     return deps.localGitAction(body.repo, body);
   }
   if (path === '/api/repo/local' && method === 'GET') {
     const repo = query.get('repo');
-    if (!repo || !isGithubRepo(repo)) return { status: 400, json: { error: 'repo must be owner/name' } };
+    if (!repo || !isGithubRepo(repo)) return { status: 400, json: { error: 'Galleon must be owner/name' } };
     return deps.localGit(repo);
   }
   if (path === '/api/pr' && method === 'GET') {
@@ -304,7 +304,7 @@ export async function handleApi(
     const numRaw: string | null = query.get('number');
     const n: number = Number(numRaw);
     if (!repo || !numRaw || !Number.isFinite(n)) {
-      return { status: 400, json: { error: 'repo and number required' } };
+      return { status: 400, json: { error: 'Galleon and PR number required' } };
     }
     const s: PrStatus | null = await deps.prStatus(repo, n);
     return s ? { status: 200, json: s } : { status: 404, json: { error: 'PR not found or GitHub not configured' } };
@@ -314,7 +314,7 @@ export async function handleApi(
     const numRaw: string | null = query.get('number');
     const n: number = Number(numRaw);
     if (!repo || !numRaw || !Number.isFinite(n)) {
-      return { status: 400, json: { error: 'repo and number required' } };
+      return { status: 400, json: { error: 'Galleon and PR number required' } };
     }
     const files: PrFileDiff[] | null = await deps.prDiff(repo, n);
     return files ? { status: 200, json: { files } } : { status: 404, json: { error: 'PR diff not found or GitHub not configured' } };
@@ -331,7 +331,7 @@ export async function handleApi(
       typeof b?.event !== 'string' ||
       !EVENTS.includes(b.event)
     ) {
-      return { status: 400, json: { error: 'repo, number, and a valid event are required' } };
+      return { status: 400, json: { error: 'Galleon, PR number, and a valid event are required' } };
     }
     if ((b.event === 'REQUEST_CHANGES' || b.event === 'COMMENT') && (typeof b.body !== 'string' || b.body.trim() === '')) {
       return { status: 400, json: { error: 'body required for this review event' } };

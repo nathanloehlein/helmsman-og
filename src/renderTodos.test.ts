@@ -79,6 +79,14 @@ describe('todo rendering', () => {
     expect(readTodoForm(form)).toEqual({ title: ' Updated title ', repo: 'owner/other', description: 'Describe the change', acceptanceCriteria: 'Tests pass', priority: 'P1', state: 'blocked' });
   });
 
+  it.each([null, 'owner/repo'])('preserves header scope %s when opening a todo voyage', selectedRepo => {
+    const root = render({ items: [item({ runId: 'run-123' })] }, selectedRepo);
+    const href = root.querySelector('.todo-run-link')?.getAttribute('href');
+    const params = new URL(href ?? '', 'http://localhost').searchParams;
+    expect(params.get('repo')).toBe(selectedRepo);
+    expect(params.get('run')).toBe('run-123');
+  });
+
   it('requires a separate confirmation before deleting a todo', () => {
     const root = render({ items: [item()], deletingId: 'TODO-1' });
     expect(root.querySelector('[data-todo-confirm-delete]')?.getAttribute('data-todo-confirm-delete')).toBe('TODO-1');

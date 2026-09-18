@@ -96,7 +96,7 @@ describe('buildDashboardResponse', () => {
     expect(r.snapshot.queue.length).toBeGreaterThan(0);
   });
 
-  it('re-scopes Jira to the mapped project and filters shipped to the selected repo', async () => {
+  it('re-scopes Jira to the mapped project and filters shipped and open PRs to the selected repo', async () => {
     const prA = { number: 1, title: 'a', headRef: '', authorLogin: 'bot', state: 'open' as const, mergedAt: null, createdAt: NOW.toISOString(), reviewDecision: null, repo: 'o/a' };
     const prB = { ...prA, number: 2, repo: 'o/b' };
     let seenProject = '';
@@ -120,9 +120,23 @@ describe('buildDashboardResponse', () => {
     );
     expect(seenProject).toBe('PROJA');
     expect(r.snapshot.shipped.map((p) => p.number)).toEqual([1]);
-    expect(r.snapshot.myOpenPrs.map((p) => p.number).sort()).toEqual([1, 2]);
+    expect(r.snapshot.myOpenPrs.map((p) => p.number)).toEqual([1]);
     expect(r.repos).toEqual(['o/a', 'o/b']);
     expect(r.selectedRepo).toBe('o/a');
+  });
+
+  it.each([
+    { selectedRepo: null, expected: [1, 2] },
+    { selectedRepo: 'O/A', expected: [1] },
+  ])('filters open PRs case-insensitively and preserves all-galleon scope: $selectedRepo', async ({ selectedRepo, expected }) => {
+    const result = await buildDashboardResponse(FULL_ENV, NOW, {
+      ...OK_DEPS,
+      fetchOpenAuthoredPrs: async () => [
+        { number: 1, title: 'a', repo: 'o/a', reviewDecision: null, draft: false, createdAt: NOW.toISOString() },
+        { number: 2, title: 'b', repo: 'o/b', reviewDecision: null, draft: false, createdAt: NOW.toISOString() },
+      ],
+    }, selectedRepo);
+    expect(result.snapshot.myOpenPrs.map(pr => pr.number).sort()).toEqual(expected);
   });
 
   it('uses the default Jira project and all repos when no repo is selected', async () => {

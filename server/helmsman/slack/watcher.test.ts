@@ -157,7 +157,7 @@ describe('Slack watcher', () => {
     expect(launch).toHaveBeenCalledTimes(1);
     expect(launch.mock.calls[0]?.[0]).toMatchObject({ repo: 'org/other', prNumber: 2 });
     expect(store.listNotifications().find(row => row.prNumber === 1)?.status).toBe('queued');
-    expect(store.listNotifications().find(row => row.prNumber === 3)).toMatchObject({ status: 'blocked', error: 'Repository untrusted/repo is not configured' });
+    expect(store.listNotifications().find(row => row.prNumber === 3)).toMatchObject({ status: 'blocked', error: 'Galleon untrusted/repo is not configured' });
   });
 
   it('persists launch errors and does not automatically retry an uncertain launch', async () => {

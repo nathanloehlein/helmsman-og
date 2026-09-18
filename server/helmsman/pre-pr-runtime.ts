@@ -155,7 +155,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
     return true;
   };
   const validateRemote = async () => {
-    if (!remote || !(await matchesRepository(remote))) throw new Error('Selected remote does not match the voyage GitHub repository');
+    if (!remote || !(await matchesRepository(remote))) throw new Error('Selected remote does not match the voyage GitHub galleon');
   };
   try {
     if (!adapters[input.writerId]) throw new Error('Unsupported writer CLI');
@@ -174,11 +174,11 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
       if (await matchesRepository(name)) matchingRemotes.push(name);
     }
     remote = matchingRemotes.includes('origin') ? 'origin' : matchingRemotes.length === 1 ? matchingRemotes[0] ?? '' : '';
-    if (!remote) throw new Error('Cannot select an unambiguous remote matching the voyage GitHub repository');
+    if (!remote) throw new Error('Cannot select an unambiguous remote matching the voyage GitHub galleon');
     const repository: unknown = JSON.parse(await command('gh', ['repo', 'view', input.task.repo, '--json', 'nameWithOwner,defaultBranchRef']));
     const repo = repository as { nameWithOwner?: string; defaultBranchRef?: { name?: string } } | null;
     const baseBranch = repo?.defaultBranchRef?.name;
-    if (repo?.nameWithOwner?.toLowerCase() !== input.task.repo.toLowerCase() || !baseBranch || baseBranch.startsWith('-')) throw new Error('Cannot determine the repository default branch');
+    if (repo?.nameWithOwner?.toLowerCase() !== input.task.repo.toLowerCase() || !baseBranch || baseBranch.startsWith('-')) throw new Error('Cannot determine the galleon default branch');
     await git(['check-ref-format', '--branch', baseBranch]);
     if (branch === baseBranch) throw new Error('Voyage must use a feature branch');
     await git(['fetch', '--no-tags', remote, `refs/heads/${baseBranch}`]);

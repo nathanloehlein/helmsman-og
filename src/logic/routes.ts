@@ -3,6 +3,7 @@ export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'confi
 export interface AppRoute {
   view: PageView;
   repo: string | null;
+  prRepo: string | null;
   pane: string | null;
   pr: number | null;
   run: string | null;
@@ -54,6 +55,9 @@ export function parseRoute(url: URL): AppRoute {
     : (Object.keys(paths) as PageView[]).find((page) => paths[page] === pathname) ?? 'dashboard';
   const params = url.searchParams;
   const repo = validRepo(params.get('repo'));
+  const supportsPrPanel = view === 'prs' || view === 'runs';
+  const prRepo = supportsPrPanel ? validRepo(params.get('prRepo')) : null;
+  const prTarget = supportsPrPanel && params.has('prRepo') ? prRepo : repo;
   const pane = params.get('pane');
   const run = params.get('run');
   const mode = params.get('mode');
@@ -63,8 +67,9 @@ export function parseRoute(url: URL): AppRoute {
   return {
     view,
     repo,
+    prRepo,
     pane: pane && panes[view].includes(pane) ? pane : null,
-    pr: repo ? positiveInteger(params.get('pr')) : null,
+    pr: prTarget ? positiveInteger(params.get('pr')) : null,
     run: run && /^[a-z\d_-]{1,128}$/i.test(run) ? run : null,
     mode: (view === 'runs' || view === 'prs') && (mode === 'review' || mode === 'rerun') ? mode : null,
     ticket: ticket && /^[a-z][a-z\d_]{0,49}-[1-9]\d{0,14}$/i.test(ticket) ? ticket.toUpperCase() : null,
@@ -75,7 +80,7 @@ export function parseRoute(url: URL): AppRoute {
 
 export function routeHref(route: Partial<AppRoute> & { view: PageView }): string {
   const url = new URL(paths[route.view], 'http://helmsman.local');
-  const keys = ['repo', 'pane', 'pr', 'run', 'mode', 'ticket', 'surface'] as const;
+  const keys = ['repo', 'prRepo', 'pane', 'pr', 'run', 'mode', 'ticket', 'surface'] as const;
   for (const key of keys) {
     const value = route[key];
     if (value !== null && value !== undefined) url.searchParams.set(key, String(value));

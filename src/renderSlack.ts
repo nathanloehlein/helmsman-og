@@ -8,7 +8,7 @@ const labels: Record<SlackNotification['status'], string> = {
   queued: 'Review queued', launched: 'Review started', failed: 'Review failed', blocked: 'Review blocked',
 };
 
-function renderNotification(item: SlackNotification, now: Date): string {
+function renderNotification(item: SlackNotification, now: Date, selectedRepo: string | null): string {
   const slackSource = safeSlackUrl(item.sourceUrl);
   const source = slackSource ?? safePrUrl(item.sourceUrl, item.repo, item.prNumber);
   const prUrl = safePrUrl(item.prUrl, item.repo, item.prNumber);
@@ -24,8 +24,8 @@ function renderNotification(item: SlackNotification, now: Date): string {
     ${routing ? `<div class="slack-routing" aria-label="Review model selection">${esc(routing)}</div>` : ''}
     ${item.error ? `<p class="slack-error">${esc(item.error)}</p>` : ''}
     <div class="slack-notification-actions">
-      ${item.runId && (item.status === 'launched' || item.status === 'failed') ? `<a class="app-link" href="${esc(routeHref({ view: 'runs', repo: item.repo, run: item.runId }))}">View run</a>` : ''}
-      ${parentRunId ? `<a class="app-link" href="${esc(routeHref({ view: 'runs', repo: item.repo, run: parentRunId }))}">Original voyage</a>` : ''}
+      ${item.runId && (item.status === 'launched' || item.status === 'failed') ? `<a class="app-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, run: item.runId }))}">View run</a>` : ''}
+      ${parentRunId ? `<a class="app-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, run: parentRunId }))}">Original voyage</a>` : ''}
       ${source ? `<a href="${esc(source)}" target="_blank" rel="noopener noreferrer">${slackSource ? 'Slack message' : 'GitHub request'}</a>` : ''}
       ${item.readAt ? '<span class="slack-read">Read</span>' : `<button type="button" data-slack-read="${esc(item.id)}">Mark read</button>`}
     </div>
@@ -39,8 +39,9 @@ function renderHealth(health: SlackHealth, source: string, now: Date): string {
   return `<div class="slack-health" role="status"><strong>${esc(source)}</strong><span>${esc(status)}</span>${health.lastSuccessAt ? `<span>Last scanned ${esc(formatRelativeTime(health.lastSuccessAt, now))}</span>` : ''}${health.error ? `<span class="slack-error">${esc(health.error)}</span>` : ''}</div>`;
 }
 
-export function renderSlack(state: SlackState, open: boolean, error: string | null = null, now = new Date()): string {
-  const unread = state.notifications.filter(item => !item.readAt).length;
+export function renderSlack(state: SlackState, open: boolean, error: string | null = null, now = new Date(), selectedRepo: string | null = null): string {
+  const notifications = state.notifications.filter(item => item && (!selectedRepo || item.repo?.toLowerCase() === selectedRepo.toLowerCase()));
+  const unread = notifications.filter(item => !item.readAt).length;
   const channelName = state.health.channelName?.replace(/^#/, '').trim() ?? '';
   return `<button type="button" class="slack-toggle${unread ? ' has-unread' : ''}" data-slack-toggle aria-expanded="${open}" aria-controls="slack-notifications" aria-label="Notifications, ${unread} unread">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8a5 5 0 0 1 10 0v4l2 3H3l2-3zM8 17h4"/></svg>${unread ? `<span class="slack-count" aria-hidden="true">${unread}</span>` : ''}
@@ -50,6 +51,6 @@ export function renderSlack(state: SlackState, open: boolean, error: string | nu
     ${renderHealth(state.health, channelName ? `Slack #${channelName}` : 'Slack', now)}
     ${state.githubHealth ? renderHealth(state.githubHealth, 'GitHub requested reviews', now) : ''}
     ${error ? `<p class="slack-action-error" role="alert">${esc(error)}</p>` : ''}
-    ${state.notifications.length ? `<ol class="slack-notification-list">${state.notifications.map(item => renderNotification(item, now)).join('')}</ol>` : '<p class="slack-empty">No review notifications yet.</p>'}
+    ${notifications.length ? `<ol class="slack-notification-list">${notifications.map(item => renderNotification(item, now, selectedRepo)).join('')}</ol>` : '<p class="slack-empty">No review notifications yet.</p>'}
   </section>`;
 }

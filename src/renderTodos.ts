@@ -58,7 +58,7 @@ function renderForm(state: TodosViewState, opts: TodosViewOpts): string {
     <form data-todo-form${selected ? ` data-todo-id="${esc(selected.id)}"` : ''}>
       <fieldset${busy ? ' disabled' : ''}>
         <label class="todo-field">Title<input name="title" required maxlength="240" placeholder="What should the crew deliver?" value="${esc(text(draft.title))}"></label>
-        <label class="todo-field">Repository<input name="repo" required list="todo-repositories" pattern="[A-Za-z0-9_\\x2d][A-Za-z0-9_.\\x2d]*\\x2f[A-Za-z0-9_\\x2d][A-Za-z0-9_.\\x2d]*" placeholder="owner/repository" value="${esc(repo)}"><datalist id="todo-repositories">${(opts.repos ?? []).map(repo => `<option value="${esc(repo)}"></option>`).join('')}</datalist></label>
+        <label class="todo-field">Galleon<input name="repo" required list="todo-repositories" pattern="[A-Za-z0-9_\\x2d][A-Za-z0-9_.\\x2d]*\\x2f[A-Za-z0-9_\\x2d][A-Za-z0-9_.\\x2d]*" placeholder="owner/name" value="${esc(repo)}"><datalist id="todo-repositories">${(opts.repos ?? []).map(repo => `<option value="${esc(repo)}"></option>`).join('')}</datalist></label>
         <div class="todo-form-row"><label class="todo-field">Priority<select name="priority">${options(TODO_PRIORITIES, draft.priority ?? 'P2', priorities)}</select></label>
         <label class="todo-field">State<select name="state">${TODO_STATES.map(value => `<option value="${value}"${value === (draft.state ?? 'todo') ? ' selected' : ''}${value === 'in_progress' ? ' disabled' : ''}>${STATE_LABELS[value]}${value === 'in_progress' ? ' · voyage managed' : ''}</option>`).join('')}</select></label></div>
         <label class="todo-field">Description<textarea name="description" rows="5" maxlength="20000" placeholder="Describe the problem, expected behavior, and relevant files or context.">${esc(text(draft.description))}</textarea><span class="todo-field-hint">Required to launch a voyage. You can save a draft first.</span></label>
@@ -69,7 +69,7 @@ function renderForm(state: TodosViewState, opts: TodosViewOpts): string {
   </section>`;
 }
 
-function renderItem(item: Todo, state: TodosViewState): string {
+function renderItem(item: Todo, state: TodosViewState, selectedRepo: string | null): string {
   const active = item.state === 'in_progress';
   const busy = Boolean(state.pendingAction);
   const reason = active ? 'A voyage is already working on this todo.'
@@ -84,7 +84,7 @@ function renderItem(item: Todo, state: TodosViewState): string {
     <div class="todo-actions"><button class="todo-button todo-button-primary" type="button" data-todo-launch="${esc(item.id)}"${busy || reason ? ' disabled' : ''}${reason ? ` title="${esc(reason)}"` : ''}>Launch voyage</button>
       <button class="todo-button" type="button" data-todo-edit="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Edit</button>
       <button class="todo-button todo-button-delete" type="button" data-todo-delete="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Delete</button>
-      ${item.runId ? `<a class="app-link todo-run-link" href="${esc(routeHref({ view: 'runs', repo: item.repo, run: item.runId }))}">View voyage ↗</a>` : ''}
+      ${item.runId ? `<a class="app-link todo-run-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, run: item.runId }))}">View voyage ↗</a>` : ''}
     </div>
     ${active ? '<p class="todo-field-hint">Voyage in progress. Editing is available when it finishes.</p>' : ''}
     ${state.deletingId === item.id ? `<div class="todo-confirmation" role="region" aria-label="Confirm todo deletion"><strong>Delete this todo?</strong><p>This permanently removes the todo. Its voyage history is kept.</p><div class="todo-actions"><button class="todo-button todo-button-delete" type="button" data-todo-confirm-delete="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Confirm deletion</button><button class="todo-button" type="button" data-todo-cancel-delete${busy ? ' disabled' : ''}>Keep todo</button></div></div>` : ''}
@@ -98,19 +98,19 @@ export function renderTodoList(state: TodosViewState, opts: TodosViewOpts): stri
     && (!search || [item.title, item.description, item.acceptanceCriteria, item.repo, item.id].some(value => text(value).toLowerCase().includes(search))))
     .sort((a, b) => text(a.priority).localeCompare(text(b.priority)) || text(a.createdAt).localeCompare(text(b.createdAt)) || a.id.localeCompare(b.id));
   const empty = state.loading ? 'Loading todos…' : state.error ? 'Refresh to load the todo list.'
-    : scoped.length ? 'No todos match these filters.' : 'No todos yet. Add a todo with a repository and description to plan your first voyage.';
+    : scoped.length ? 'No todos match these filters.' : 'No todos yet. Add a todo with a galleon and description to plan your first voyage.';
   return `<div class="todo-list-summary" aria-live="polite">${filtered.length} of ${scoped.length} todo${scoped.length === 1 ? '' : 's'} · highest priority first</div>
-    <ul class="todo-list">${filtered.length ? filtered.map(item => renderItem(item, state)).join('') : `<li class="empty-note">${empty}</li>`}</ul>`;
+    <ul class="todo-list">${filtered.length ? filtered.map(item => renderItem(item, state, opts.selectedRepo)).join('') : `<li class="empty-note">${empty}</li>`}</ul>`;
 }
 
 export function renderTodos(state: TodosViewState, opts: TodosViewOpts): string {
-  return `<div class="todos-intro"><h1>Todos</h1><p>Your voyage backlog. Add a clear outcome, choose a repository, and launch when ready.</p></div>
-    <div class="todo-auto-claim">${opts.selectedRepo ? `<button class="todo-button" type="button" data-todo-auto-claim aria-pressed="${Boolean(opts.autoClaimEnabled)}"${state.pendingAction ? ' disabled' : ''}>${opts.autoClaimEnabled ? 'Disable' : 'Enable'} auto-claim</button><p>Launch ready todos in priority order, one voyage per repository. Resets when server restarts.</p>` : '<p>Select a repository to enable automatic voyages from its ready todos.</p>'}</div>
+  return `<div class="todos-intro"><h1>Todos</h1><p>Your voyage backlog. Add a clear outcome, choose a galleon, and launch when ready.</p></div>
+    <div class="todo-auto-claim">${opts.selectedRepo ? `<button class="todo-button" type="button" data-todo-auto-claim aria-pressed="${Boolean(opts.autoClaimEnabled)}"${state.pendingAction ? ' disabled' : ''}>${opts.autoClaimEnabled ? 'Disable' : 'Enable'} auto-claim</button><p>Launch ready todos in priority order, one voyage per galleon. Resets when server restarts.</p>` : '<p>Select a galleon to enable automatic voyages from its ready todos.</p>'}</div>
     <div data-todo-feedback>${state.error ? `<div class="todo-error" role="alert">${esc(state.error)}</div>` : ''}
     ${state.pendingAction ? `<p class="todo-notice" role="status">${esc(state.pendingAction)}</p>` : ''}</div>
     <div class="todos-layout">${renderForm(state, opts)}<section class="panel todo-backlog" aria-label="Todo backlog" aria-busy="${Boolean(state.loading || state.pendingAction)}">
       <div class="panel-head"><span class="panel-title">Backlog</span><button class="todo-button" type="button" data-todo-refresh${state.loading || state.pendingAction ? ' disabled' : ''}>Refresh</button></div>
-      <div class="todo-filters"><label class="todo-field">Search<input type="search" data-todo-search value="${esc(text(state.search))}" placeholder="Title, description, or repository"></label><label class="todo-field">State<select data-todo-state-filter><option value="all"${state.stateFilter === 'all' ? ' selected' : ''}>All states</option>${options(TODO_STATES, state.stateFilter, STATE_LABELS)}</select></label></div>
+      <div class="todo-filters"><label class="todo-field">Search<input type="search" data-todo-search value="${esc(text(state.search))}" placeholder="Title, description, or galleon"></label><label class="todo-field">State<select data-todo-state-filter><option value="all"${state.stateFilter === 'all' ? ' selected' : ''}>All states</option>${options(TODO_STATES, state.stateFilter, STATE_LABELS)}</select></label></div>
       <div data-todo-list>${renderTodoList(state, opts)}</div>
     </section></div><div class="runs-drawer-slot" data-pane="tasks"></div>`;
 }

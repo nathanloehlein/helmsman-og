@@ -53,7 +53,7 @@ describe('Helm underway tickets', () => {
     expect(panel?.textContent).toContain('TASK-42');
     expect(panel?.textContent).not.toContain('TASK-99');
     expect(panel?.querySelector('.launch-btn')).toBeNull();
-    expect(panel?.textContent).toContain('Select a repository');
+    expect(panel?.textContent).toContain('Select a galleon');
     expect(root.querySelector('[data-panel="running"] .agent-row')).toBeNull();
   });
 

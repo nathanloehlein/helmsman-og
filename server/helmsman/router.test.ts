@@ -200,7 +200,7 @@ describe('handleApi', () => {
     expect(markRead).toHaveBeenCalledTimes(2);
   });
   it('routes local checkout requests and preserves unknown-repository responses', async () => {
-    const response = { status: 404, json: { error: 'Repository is not configured.' } };
+    const response = { status: 404, json: { error: 'Galleon is not configured.' } };
     const localGit = vi.fn().mockResolvedValue(response);
     expect(await handleApi('GET', '/api/repo/local', new URLSearchParams({ repo: 'o/r' }), null, { ...deps, localGit })).toEqual(response);
     expect(localGit).toHaveBeenCalledWith('o/r');
@@ -435,7 +435,7 @@ describe('agent control routes', () => {
   it('rejects a launch missing repo', async () => {
     const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1' }, launchDeps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo required' });
+    expect(r?.json).toEqual({ error: 'Galleon required' });
   });
 
   it('launches a rerun and calls launch with repo, prNumber, mode, and feedback', async () => {
@@ -547,19 +547,19 @@ describe('GET /api/pr', () => {
   it('rejects a request missing number', async () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r'), null, deps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo and number required' });
+    expect(r?.json).toEqual({ error: 'Galleon and PR number required' });
   });
 
   it('rejects a request with a non-numeric number', async () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=x'), null, deps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo and number required' });
+    expect(r?.json).toEqual({ error: 'Galleon and PR number required' });
   });
 
   it('rejects a request missing repo', async () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('number=5'), null, deps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo and number required' });
+    expect(r?.json).toEqual({ error: 'Galleon and PR number required' });
   });
 
   it('returns 404 when the PR is not found or GitHub is not configured', async () => {

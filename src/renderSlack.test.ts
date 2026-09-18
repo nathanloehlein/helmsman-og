@@ -14,7 +14,7 @@ describe('Slack notification center', () => {
     state.notifications = [{ ...item, channelName: 'Helmsman created PRs', author: 'Helmsman', sourceUrl: '/runs?run=parent-42' }];
     document.body.innerHTML = renderSlack(state, true);
     expect(document.querySelector('.slack-author')?.textContent).toBe('Helmsman review · newly opened PR');
-    expect([...document.querySelectorAll('.app-link')].find(link => link.textContent === 'Original voyage')?.getAttribute('href')).toBe('/runs?repo=org%2Frepo&run=parent-42');
+    expect([...document.querySelectorAll('.app-link')].find(link => link.textContent === 'Original voyage')?.getAttribute('href')).toBe('/runs?run=parent-42');
     state.notifications[0]!.sourceUrl = '//untrusted.example/runs?run=parent-42';
     document.body.innerHTML = renderSlack(state, true);
     expect(document.body.textContent).not.toContain('Original voyage');
@@ -31,9 +31,30 @@ describe('Slack notification center', () => {
     expect(document.querySelectorAll('[data-slack-read]')).toHaveLength(1);
     expect(document.querySelectorAll('.slack-status')[0]?.textContent).toBe('Review started');
     expect(document.querySelectorAll('.slack-status')[1]?.textContent).toBe('Review queued');
-    expect(document.querySelector('.app-link')?.getAttribute('href')).toBe('/runs?repo=org%2Frepo&run=run-42');
+    expect(document.querySelector('.app-link')?.getAttribute('href')).toBe('/runs?run=run-42');
     expect(document.querySelector('script')).toBeNull();
     expect(document.querySelector('.slack-author')?.textContent).toContain(item.author);
+  });
+
+  it('scopes notifications and unread counts to the header galleon and preserves it in voyage links', () => {
+    const state = unavailableSlack();
+    state.notifications = [
+      { ...item, channelName: 'Helmsman created PRs', sourceUrl: '/runs?run=parent-42' },
+      { ...item, id: 'other', repo: 'org/other', runId: 'other-run' },
+    ];
+    document.body.innerHTML = renderSlack(state, true, null, new Date(), 'ORG/REPO');
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 1 unread');
+    expect(document.querySelectorAll('.slack-notification')).toHaveLength(1);
+    expect(document.querySelector('[data-notification-id="other"]')).toBeNull();
+    expect([...document.querySelectorAll('.app-link')].map(link => link.getAttribute('href'))).toEqual([
+      '/runs?repo=ORG%2FREPO&run=run-42', '/runs?repo=ORG%2FREPO&run=parent-42',
+    ]);
+    document.body.innerHTML = renderSlack(state, true);
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 2 unread');
+    expect(document.querySelectorAll('.slack-notification')).toHaveLength(2);
+    document.body.innerHTML = renderSlack(state, true, null, new Date(), 'org/empty');
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 0 unread');
+    expect(document.querySelector('.slack-empty')).not.toBeNull();
   });
 
   it('hides the disclosure when closed and renders reader failures with saved history', () => {

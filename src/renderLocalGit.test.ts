@@ -62,7 +62,7 @@ describe('renderLocalGit', () => {
 
   it('shows a selection prompt and disables refresh without a repo', () => {
     const root = render({ repo: null, path: null });
-    expect(root.textContent).toContain('Select a repo');
+    expect(root.textContent).toContain('Select a galleon');
     expect(root.querySelector<HTMLButtonElement>('.local-git-refresh')?.disabled).toBe(true);
     expect(root.querySelector('.local-git-columns')).toBeNull();
   });

@@ -111,6 +111,9 @@ export async function buildDashboardResponse(
   const scopedPrs: GithubPr[] = selectedRepo
     ? prs.filter((pr) => pr.repo?.toLowerCase() === selectedRepo.toLowerCase())
     : prs;
+  const scopedOpenPrs = selectedRepo
+    ? openPrs.filter((pr) => pr.repo?.toLowerCase() === selectedRepo.toLowerCase())
+    : openPrs;
   const repoLabel: string = selectedRepo
     ? selectedRepo
     : config.repoLabel;
@@ -119,7 +122,7 @@ export async function buildDashboardResponse(
     queueIssues,
     activeIssues,
     prs: scopedPrs,
-    openPrs,
+    openPrs: scopedOpenPrs,
     repo: repoLabel,
     now,
   });

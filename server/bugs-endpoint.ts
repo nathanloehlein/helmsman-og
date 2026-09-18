@@ -75,17 +75,19 @@ export async function buildBugsResponse(
   if (!config.jira) {
     return { cards: [], degraded: true, generatedAt, latestWindow, previousWindow };
   }
+  const entries: [string, string][] = Object.entries(config.repoProjectMap);
+  const targets: [string | null, string][] = entries.length || selectedRepo
+    ? entries.filter(([repo]) => !selectedRepo || repo.toLowerCase() === selectedRepo.toLowerCase()).map(([repo, project]) => [repo, project])
+    : [[null, config.jira.project]];
+  if (!targets.length) {
+    return { cards: [], degraded: false, generatedAt, latestWindow, previousWindow };
+  }
   try {
     await deps.verifyAuth(config.jira);
   } catch {
     return { cards: [], degraded: true, generatedAt, latestWindow, previousWindow };
   }
   const jiraBaseUrl: string = config.jira.baseUrl;
-
-  const entries: [string, string][] = Object.entries(config.repoProjectMap);
-  const targets: [string | null, string][] = entries.length
-    ? entries.filter(([repo]) => !selectedRepo || repo === selectedRepo).map(([repo, project]) => [repo, project])
-    : [[null, config.jira.project]];
 
   const cards: BugCard[] = await Promise.all(
     targets.map(async ([repo, project]): Promise<BugCard> => {

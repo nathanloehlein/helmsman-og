@@ -63,7 +63,7 @@ export function renderLocalGit(state: LocalGitState): string {
     <div class="local-git-item-actions"><button class="local-git-confirm-delete local-git-delete" type="button"${busy ? ' disabled' : ''}>Confirm deletion</button><button class="local-git-cancel local-git-refresh" type="button"${busy ? ' disabled' : ''}>Cancel</button></div>
   </div>` : '';
   const content = !repo
-    ? '<div class="empty-note">Select a repo to see its local branches and worktrees.</div>'
+    ? '<div class="empty-note">Select a galleon to see its local branches and worktrees.</div>'
     : `${path ? `<div class="local-git-checkout"><span class="local-git-label">Selected checkout</span><span class="local-git-path mono">${esc(path)}</span></div>` : ''}
       ${error ? `<div class="local-git-error" role="alert">${esc(error)}</div>` : ''}
       ${busy ? `<div class="empty-note" role="status">${esc(state?.pendingAction || 'Loading local branches and worktrees…')}</div>` : ''}
