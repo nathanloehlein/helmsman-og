@@ -29,7 +29,8 @@ import type { PrFileDiff } from '../../src/types';
 import { AutoClaimScheduler } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
-import { createBridge } from './cmux/bridge';
+import { createBridge, type Bridge } from './cmux/bridge';
+import { createWezTermBridge } from './wezterm/bridge';
 import { openSlackStore } from './slack/store';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { createSlackBrowserReader } from './slack/browser';
@@ -60,7 +61,11 @@ mkdirSync(RUNS_DIR, { recursive: true });
 const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const startupCfg: AppConfig = configStore.current();
-const cmux = createBridge();
+// cmux is macOS-only; wezterm is the cross-platform terminal driving the same
+// panel. TERM_BRIDGE forces one, otherwise take whichever suits the platform.
+const termBridge: string = process.env.TERM_BRIDGE ?? (process.platform === 'win32' ? 'wezterm' : 'cmux');
+const cmux: Bridge = termBridge === 'wezterm' ? createWezTermBridge() : createBridge();
+process.stdout.write(`terminal bridge: ${termBridge}\n`);
 const cmuxClients = new Set<ServerResponse>();
 let cmuxWatchOff: (() => void) | null = null;
 function ensureCmuxWatch(): void {
