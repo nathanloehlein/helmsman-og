@@ -41,11 +41,15 @@ export async function jiraTask(
         ? [{ filename: attachment.filename, url: attachment.content }] : [];
     });
   }
+  const jiraContext = JSON.stringify(requirements, null, 2);
+  if (Buffer.byteLength(JSON.stringify(jiraContext), 'utf8') > 64 * 1024) {
+    throw new Error(`Cannot load requirements for ${input.ticketId}: Jira requirements snapshot exceeds the 64 KiB limit. Reduce the issue description, acceptance criteria, or attachment list and retry. No agent was started.`);
+  }
   return {
     ticketId: input.ticketId,
     title: input.title ?? fields.summary,
     repo: input.repo,
     jiraBaseUrl: jira.baseUrl,
-    jiraContext: JSON.stringify(requirements, null, 2),
+    jiraContext,
   };
 }

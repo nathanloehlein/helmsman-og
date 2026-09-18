@@ -46,6 +46,44 @@ describe('authenticated Jira voyage context', () => {
     expect(JSON.parse(task.jiraContext ?? '{}')).toEqual({ summary: 'Valid title', description: null });
   });
 
+  it('rejects oversized rich-text requirements before returning a task', async () => {
+    const description = { type: 'doc', version: 1, content: Array.from({ length: 1200 }, () => ({ type: 'paragraph', content: [{ type: 'text', text: 'Requirement' }] })) };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ fields: { summary: 'Title', description } })));
+    await expect(jiraTask(jira, input, fetcher)).rejects.toThrow('Jira requirements snapshot exceeds the 64 KiB limit. Reduce the issue description, acceptance criteria, or attachment list and retry. No agent was started.');
+  });
+
+  it.each([['é', 33_000], ['😀', 17_000], ['"', 22_000], ['\\', 22_000]] as const)('counts UTF-8 bytes and nested JSON escaping for %j', async (character, count) => {
+    const description = character.repeat(count);
+    const snapshot = JSON.stringify({ summary: 'Title', description }, null, 2);
+    expect(snapshot.length).toBeLessThan(64 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(snapshot), 'utf8')).toBeGreaterThan(64 * 1024);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ fields: { summary: 'Title', description } })));
+    await expect(jiraTask(jira, input, fetcher)).rejects.toThrow('requirements snapshot exceeds the 64 KiB limit');
+  });
+
+  it('preserves a snapshot exactly at the budget and rejects the next byte', async () => {
+    const emptySnapshot = JSON.stringify({ summary: 'Title', description: '' }, null, 2);
+    const description = 'x'.repeat(64 * 1024 - Buffer.byteLength(JSON.stringify(emptySnapshot), 'utf8'));
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ fields: { summary: 'Title', description } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ fields: { summary: 'Title', description: `${description}x` } })));
+    const task = await jiraTask(jira, input, fetcher);
+    expect(task.jiraContext).toBe(JSON.stringify({ summary: 'Title', description }, null, 2));
+    expect(Buffer.byteLength(JSON.stringify(task.jiraContext), 'utf8')).toBe(64 * 1024);
+    await expect(jiraTask(jira, input, fetcher)).rejects.toThrow('requirements snapshot exceeds the 64 KiB limit');
+  });
+
+  it.each(['acceptance criteria', 'attachments'])('includes %s in the snapshot budget', async field => {
+    const fields = {
+      summary: 'Title', description: 'Short description',
+      ...(field === 'attachments'
+        ? { attachment: [{ filename: 'spec.txt', content: `https://jira.example.com/${'x'.repeat(64 * 1024)}` }] }
+        : { customfield_42: 'x'.repeat(64 * 1024) }),
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ fields, names: { customfield_42: 'Acceptance Criteria' } })));
+    await expect(jiraTask(jira, input, fetcher)).rejects.toThrow('requirements snapshot exceeds the 64 KiB limit');
+  });
+
   it.each([401, 403, 404, 500])('fails before agent launch on HTTP %s without exposing response bodies', async status => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('private upstream error', { status }));
     await expect(jiraTask(jira, input, fetcher)).rejects.toThrow(`Jira returned HTTP ${status}`);
