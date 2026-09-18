@@ -229,6 +229,10 @@ describe('renderDashboard', () => {
 
     expect(el.querySelectorAll('.agent-row').length).toBe(1);
     expect(el.querySelectorAll('.recent-run').length).toBe(1);
+    const voyageUrl = new URL(el.querySelector('.recent-run .runs-voyage-link')?.getAttribute('href') ?? '', 'https://helmsman.test');
+    expect(voyageUrl.pathname).toBe('/runs');
+    expect(voyageUrl.searchParams.get('run')).toBe('r3');
+    expect(voyageUrl.searchParams.get('repo')).toBe('org/alpha');
     const html: string = el.innerHTML;
     expect(html).toContain('ALPHA-1');
     expect(html).toContain('ALPHA-3');

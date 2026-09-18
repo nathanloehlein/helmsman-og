@@ -456,7 +456,7 @@ export function renderDashboard(
     .join('');
 
   const recentRunItems: string = terminalRuns.length
-    ? terminalRuns.map(run => renderVoyage(run, now)).join('')
+    ? terminalRuns.map(run => renderVoyage(run, now, selectedRepo)).join('')
     : '<li class="empty-note">No past voyages.</li>';
 
   const repoPrCount: number = validListPrs(scopeRepoPrs(selectedRepo, repoPrs)).length;
@@ -808,13 +808,13 @@ export function renderPrDiff(files: PrFileDiff[] | null): string {
   return `<div class="pr-diff">${fileBlocks}</div>`;
 }
 
-export function renderVoyage(run: RunSummary, now: Date = new Date()): string {
+export function renderVoyage(run: RunSummary, now: Date = new Date(), selectedRepo: string | null = null): string {
   const title = typeof run.ticketId === 'string' && run.ticketId ? run.ticketId : 'Freeform voyage';
   const hasPr = Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0;
   const label = hasPr ? `${/^review$/i.test(title) ? '' : `${title} · `}PR #${run.prNumber}` : title;
   const startedAt = typeof run.startedAt === 'string' && Number.isFinite(Date.parse(run.startedAt))
     ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}" title="${esc(new Date(run.startedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}">${esc(formatRelativeTime(run.startedAt, now))}</time>` : '';
-  const href = `/runs?${new URLSearchParams({ run: run.id })}`;
+  const href = routeHref({ view: 'runs', run: run.id, repo: selectedRepo });
   return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
     <a class="app-link runs-voyage-link" href="${esc(href)}">
       ${renderVoyageResult(run)}
@@ -839,7 +839,7 @@ export function renderRecentPrRuns(runs: RunSummary[], repo: string | null): str
       <span class="panel-count mono">${recent.length}${matches.length > recent.length ? ` of ${matches.length}` : ''}</span>
       <a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'recent' }))}">All voyages ↗</a>
     </div>
-    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(run => renderVoyage(run)).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
+    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(run => renderVoyage(run, undefined, repo)).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
   </section>`;
 }
 

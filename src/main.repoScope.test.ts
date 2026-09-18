@@ -21,6 +21,43 @@ afterEach(() => {
 });
 
 describe('Helm repository scope changes', () => {
+  it('reloads Helm immediately after visiting another repository on a page that does not fetch dashboards', async () => {
+    const snapshot = await loadDashboard();
+    snapshot.queue = [{ id: 'PROJA-1', title: 'A requirements', repo: 'org/a', priority: 'P1', status: 'backlog' }];
+    const dashboardRequests: Array<string | null> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname === '/api/context') return json({ repos: ['org/a', 'org/b'], jiraBaseUrl: null });
+      if (url.pathname === '/api/dashboard') {
+        const repo = url.searchParams.get('repo');
+        dashboardRequests.push(repo);
+        return json({ snapshot, degraded: [], repos: ['org/a', 'org/b'], selectedRepo: repo, jiraBaseUrl: null });
+      }
+      if (url.pathname === '/api/agents') return json({ runs: [], autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+      if (url.pathname === '/api/config') return json({ config: {}, overridden: [] });
+      if (url.pathname === '/api/pr/open') return json({ prs: [], degraded: false, truncated: false });
+      return new Response(null, { status: 404 });
+    }));
+    const root = document.querySelector<HTMLElement>('#app')!;
+    view = new DashboardView(root);
+    await view.start();
+    expect(root.textContent).toContain('PROJA-1');
+    expect(dashboardRequests).toEqual(['org/a']);
+
+    window.history.pushState(null, '', '/runs?repo=org/b');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(root.querySelector('.helm')?.getAttribute('data-page')).toBe('runs'));
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/b');
+    expect(dashboardRequests).toEqual(['org/a']);
+
+    window.history.pushState(null, '', '/?repo=org/a');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(dashboardRequests).toEqual(['org/a', 'org/a']));
+    await vi.waitFor(() => expect(root.textContent).toContain('PROJA-1'));
+    expect(root.textContent).not.toContain('Loading Helm');
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/a');
+  });
+
   it.each([true, false])('removes old repository data during a pending scope fetch and after success=%s', async succeeds => {
     const snapshot = await loadDashboard();
     snapshot.queue = [{ id: 'PROJA-1', title: 'A requirements', repo: 'org/a', priority: 'P1', status: 'backlog' }];

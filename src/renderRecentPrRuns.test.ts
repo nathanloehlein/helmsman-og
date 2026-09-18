@@ -62,13 +62,16 @@ describe('recent PR voyages', () => {
     expect(element.querySelector('a [data-retry-run-id]')).toBeNull();
   });
 
-  it('shows a short source ID while retaining the full ID in voyage navigation', () => {
+  it('keeps the repository scope and full source ID in voyage navigation', () => {
     const id = 'github-1234567890abcdef0123456789abcdef';
     const element = mount(renderRecentPrRuns([run(id)], 'org/a'));
     expect(element.querySelector('.voyage-id')?.textContent).toBe('github-1234567890ab');
     expect(element.querySelector('.voyage-id')?.getAttribute('title')).toBe(id);
     expect(element.querySelector('.recent-run')?.getAttribute('data-runid')).toBe(id);
-    expect(element.querySelector('.runs-voyage-link')?.getAttribute('href')).toBe(`/runs?run=${id}`);
+    const voyageUrl = new URL(element.querySelector('.runs-voyage-link')?.getAttribute('href') ?? '', 'https://helmsman.test');
+    expect(voyageUrl.pathname).toBe('/runs');
+    expect(voyageUrl.searchParams.get('run')).toBe(id);
+    expect(voyageUrl.searchParams.get('repo')).toBe('org/a');
   });
 
   it('includes recent voyages on the PR page and escapes their labels', () => {

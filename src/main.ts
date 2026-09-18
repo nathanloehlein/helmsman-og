@@ -386,6 +386,8 @@ export class DashboardView {
     if (scopeChanged) {
       this.snapshot = null;
       this.snapshotRepo = undefined;
+      this.dashboardRepo = undefined;
+      this.lastDashboardRefresh = -Infinity;
       this.dashboardUnavailable = false;
       this.triagePages = { backlog: 1, todo: 1, mine: 1 };
       ++this.repoPrsSeq;

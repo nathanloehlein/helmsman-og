@@ -139,15 +139,19 @@ describe('renderRunsView', () => {
     ] }));
     expect(el.querySelectorAll('.recent-run')).toHaveLength(1);
     expect(el.querySelector('time')).toBeNull();
+    const voyageUrl = new URL(el.querySelector('.recent-run .runs-voyage-link')?.getAttribute('href') ?? '', 'https://helmsman.test');
+    expect(voyageUrl.pathname).toBe('/runs');
+    expect(voyageUrl.searchParams.get('run')).toBe('run-1');
+    expect(voyageUrl.searchParams.get('repo')).toBe('org/alpha');
     expect(el.querySelector('[data-pane="recent"] .app-link')?.getAttribute('href')).toBe('/runs?pane=recent&repo=org%2Falpha');
   });
 
-  it('escapes text and encodes run identifiers in links', () => {
+  it('escapes text and excludes invalid run identifiers from links', () => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({
       id: 'a&pane=newrun', ticketId: '<img src=x onerror=alert(1)>', status: '<script>alert(1)</script>',
     })] }));
     expect(el.querySelector('img, script')).toBeNull();
-    expect(el.querySelector('.recent-run a')?.getAttribute('href')).toBe('/runs?run=a%26pane%3Dnewrun');
+    expect(el.querySelector('.recent-run a')?.getAttribute('href')).toBe('/runs');
     expect(el.querySelector('.voyage-identity')?.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 });
