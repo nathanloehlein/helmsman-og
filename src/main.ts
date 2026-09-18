@@ -436,6 +436,7 @@ export class DashboardView {
     }
     if (!route.run) this.activeTabId = null;
     this.paint();
+    if (scopeChanged) this.paintSlack();
     if (scopeChanged || route.view === 'dashboard' || route.view === 'prs') await this.refresh(false);
     if (seq !== this.routeSeq) return;
     if (route.view === 'triage') await this.loadTriage();

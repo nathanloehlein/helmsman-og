@@ -29,7 +29,7 @@ beforeEach(async () => {
       state = { ...state, notifications: state.notifications.map(item => ({ ...item, readAt: new Date().toISOString() })) };
       return json({ ok: true });
     }
-    if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/repo'], selectedRepo: null, jiraBaseUrl: null });
+    if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/repo', 'org/other'], selectedRepo: url.searchParams.get('repo'), jiraBaseUrl: null });
     if (url.pathname === '/api/agents') return json({ runs: [], autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
     if (url.pathname === '/api/config') return json({ config: {}, overridden: [] });
     if (url.pathname === '/api/pr/review-requests') return json({ prs: [], degraded: false, truncated: false });
@@ -48,6 +48,41 @@ afterEach(() => {
 const click = (selector: string) => document.querySelector<HTMLButtonElement>(selector)?.click();
 
 describe('persistent Slack notifications', () => {
+  it('immediately rescopes cached notifications, unread counts, and voyage links when the header changes', async () => {
+    const first = state.notifications[0]!;
+    state.notifications.push({ ...first, id: 'message-two', repo: 'org/other', prNumber: 88, runId: 'run-88', prUrl: 'https://github.com/org/other/pull/88' });
+    const root = document.querySelector<HTMLElement>('#app')!;
+    view = new DashboardView(root);
+    await view.start();
+    click('[data-slack-toggle]');
+    expect(root.querySelectorAll('.slack-notification')).toHaveLength(2);
+    expect(root.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 2 unread');
+    const slackRequests = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === '/api/slack').length;
+    const before = slackRequests();
+    for (const [repo, notification, runId] of [['org/other', 'message-two', 'run-88'], ['org/repo', 'message-one', 'run-42']] as const) {
+      const select = root.querySelector<HTMLSelectElement>('.repo-select')!;
+      select.value = repo;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(root.querySelectorAll('.slack-notification')).toHaveLength(1);
+      expect(root.querySelector('.slack-notification')?.getAttribute('data-notification-id')).toBe(notification);
+      expect(root.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 1 unread');
+      const target = new URL(root.querySelector('.slack-notification .app-link')?.getAttribute('href') ?? '', window.location.origin);
+      expect(target.searchParams.get('repo')).toBe(repo);
+      expect(target.searchParams.get('run')).toBe(runId);
+      expect(root.querySelector<HTMLElement>('#slack-notifications')?.hidden).toBe(false);
+      expect(slackRequests()).toBe(before);
+    }
+    const select = root.querySelector<HTMLSelectElement>('.repo-select')!;
+    select.value = '';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(root.querySelectorAll('.slack-notification')).toHaveLength(2);
+    expect(root.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 2 unread');
+    for (const link of root.querySelectorAll<HTMLAnchorElement>('.slack-notification .app-link')) {
+      expect(new URL(link.href).searchParams.has('repo')).toBe(false);
+    }
+    expect(slackRequests()).toBe(before);
+  });
+
   it('persists reads across page refreshes and keeps the center accessible across views', async () => {
     view = new DashboardView(document.querySelector<HTMLElement>('#app')!);
     await view.start();
