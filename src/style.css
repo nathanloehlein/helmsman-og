@@ -757,18 +757,22 @@ select { text-transform: none; }
 
 /* ---------- departure sequence ---------- */
 #boot {
+  --accent: #dfb778;
+  --accent-bright: #e9c993;
+  --accent-dim: rgba(223, 183, 120, 0.45);
+  --text: #f3ecdc;
+  --text-faint: #b7b6a5;
+  --line-faint: rgba(223, 183, 120, 0.16);
+  --live: #92cdb2;
+  --review: #8ecae6;
+  --lamp-idle: #2d4146;
+  --helm-wood: #a87448;
+  --helm-wood-rim: #bc8854;
+  --helm-brass: #dfb778;
+  --helm-hub: #2d241e;
+  --helm-needle: #f3ecdc;
   color: var(--accent);
   overflow: hidden;
-}
-#boot::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px);
-  mix-blend-mode: multiply;
-  opacity: 0.5;
-  animation: boot-scan 5.5s linear infinite;
 }
 #boot.boot-out {
   opacity: 0;
@@ -793,7 +797,7 @@ select { text-transform: none; }
   height: auto;
   flex-shrink: 0;
   color: var(--accent);
-  filter: drop-shadow(0 0 12px var(--accent-dim));
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.35));
 }
 .boot-bearing-ring { opacity: 0.3; }
 .boot-bearing-ticks { opacity: 0.45; }
@@ -804,6 +808,7 @@ select { text-transform: none; }
   animation: boot-take-helm 1.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .boot-course {
+  color: var(--review);
   stroke-dasharray: 180;
   stroke-dashoffset: 180;
   opacity: 0.65;
@@ -929,14 +934,12 @@ select { text-transform: none; }
 @keyframes boot-rail-fill { to { width: 100%; } }
 @keyframes boot-log-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 0.85; transform: none; } }
 @keyframes boot-log-highlight { from, to { opacity: 1; color: var(--accent-bright); } }
-@keyframes boot-scan { to { transform: translateY(3px); } }
 
 @media (max-height: 520px) {
   .boot-stage { gap: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #boot::after { animation: none; }
   .boot-stage, .boot-word b, .boot-lamps i { animation: none; opacity: 1; }
   .boot-wheel, .boot-heading { animation: none; opacity: 1; }
   .boot-course { stroke-dashoffset: 0; animation: none; }
