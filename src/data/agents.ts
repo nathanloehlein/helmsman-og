@@ -6,10 +6,11 @@ export interface LaunchResult {
 
 export interface LaunchRunBody {
   ticketId?: string;
+  todoId?: string;
   title?: string;
   repo: string;
   task?: string;
-  mode?: 'ticket' | 'freeform' | 'rerun' | 'review';
+  mode?: 'ticket' | 'freeform' | 'rerun' | 'review' | 'todo';
   prNumber?: number;
   feedback?: string;
   model?: string;
@@ -22,7 +23,10 @@ export async function launchRun(body: LaunchRunBody): Promise<LaunchResult> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`launch ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: unknown } | null;
+    throw new Error(typeof body?.error === 'string' ? body.error : `launch ${res.status}`);
+  }
   return res.json() as Promise<LaunchResult>;
 }
 
@@ -110,15 +114,12 @@ export async function stopAgent(runId: string): Promise<void> {
 }
 
 export async function setAutoClaim(repo: string, enabled: boolean): Promise<void> {
-  try {
-    await fetch(`/api/repos/${encodeURIComponent(repo)}/auto-claim`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-  } catch {
-    return;
-  }
+  const response = await fetch(`/api/repos/${encodeURIComponent(repo)}/auto-claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) throw new Error('Unable to update auto-claim.');
 }
 
 export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): () => void {

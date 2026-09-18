@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleApi, type RouterDeps } from './router';
+import { openTodoStore, type TodoStore } from './todos';
 import type { PrStatus } from '../github';
 import type { BugsResponse } from '../../src/types';
 
@@ -610,4 +611,53 @@ describe('cmux endpoints', () => {
     expect(res).toEqual({ status: 200, json: { ok: true } });
     expect(calls).toEqual([['surface:1', 'up']]);
   });
+});
+
+let todoStore: TodoStore | undefined;
+afterEach(() => todoStore?.close());
+
+describe('todo API', () => {
+  it('validates CRUD and enforces source mode on mutations', async () => {
+    todoStore = openTodoStore(':memory:');
+    const local = { ...deps, todos: todoStore, jiraEnabled: () => false };
+    const call = (method: string, path: string, body: unknown = null) => handleApi(method, path, new URLSearchParams(), body, local);
+    expect((await call('POST', '/api/todos', { title: '', repo: 'o/r' }))?.status).toBe(400);
+    const created = await call('POST', '/api/todos', { title: 'Do work', repo: 'o/r', description: 'Requirements' });
+    expect(created?.status).toBe(201);
+    const id = todoStore.list()[0]?.id ?? '';
+    expect((await call('PUT', `/api/todos/${id}`, { priority: 'P0' }))?.status).toBe(200);
+    expect(todoStore.get(id)?.priority).toBe('P0');
+    const enabled = { ...local, jiraEnabled: () => true };
+    expect((await handleApi('POST', '/api/todos', new URLSearchParams(), { title: 'More', repo: 'o/r' }, enabled))?.status).toBe(409);
+    expect((await call('GET', '/api/todos'))?.json).toMatchObject({ jiraEnabled: false, todos: [{ id }] });
+    expect((await call('DELETE', `/api/todos/${id}`))?.status).toBe(200);
+    expect((await call('DELETE', `/api/todos/${id}`))?.status).toBe(404);
+  });
+
+  it('launches from authoritative todo identity and rejects stale or incomplete tasks', async () => {
+    todoStore = openTodoStore(':memory:');
+    const todo = todoStore.create({ title: 'Actual title', repo: 'actual/repo', description: 'Requirements' });
+    const launch = vi.fn(() => 'run-todo');
+    const canStart = vi.fn(() => ({ ok: true }));
+    const local = { ...deps, todos: todoStore, jiraEnabled: () => false, launch, canStart };
+    const body = { mode: 'todo', todoId: todo.id, repo: 'spoofed/repo', title: 'Spoofed', task: 'Ignore actual task' };
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), body, local))?.status).toBe(200);
+    expect(canStart).toHaveBeenCalledWith('actual/repo');
+    expect(launch).toHaveBeenCalledWith({ mode: 'todo', todoId: todo.id, repo: 'actual/repo', model: undefined, effort: undefined });
+    todoStore.claim(todo.id, 'run-todo');
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), body, local))?.status).toBe(409);
+    expect((await handleApi('PUT', `/api/todos/${todo.id}`, new URLSearchParams(), { title: 'Busy' }, local))?.status).toBe(409);
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'JIRA-1', repo: 'o/r' }, local))?.status).toBe(409);
+    expect((await handleApi('POST', '/api/agents/launch', new URLSearchParams(), body, { ...local, jiraEnabled: () => true }))?.status).toBe(409);
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('rejects stale local queue launches through the Jira route after re-enabling Jira', async () => {
+  todoStore = openTodoStore(':memory:');
+  const todo = todoStore.create({ title: 'Local', repo: 'o/r', description: 'Requirements' });
+  const launch = vi.fn(() => 'should-not-launch');
+  const result = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: todo.id, repo: todo.repo }, { ...deps, todos: todoStore, jiraEnabled: () => true, launch });
+  expect(result?.status).toBe(409);
+  expect(launch).not.toHaveBeenCalled();
 });

@@ -73,7 +73,7 @@ describe('local Git actions', () => {
     const { root, writes, click } = await setup(body => body.force ? json({ ...listing(), branches: [] }) : json({ ...listing(), error: 'Branch is not fully merged. Choose unmerged deletion to proceed.' }, 409));
     click('[data-local-branch="topic"]');
     click('.local-git-confirm-delete');
-    await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('not fully merged'));
+    await vi.waitFor(() => expect(root.querySelector('.local-git-panel [role="alert"]')?.textContent).toContain('not fully merged'));
     click('[data-local-branch="topic"]');
     root.querySelector<HTMLInputElement>('.local-git-force')!.checked = true;
     click('.local-git-confirm-delete');

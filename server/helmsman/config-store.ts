@@ -13,6 +13,7 @@ export const EDITABLE_KEYS: readonly string[] = [
   'AGENT_MAX_COST_USD',
   'AUTO_CLAIM_INTERVAL_MS',
   'REPO_PROJECT_MAP',
+  'JIRA_ENABLED',
   'JIRA_PROJECT',
   'JIRA_ASSIGNEE',
   'JIRA_JQL',
@@ -26,6 +27,7 @@ export const WRITABLE_SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN'];
 
 export function publicConfig(cfg: AppConfig): Record<string, unknown> {
   return {
+    JIRA_ENABLED: String(cfg.jiraEnabled),
     AGENT_ADAPTER: cfg.agentAdapter,
     AGENT_CMD: cfg.agentCmd,
     AGENT_MAX_ATTEMPTS: cfg.maxAttempts,
@@ -66,7 +68,7 @@ export class ConfigStore {
     if (SECRET_KEYS.includes(key) || !EDITABLE_KEYS.includes(key)) {
       throw new Error(`not an editable config key: ${key}`);
     }
-    if (['SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
+    if (['JIRA_ENABLED', 'SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
       throw new Error(`${key} must be true or false`);
     }
     const prePrSetting = PRE_PR_SETTING_DEFINITIONS.find(({ envKey }) => envKey === key);
@@ -87,6 +89,6 @@ export class ConfigStore {
   }
 
   hasJiraToken(): boolean {
-    return Boolean(this.current().jira?.apiToken);
+    return Boolean(this.effectiveEnv().JIRA_API_TOKEN?.trim());
   }
 }

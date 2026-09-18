@@ -612,6 +612,18 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('never writes Jira for a persisted local source even without task text', async () => {
+    const db = openDb(':memory:');
+    try {
+      const jira = fakeJira();
+      const d = { ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()), jira, botAccountId: 'bot' };
+      await startRun({ ...task, todoId: 'TODO-1', ticketId: 'TODO-1' }, d);
+      expect(db.getRun('run-1')?.status).toBe('succeeded');
+      expect(jira.assignCalls).toEqual([]);
+      expect(jira.transitionCalls).toEqual([]);
+    } finally { db.close(); }
+  });
+
   it('never claims or transitions a free-form run, even when jira and botAccountId are configured', async () => {
     const db: Db = openDb(':memory:');
     const jira = fakeJira();
@@ -1020,6 +1032,21 @@ describe('reattachRun', () => {
     expect(updated?.prNumber).toBe(11);
     expect(updated?.costUsd).toBeCloseTo(0.4);
     db.close();
+  });
+
+  it('never transitions Jira for a local task recovered after Jira is reenabled', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = { ...baseRow(runsDir), prNumber: 7, taskJson: JSON.stringify({ ...task, todoId: 'TODO-1', ticketId: 'TODO-1' }) };
+      writeFileSync(row.exitPath!, '0');
+      db.insertRun(row);
+      const jira = fakeJira();
+      await reattachRun(row, { ...deps(db, jsonAdapter(), singleAttemptHost([], true), runsDir), jira, botAccountId: 'bot' });
+      expect(db.getRun(row.id)?.status).toBe('succeeded');
+      expect(jira.assignCalls).toEqual([]);
+      expect(jira.transitionCalls).toEqual([]);
+    } finally { db.close(); }
   });
 
   it('finalizes with markInReview when the PR number was already persisted pre-crash', async () => {

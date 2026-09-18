@@ -75,3 +75,19 @@ export function makeJiraActions(jira: JiraConfig, fetchImpl: typeof fetch = fetc
 
   return { assign, transition };
 }
+
+export function makeLiveJiraActions(current: () => JiraConfig | null, fetchImpl: typeof fetch = fetch): JiraActions {
+  const guardedFetch: typeof fetch = (input, init) => current()
+    ? fetchImpl(input, init)
+    : Promise.resolve(new Response(null, { status: 409 }));
+  return {
+    assign: async (ticketId, accountId) => {
+      const jira = current();
+      if (jira) await makeJiraActions(jira, guardedFetch).assign(ticketId, accountId);
+    },
+    transition: async (ticketId, status) => {
+      const jira = current();
+      return jira ? makeJiraActions(jira, guardedFetch).transition(ticketId, status) : false;
+    },
+  };
+}

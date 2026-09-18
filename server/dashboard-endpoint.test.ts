@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildDashboardResponse } from './dashboard-endpoint';
 import type { JiraConfig } from './config';
 
@@ -142,4 +142,43 @@ describe('buildDashboardResponse', () => {
     expect(r.selectedRepo).toBeNull();
     expect(r.repos).toEqual(['o/a']);
   });
+});
+
+describe('local todo dashboard', () => {
+  it('uses local queue and states without any Jira requests or mock fallback', async () => {
+    const forbidden = async (): Promise<never> => { throw new Error('Must not fetch Jira or mock data'); };
+    const base = { title: 'Local work', repo: 'o/local', description: 'Detailed requirements', acceptanceCriteria: '', priority: 'P0' as const, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(), completedAt: NOW.toISOString(), runId: null };
+    const todos = [
+      { ...base, id: 'TODO-1', state: 'todo' as const },
+      { ...base, id: 'TODO-2', state: 'in_review' as const },
+      { ...base, id: 'TODO-3', state: 'done' as const },
+      { ...base, id: 'TODO-4', state: 'blocked' as const },
+      { ...base, id: 'TODO-5', state: 'todo' as const, repo: 'o/other' },
+    ];
+    const result = await buildDashboardResponse({ ...FULL_ENV, JIRA_ENABLED: 'false', GITHUB_TOKEN: '' }, NOW, {
+      ...OK_DEPS, fetchQueueIssues: forbidden, fetchActiveIssues: forbidden, fetchMineOpenIssues: forbidden, loadMock: forbidden,
+    }, 'o/local', todos);
+    expect(result.jiraEnabled).toBe(false);
+    expect(result.jiraBaseUrl).toBeNull();
+    expect(result.degraded).toEqual(['github']);
+    expect(result.snapshot.queue.map(todo => todo.id)).toEqual(['TODO-1']);
+    expect(result.snapshot.underway?.map(todo => todo.id)).toEqual(['TODO-2']);
+    expect(result.snapshot.stats).toEqual({ completedToday: 1, awaitingReview: 1, avgCycleMinutes: 0 });
+    expect(result.snapshot.throughput7d).toEqual([0, 0, 0, 0, 0, 0, 1]);
+    expect(result.repos).toContain('o/local');
+    expect(result.snapshot.steps).toEqual([]);
+    expect(result.snapshot.myOpenPrs).toEqual([]);
+  });
+});
+
+
+it('includes todo-only repositories in GitHub queries and excludes drafts from the launch queue', async () => {
+  const fetchAuthoredPrs = vi.fn(async (_github: unknown, _repos: string[]) => []);
+  const fetchOpenAuthoredPrs = vi.fn(async (_github: unknown, _repos: string[]) => []);
+  const result = await buildDashboardResponse({ ...FULL_ENV, JIRA_ENABLED: 'false' }, NOW, {
+    ...OK_DEPS, fetchAuthoredPrs, fetchOpenAuthoredPrs,
+  }, null, [{ id: 'TODO-1', title: 'Draft', repo: 'owner/new-repo', description: '', acceptanceCriteria: '', priority: 'P2', state: 'todo', createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(), completedAt: null, runId: null }]);
+  expect(fetchAuthoredPrs.mock.calls[0]?.[1]).toContain('owner/new-repo');
+  expect(fetchOpenAuthoredPrs.mock.calls[0]?.[1]).toContain('owner/new-repo');
+  expect(result.snapshot.queue).toEqual([]);
 });

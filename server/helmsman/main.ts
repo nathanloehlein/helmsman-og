@@ -22,12 +22,14 @@ import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
 import { isPrePrAdapter, prePrAdapter } from './agents/pre-pr';
 import { createWorktree, createWorktreeFromBranch, createReviewWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
-import { makeJiraActions, type JiraActions } from './jira-actions';
+import { makeLiveJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, fetchPrDiff, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
 import { fetchRepoOpenPrs, fetchReviewRequestedPrs } from '../pr-lists';
 import { getLocalGit, mutateLocalGit } from '../local-git';
 import type { PrFileDiff } from '../../src/types';
-import { AutoClaimScheduler } from './scheduler';
+import { openTodoStore, TodoConflictError } from './todos';
+import { todoTask, reconcileTodoRuns } from './todo-source';
+import { AutoClaimScheduler, type BacklogItem } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
 import { fetchQueueIssues, fetchIssueSummary } from '../jira';
 import { createBridge } from './cmux/bridge';
@@ -53,6 +55,8 @@ const PORT: number = Number(process.env.HELMSMAN_PORT ?? '8787');
 const DIST: string = join(process.cwd(), 'dist');
 const dbPath = process.env.HELMSMAN_DB ?? join(process.cwd(), '.helmsman.sqlite');
 const db = openDb(dbPath);
+const todos = openTodoStore(dbPath);
+reconcileTodoRuns(todos, db);
 const slackStore = openSlackStore(dbPath);
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
@@ -155,7 +159,7 @@ function pollCreatedPrReviews(): Promise<void> {
 
 function dispatchReattach(row: RunRow): Promise<void> {
   const cfg: AppConfig = configStore.current();
-  const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
+  const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(row.id, row.repo, () => {
     control.stopped = true;
@@ -173,6 +177,8 @@ function dispatchReattach(row: RunRow): Promise<void> {
     isStopped: () => control.stopped,
   };
   return reattachRun(row, deps).finally(() => {
+    const status = db.getRun(row.id)?.status;
+    if (status && status !== 'running') todos.finishRun(row.id, status);
     pm.remove(row.id);
     void pollCreatedPrReviews();
   });
@@ -210,10 +216,24 @@ void recoverRuns(db, { reattach: (row: RunRow) => dispatchReattach(row) })
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string; runId?: string; headSha?: string }): string {
+function launch(body: { todoId?: string; ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string; runId?: string; headSha?: string }): string {
   const runId: string = body.runId ?? randomUUID();
   if (db.getRun(runId) || pm.hasRun(runId)) return runId;
   const cfg: AppConfig = configStore.current();
+  let localTodo = body.mode === 'todo' && body.todoId ? todos.get(body.todoId) : null;
+  if (body.mode === 'todo') {
+    if (cfg.jiraEnabled) throw new TodoConflictError('Disable Jira before launching todos.');
+    if (!localTodo) throw new TodoConflictError('Todo not found.');
+    const gate = pm.canStart(localTodo.repo);
+    if (!gate.ok) throw new TodoConflictError(gate.reason ?? 'Cannot start voyage.');
+    localTodo = todos.claim(localTodo.id, runId);
+    if (!localTodo) throw new TodoConflictError('Todo is no longer ready to launch.');
+    body = { ...body, repo: localTodo.repo, ticketId: localTodo.id, title: localTodo.title };
+  } else if (body.ticketId && todos.get(body.ticketId) && !body.task && !body.mode) {
+    throw new TodoConflictError('Local todos must be launched from Todos with Jira disabled.');
+  } else if (!cfg.jiraEnabled && body.ticketId && !body.task && !body.mode) {
+    throw new TodoConflictError('Jira is disabled. Start a voyage from Todos.');
+  }
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(runId, body.repo, () => {
     control.stopped = true;
@@ -228,11 +248,13 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
   if (cfg.agentAdapter === 'command' && !cfg.agentCmd) {
     process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using codex\n');
   }
-  const jira: JiraActions | null = cfg.jira ? makeJiraActions(cfg.jira) : null;
+  const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
   void (async (): Promise<void> => {
     try {
       let taskObj: AgentTask;
-      if (body.mode === 'rerun') {
+      if (localTodo) {
+        taskObj = todoTask(localTodo);
+      } else if (body.mode === 'rerun') {
         const pr: PrStatus | null =
           cfg.github && body.prNumber ? await fetchPrStatus(cfg.github, body.repo, body.prNumber) : null;
         if (!pr) {
@@ -320,6 +342,9 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
       bus.publish(runId, { kind: 'error', text: message });
       bus.publish(runId, { kind: 'run-complete', text: 'failed' });
     } finally {
+      const status = db.getRun(runId)?.status;
+      if (status && status !== 'running') todos.finishRun(runId, status);
+      else if (localTodo) todos.finishRun(runId, 'failed');
       pm.remove(runId);
       void pollCreatedPrReviews();
     }
@@ -327,13 +352,17 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
   return runId;
 }
 
-function fetchTopBacklog(repo: string): Promise<{ ticketId: string; title: string } | null> {
+function fetchTopBacklog(repo: string): Promise<BacklogItem | null> {
   const cfg: AppConfig = configStore.current();
+  if (!cfg.jiraEnabled) {
+    const todo = todos.list().find(item => item.repo === repo && item.state === 'todo' && item.description.trim());
+    return Promise.resolve(todo ? { ticketId: todo.id, title: todo.title, todoId: todo.id, mode: 'todo' } : null);
+  }
   const project: string | undefined = cfg.repoProjectMap[repo];
   if (!project || !cfg.jira) return Promise.resolve(null);
   return fetchQueueIssues({ ...cfg.jira, project }).then(
     (issues: JiraIssue[]): { ticketId: string; title: string } | null =>
-      issues[0] ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
+      issues[0]?.key && issues[0]?.fields?.summary ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
   );
 }
 
@@ -463,12 +492,15 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       context: () => {
         const cfg = configStore.current();
         return {
-          repos: [...new Set([...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])])].sort(),
+          repos: [...new Set([...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : []), ...(!cfg.jiraEnabled ? todos.list().map(todo => todo.repo) : [])])].sort(),
+          jiraEnabled: cfg.jiraEnabled,
           jiraBaseUrl: cfg.jira?.baseUrl ?? null,
         };
       },
       slack: { snapshot: slackSnapshot, markRead: (id) => slackStore.markRead(id, new Date().toISOString()) },
-      dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
+      todos,
+      jiraEnabled: () => configStore.current().jiraEnabled,
+      dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo, todos.list()),
       triage: (repo) => buildTriageResponse(configStore.effectiveEnv(), undefined, repo),
       bugs: (repo) => buildBugsResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       db,
@@ -482,7 +514,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         return { maxAttempts: c.maxAttempts, maxCostUsd: c.maxCostUsd };
       },
       getConfig: () => ({
-        config: { ...publicConfig(configStore.current()), ...publicSlackSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
+        config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
         overridden: Object.keys(configStore.overrides()),
         jiraTokenSet: configStore.hasJiraToken(),
       }),

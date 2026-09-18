@@ -132,3 +132,16 @@ describe('ConfigStore', () => {
     db.close();
   });
 });
+
+it('switches Jira source live while preserving saved credentials', () => {
+  db = openDb(':memory:');
+  const store = new ConfigStore({ JIRA_BASE_URL: 'https://jira.example.com', JIRA_EMAIL: 'a@b.com', JIRA_API_TOKEN: 'secret' }, db);
+  expect(publicConfig(store.current()).JIRA_ENABLED).toBe('true');
+  expect(() => store.setOverride('JIRA_ENABLED', 'invalid', () => 'now')).toThrow('true or false');
+  store.setOverride('JIRA_ENABLED', 'false', () => 'now');
+  expect(store.current().jira).toBeNull();
+  expect(publicConfig(store.current()).JIRA_ENABLED).toBe('false');
+  expect(store.hasJiraToken()).toBe(true);
+  store.setOverride('JIRA_ENABLED', 'true', () => 'now');
+  expect(store.current().jira?.apiToken).toBe('secret');
+});

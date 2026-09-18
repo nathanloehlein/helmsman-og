@@ -1,6 +1,9 @@
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
 import { appendHighlightedLog } from './logic/logHighlight';
 import { getContext } from './data/context';
+import { fetchTodos, createTodo, updateTodo, deleteTodo } from './data/todoClient';
+import { renderTodosView, renderTodoList, readTodoForm, type TodosViewState } from './renderTodos';
+import { TODO_STATES } from './data/todos';
 import { emptyLocalGit, fetchLocalGit, updateLocalGit, type LocalGitAction, type LocalGitState } from './data/localGit';
 import { renderLocalGit } from './renderLocalGit';
 import { fetchSlack, markSlackNotificationRead, unavailableSlack, type SlackState } from './data/slack';
@@ -25,6 +28,7 @@ import {
   getRun,
   fetchAgents,
   stopAgent,
+  setAutoClaim,
   type AgentCaps,
   type LaunchResult,
   type LaunchRunBody,
@@ -181,6 +185,9 @@ export class DashboardView {
   private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
   private themeId: string = loadThemeId();
   private jiraBaseUrl: string | null = null;
+  private jiraEnabled: boolean = true;
+  private todos: TodosViewState = { items: [], loading: false, error: null, search: '', stateFilter: 'all' };
+  private todosSeq: number = 0;
   private slack: SlackState = unavailableSlack();
   private slackOpen: boolean = false;
   private slackError: string | null = null;
@@ -223,6 +230,11 @@ export class DashboardView {
     }, { signal: this.rootEvents.signal });
     this.root.addEventListener('change', (event: Event): void => {
       const control = event.target;
+      if (this.view === 'todos' && control instanceof HTMLSelectElement && control.matches('[data-todo-state-filter]')) {
+        this.todos.stateFilter = TODO_STATES.find(state => state === control.value) ?? 'all';
+        this.paintTodoList();
+        return;
+      }
       if (this.view === 'triage' && control instanceof HTMLInputElement && control.matches('[data-triage-priority]')) {
         const priority = TRIAGE_PRIORITIES.find(priority => priority === control.dataset.triagePriority);
         if (!priority) return;
@@ -259,6 +271,16 @@ export class DashboardView {
       }
     }, { capture: true, signal: this.rootEvents.signal });
     this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event), { signal: this.rootEvents.signal });
+    this.root.addEventListener('input', (event: Event): void => {
+      const control = event.target;
+      if (!(control instanceof HTMLElement) || this.view !== 'todos') return;
+      if (control instanceof HTMLInputElement && control.matches('[data-todo-search]')) {
+        this.todos.search = control.value;
+        this.paintTodoList();
+      }
+      const form = control.closest<HTMLFormElement>('[data-todo-form]');
+      if (form) this.todos.draft = readTodoForm(form);
+    }, { signal: this.rootEvents.signal });
     this.root.addEventListener('paste', (event: ClipboardEvent): void => void this.handlePasteImage(event), { signal: this.rootEvents.signal });
 
     const drawer: HTMLDivElement = document.createElement('div');
@@ -279,6 +301,7 @@ export class DashboardView {
       if (context) {
         this.repos = context.repos;
         this.jiraBaseUrl = context.jiraBaseUrl;
+        this.jiraEnabled = context.jiraEnabled !== false;
         this.hasContext = true;
       }
     }
@@ -300,6 +323,7 @@ export class DashboardView {
     ++this.prViewSeq;
     ++this.localGitSeq;
     ++this.slackSeq;
+    ++this.todosSeq;
     window.removeEventListener('popstate', this.onPopState);
     this.stopCmuxScreenPoll();
     this.stopCapture();
@@ -316,6 +340,11 @@ export class DashboardView {
   }
 
   private async navigate(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): Promise<void> {
+    if (!this.jiraEnabled && (route.view === 'triage' || route.view === 'bugs')) {
+      route = { ...route, view: 'todos', pane: null };
+    } else if (this.jiraEnabled && route.view === 'todos') {
+      route = { ...route, view: 'config', pane: null };
+    }
     const seq = ++this.routeSeq;
     ++this.prViewSeq;
     this.stopCmuxScreenPoll();
@@ -352,6 +381,7 @@ export class DashboardView {
     if (scopeChanged || route.view === 'dashboard' || route.view === 'prs') await this.refresh(false);
     if (seq !== this.routeSeq) return;
     if (route.view === 'triage') await this.loadTriage();
+    else if (route.view === 'todos') await this.loadTodos();
     else if (route.view === 'bugs') await this.loadBugs();
     else if (route.view === 'config') {
       const config = await getConfig();
@@ -444,7 +474,7 @@ export class DashboardView {
     const now = Date.now();
     const localDue = force || now - this.lastLocalRefresh >= LOCAL_POLL_MS;
     const dashboardDue = (!this.hasContext && this.dashboardRepo === undefined) || ((this.view === 'dashboard' || this.view === 'prs')
-      && (force || this.dashboardRepo !== this.selectedRepo || now - this.lastDashboardRefresh >= POLL_MS));
+      && (force || this.dashboardRepo !== this.selectedRepo || now - this.lastDashboardRefresh >= (this.jiraEnabled ? POLL_MS : LOCAL_POLL_MS)));
     if (localDue) this.lastLocalRefresh = now;
     if (dashboardDue) {
       this.lastDashboardRefresh = now;
@@ -469,13 +499,17 @@ export class DashboardView {
       this.hasContext = true;
       this.selectedRepo = response.selectedRepo;
       this.jiraBaseUrl = response.jiraBaseUrl;
+      if (typeof response.jiraEnabled === 'boolean') this.jiraEnabled = response.jiraEnabled;
     }
     if (agents) {
       this.runs = agents.runs;
       this.autoClaimRepos = agents.autoClaim;
       this.caps = agents.caps;
     }
-    if (config) this.uiConfig = config;
+    if (config) {
+      this.uiConfig = config;
+      if (config.config?.JIRA_ENABLED !== undefined) this.jiraEnabled = config.config.JIRA_ENABLED !== false && config.config.JIRA_ENABLED !== 'false';
+    }
     this.syncShell();
     if (localDue && slackSeq === this.slackSeq) {
       this.slack = slack ?? {
@@ -503,6 +537,8 @@ export class DashboardView {
       await this.loadReviewRequests(force);
     } else if (this.view === 'config' && force) {
       void this.loadLocalGit();
+    } else if (this.view === 'todos' && localDue) {
+      await this.loadTodos();
     } else if (this.view === 'runs') {
       const recent = this.root.querySelector('[data-pane=recent]');
       if (recent) {
@@ -518,7 +554,7 @@ export class DashboardView {
     if (!this.snapshot || this.view !== 'dashboard') return;
     const next = document.createElement('div');
     renderDashboard(next, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo,
-      this.runs, this.autoClaimRepos, this.caps, this.themeId, this.rackLayout, this.jiraBaseUrl, this.repoPrs);
+      this.runs, this.autoClaimRepos, this.caps, this.themeId, this.rackLayout, this.jiraBaseUrl, this.repoPrs, this.jiraEnabled);
     const selectors = [...['running', 'recent'].flatMap(panel =>
       ['.faceplate-body', '.faceplate-count', '.faceplate-lamp'].map(part => `[data-panel="${panel}"] ${part}`))];
     for (const selector of selectors) {
@@ -631,6 +667,12 @@ export class DashboardView {
   }
 
   private paintView(): void {
+    if (this.view === 'todos') {
+      this.mountPage(renderTodosView(this.todos, { ...this.shellOptions(), autoClaimEnabled: this.autoClaimRepos.includes(this.selectedRepo ?? '') }));
+      this.bindHeadControls();
+      this.rehomeRunDrawer();
+      return;
+    }
     if (this.view === 'runs') {
       this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.runs }));
       this.bindHeadControls();
@@ -679,6 +721,7 @@ export class DashboardView {
       this.rackLayout,
       this.jiraBaseUrl,
       this.repoPrs,
+      this.jiraEnabled,
     );
     this.mountPage(page.innerHTML);
     this.bindHeadControls();
@@ -705,6 +748,7 @@ export class DashboardView {
     const snapshot = this.snapshotRepo === this.selectedRepo ? this.snapshot : null;
     return {
       active: this.view, repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId,
+      jiraEnabled: this.jiraEnabled,
       readout: {
         running: this.runs.filter(run => run?.status === 'running' && (!this.selectedRepo || run.repo === this.selectedRepo)).length,
         queued: snapshot && !this.degraded.includes('jira') ? snapshot.queue?.length ?? null : null,
@@ -744,6 +788,10 @@ export class DashboardView {
       if (repo.innerHTML !== nextRepo.innerHTML) repo.innerHTML = nextRepo.innerHTML;
       repo.value = this.selectedRepo ?? '';
     }
+    const tabs = shell.querySelector('.page-tabs');
+    const nextTabs = template.content.querySelector('.page-tabs');
+    const tabIds = (node: Element | null) => Array.from(node?.querySelectorAll('.page-tab') ?? []).map(tab => tab.id).join(',');
+    if (tabs && nextTabs && tabIds(tabs) !== tabIds(nextTabs)) tabs.replaceChildren(...nextTabs.childNodes);
     for (const next of template.content.querySelectorAll<HTMLAnchorElement>('.page-tab')) {
       const tab = shell.querySelector<HTMLAnchorElement>(`#${next.id}`);
       if (!tab) continue;
@@ -1009,6 +1057,146 @@ export class DashboardView {
       localGit: this.localGit,
     }));
     this.bindHeadControls();
+  }
+
+  private paintTodoList(): void {
+    if (this.view !== 'todos' || this.destroyed) return;
+    const list = this.root.querySelector('[data-todo-list]');
+    if (list) list.innerHTML = renderTodoList(this.todos, this.shellOptions());
+    const feedback = this.root.querySelector('[data-todo-feedback]');
+    if (feedback) {
+      const template = document.createElement('template');
+      template.innerHTML = renderTodosView(this.todos, this.shellOptions());
+      const next = template.content.querySelector('[data-todo-feedback]');
+      if (next) feedback.replaceChildren(...next.childNodes);
+    }
+  }
+
+  private async loadTodos(): Promise<void> {
+    const seq = ++this.todosSeq;
+    this.todos.loading = true;
+    try {
+      const result = await fetchTodos();
+      if (seq !== this.todosSeq || this.destroyed) return;
+      this.jiraEnabled = result.jiraEnabled;
+      this.todos.items = result.todos;
+      this.todos.error = null;
+      this.repos = [...new Set([...this.repos, ...result.todos.map(todo => todo.repo)])].sort();
+      if (this.jiraEnabled && this.view === 'todos') {
+        await this.navigate({ ...this.route, view: 'config', pane: null }, 'replace');
+        return;
+      }
+    } catch (error: unknown) {
+      if (seq !== this.todosSeq || this.destroyed) return;
+      this.todos.error = error instanceof Error ? error.message : 'Unable to load todos.';
+    } finally {
+      if (seq === this.todosSeq && !this.destroyed) {
+        this.todos.loading = false;
+        this.paintTodoList();
+        this.syncShell();
+      }
+    }
+  }
+
+  private async saveTodo(form: HTMLFormElement): Promise<void> {
+    if (this.todos.pendingAction || this.jiraEnabled) return;
+    const input = readTodoForm(form);
+    const id = this.todos.editingId;
+    this.todos.draft = input;
+    this.todos.pendingAction = 'Saving todo…';
+    this.todos.error = null;
+    this.paint();
+    try {
+      const todo = id ? await updateTodo(id, input) : await createTodo(input);
+      this.todos.items = [...this.todos.items.filter(item => item.id !== todo.id), todo];
+      this.todos.editingId = null;
+      this.todos.draft = undefined;
+      this.repos = [...new Set([...this.repos, todo.repo])].sort();
+      this.lastDashboardRefresh = -Infinity;
+    } catch (error: unknown) {
+      this.todos.error = error instanceof Error ? error.message : 'Unable to save todo.';
+    } finally {
+      this.todos.pendingAction = undefined;
+      if (!this.destroyed && this.view === 'todos') this.paint();
+    }
+  }
+
+  private async handleTodoAction(button: HTMLButtonElement): Promise<void> {
+    if (this.todos.pendingAction || this.jiraEnabled) return;
+    if (button.hasAttribute('data-todo-auto-claim')) {
+      const repo = this.selectedRepo;
+      if (!repo) return;
+      const enabled = !this.autoClaimRepos.includes(repo);
+      this.todos.pendingAction = 'Updating auto-claim…';
+      this.todos.error = null;
+      this.paint();
+      try {
+        await setAutoClaim(repo, enabled);
+        this.autoClaimRepos = [...this.autoClaimRepos.filter(item => item !== repo), ...(enabled ? [repo] : [])];
+      } catch (error: unknown) {
+        this.todos.error = error instanceof Error ? error.message : 'Unable to update auto-claim.';
+      } finally {
+        this.todos.pendingAction = undefined;
+        if (!this.destroyed && this.view === 'todos') this.paint();
+      }
+      return;
+    }
+    const { todoEdit, todoDelete, todoConfirmDelete, todoLaunch } = button.dataset;
+    if (button.hasAttribute('data-todo-refresh')) {
+      await this.loadTodos();
+      return;
+    }
+    if (todoEdit) {
+      const todo = this.todos.items.find(item => item.id === todoEdit);
+      if (!todo || todo.state === 'in_progress') return;
+      this.todos.editingId = todo.id;
+      this.todos.draft = { ...todo };
+      this.todos.deletingId = null;
+      this.todos.error = null;
+      this.paint();
+      this.root.querySelector<HTMLInputElement>('[data-todo-form] [name=title]')?.focus();
+      return;
+    }
+    if (todoDelete || button.hasAttribute('data-todo-cancel-delete')) {
+      this.todos.deletingId = todoDelete ?? null;
+      this.paintTodoList();
+      return;
+    }
+    if (button.hasAttribute('data-todo-new') || button.hasAttribute('data-todo-cancel')) {
+      this.todos.editingId = null;
+      this.todos.draft = undefined;
+      this.todos.error = null;
+      this.paint();
+      return;
+    }
+    if (!todoConfirmDelete && !todoLaunch) return;
+    const todo = this.todos.items.find(item => item.id === (todoConfirmDelete ?? todoLaunch));
+    if (!todo || todo.state === 'in_progress') return;
+    if (todoConfirmDelete && this.todos.deletingId !== todo.id) return;
+    this.todos.pendingAction = todoConfirmDelete ? 'Deleting todo…' : 'Launching voyage…';
+    this.todos.error = null;
+    this.paint();
+    try {
+      if (todoConfirmDelete) {
+        await deleteTodo(todo.id);
+        this.todos.items = this.todos.items.filter(item => item.id !== todo.id);
+        this.todos.deletingId = null;
+        if (this.todos.editingId === todo.id) {
+          this.todos.editingId = null;
+          this.todos.draft = undefined;
+        }
+      } else {
+        const result = await launchRun({ mode: 'todo', todoId: todo.id, repo: todo.repo });
+        if (!this.destroyed) this.openRunTab(result.runId, todo.id);
+        await this.loadTodos();
+      }
+      this.lastDashboardRefresh = -Infinity;
+    } catch (error: unknown) {
+      this.todos.error = error instanceof Error ? error.message : 'Todo action failed.';
+    } finally {
+      this.todos.pendingAction = undefined;
+      if (!this.destroyed && this.view === 'todos') this.paint();
+    }
   }
 
   private paintPrView(): void {
@@ -1356,6 +1544,11 @@ export class DashboardView {
 
   private handleSubmit(event: SubmitEvent): void {
     const target: EventTarget | null = event.target;
+    if (target instanceof HTMLFormElement && target.matches('[data-todo-form]')) {
+      event.preventDefault();
+      void this.saveTodo(target);
+      return;
+    }
     if (!(target instanceof HTMLFormElement) || !target.classList.contains('cmux-send')) return;
     event.preventDefault();
     void this.handleCmuxSend(target);
@@ -1364,6 +1557,11 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+    const todoButton = target.closest<HTMLButtonElement>('[data-todo-edit], [data-todo-delete], [data-todo-confirm-delete], [data-todo-cancel-delete], [data-todo-launch], [data-todo-cancel], [data-todo-new], [data-todo-refresh], [data-todo-auto-claim]');
+    if (todoButton && this.view === 'todos') {
+      if (!todoButton.disabled) void this.handleTodoAction(todoButton);
+      return;
+    }
 
     const triagePage = target.closest<HTMLButtonElement>('button[data-triage-column][data-triage-page]');
     if (this.view === 'triage' && triagePage && !triagePage.disabled) {
@@ -1954,7 +2152,9 @@ export class DashboardView {
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
-      const result: LaunchResult = await launchAgent(ticketId, title ?? ticketId, repo);
+      const result: LaunchResult = this.jiraEnabled
+        ? await launchAgent(ticketId, title ?? ticketId, repo)
+        : await launchRun({ mode: 'todo', todoId: ticketId, repo });
       if (seq !== this.launchSeq) return;
       this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
@@ -2022,7 +2222,7 @@ export class DashboardView {
   private async handleConfigSave(btn: HTMLButtonElement): Promise<void> {
     const row: HTMLElement | null = btn.closest<HTMLElement>('.config-row');
     const key: string | undefined = row?.dataset.key;
-    const input: HTMLInputElement | null = row?.querySelector<HTMLInputElement>('.config-input') ?? null;
+    const input = row?.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input') ?? null;
     if (!key || !input) return;
     const errorEl: HTMLElement | null = row?.querySelector<HTMLElement>('.config-error') ?? null;
     if (errorEl) errorEl.textContent = '';
@@ -2032,6 +2232,20 @@ export class DashboardView {
       if (!result.ok) {
         if (errorEl) errorEl.textContent = result.error ?? 'Save failed.';
         return;
+      }
+      if (key === 'JIRA_ENABLED') {
+        this.jiraEnabled = input.value !== 'false';
+        this.jiraBaseUrl = null;
+        this.snapshot = null;
+        this.dashboardRepo = undefined;
+        this.lastDashboardRefresh = -Infinity;
+        ++this.todosSeq;
+        const context = await getContext();
+        if (context) {
+          this.repos = context.repos;
+          this.jiraBaseUrl = context.jiraBaseUrl;
+        }
+        this.syncShell();
       }
       await this.refresh();
       if (this.view === 'config') {

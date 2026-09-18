@@ -143,7 +143,7 @@ describe('URL navigation', () => {
     choose('org/b');
     await vi.waitFor(() => expect(requests.some(({ url }) => url.pathname === '/api/repo/local' && url.searchParams.get('repo') === 'org/b')).toBe(true));
     await new Promise(resolve => setTimeout(resolve, 0));
-    const input = root.querySelector<HTMLInputElement>('.config-input')!;
+    const input = root.querySelector<HTMLInputElement>('input.config-input')!;
     input.value = 'unsaved';
     const payload = (repo: string, name: string) => ({ repo, path: `/repos/${repo}`, branches: [{ name, current: true, upstream: null, commit: 'abcdef' }], worktrees: [], error: null });
     second.resolve(json(payload('org/b', 'branch-b')));
@@ -151,7 +151,7 @@ describe('URL navigation', () => {
     first.resolve(json(payload('org/a', 'branch-a')));
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(root.querySelector('.local-git-panel')?.textContent).not.toContain('branch-a');
-    expect(root.querySelector('.config-input')).toBe(input);
+    expect(root.querySelector('input.config-input')).toBe(input);
     expect(input.value).toBe('unsaved');
   });
 

@@ -1,3 +1,4 @@
+import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
 import { isGithubRepo, type PrListResponse } from '../pr-lists';
@@ -45,15 +46,17 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  todos?: TodoStore;
+  jiraEnabled?: () => boolean;
   outboundUsage?: () => unknown;
-  context?: () => { repos: string[]; jiraBaseUrl: string | null };
+  context?: () => { repos: string[]; jiraBaseUrl: string | null; jiraEnabled?: boolean };
   slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean };
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   triage: (repo: string | null) => Promise<TriageResponse>;
   bugs: (repo: string | null) => Promise<BugsResponse>;
   db: Db;
   canStart: (repo: string) => { ok: boolean; reason?: string };
-  launch: (body: { ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }) => string;
+  launch: (body: { todoId?: string; ticketId?: string; title?: string; repo: string; task?: string; prNumber?: number; mode?: string; feedback?: string; model?: string; effort?: string }) => string;
   stop: (runId: string) => boolean;
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
@@ -87,6 +90,35 @@ export async function handleApi(
   _body: unknown,
   deps: RouterDeps,
 ): Promise<ApiResult | null> {
+  const todoMatch = path.match(/^\/api\/todos\/(TODO-[1-9]\d*)$/);
+  if (path === '/api/todos' || todoMatch) {
+    if (!deps.todos) return { status: 503, json: { error: 'Todos unavailable.' } };
+    const jiraEnabled = deps.jiraEnabled?.() ?? true;
+    if (method === 'GET' && path === '/api/todos') return { status: 200, json: { todos: deps.todos.list(), jiraEnabled } };
+    if (method === 'GET' && todoMatch) {
+      const todo = deps.todos.get(todoMatch[1]);
+      return todo ? { status: 200, json: { todo } } : { status: 404, json: { error: 'Todo not found.' } };
+    }
+    if (['POST', 'PUT', 'DELETE'].includes(method)) {
+      if (jiraEnabled) return { status: 409, json: { error: 'Disable Jira in Config to manage todos.' } };
+      try {
+        if (method === 'POST' && path === '/api/todos') return { status: 201, json: { todo: deps.todos.create(_body) } };
+        if (method === 'PUT' && todoMatch) {
+          const todo = deps.todos.update(todoMatch[1], _body);
+          return todo ? { status: 200, json: { todo } } : { status: 404, json: { error: 'Todo not found.' } };
+        }
+        if (method === 'DELETE' && todoMatch) {
+          return deps.todos.remove(todoMatch[1]) ? { status: 200, json: { ok: true } } : { status: 404, json: { error: 'Todo not found.' } };
+        }
+      } catch (error) {
+        if (error instanceof TodoValidationError || error instanceof TodoConflictError) {
+          return { status: error instanceof TodoConflictError ? 409 : 400, json: { error: error.message } };
+        }
+        throw error;
+      }
+    }
+    return { status: 404, json: { error: 'not found' } };
+  }
   if (path === '/api/context' && method === 'GET') {
     return deps.context ? { status: 200, json: deps.context() } : { status: 503, json: { error: 'Context unavailable.' } };
   }
@@ -125,8 +157,24 @@ export async function handleApi(
     return run ? { status: 200, json: toRunSummary(run, deps.db) } : { status: 404, json: { error: 'run not found' } };
   }
   if (path === '/api/agents/launch' && method === 'POST') {
-    const b = _body as { ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string; model?: string; effort?: string } | null;
-    if (!b?.repo) return { status: 400, json: { error: 'repo required' } };
+    const b = _body as { todoId?: string; ticketId?: string; title?: string; repo?: string; task?: string; mode?: string; prNumber?: number; feedback?: string; model?: string; effort?: string } | null;
+    if (b?.mode === 'todo') {
+      if (deps.jiraEnabled?.() !== false) return { status: 409, json: { error: 'Disable Jira in Config to launch todos.' } };
+      if (typeof b.todoId !== 'string') return { status: 400, json: { error: 'todoId required' } };
+      const todo = deps.todos?.get(b.todoId);
+      if (!todo) return { status: 404, json: { error: 'Todo not found.' } };
+      if (todo.state !== 'todo' || !todo.description.trim()) return { status: 409, json: { error: 'Todo must be in To do with a description before starting a voyage.' } };
+      const gate = deps.canStart(todo.repo);
+      if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
+      try {
+        const runId = deps.launch({ mode: 'todo', todoId: todo.id, repo: todo.repo, model: b.model, effort: b.effort });
+        return { status: 200, json: { runId } };
+      } catch (error) {
+        if (error instanceof TodoConflictError || error instanceof TodoValidationError) return { status: error instanceof TodoConflictError ? 409 : 400, json: { error: error.message } };
+        throw error;
+      }
+    }
+    if (typeof b?.repo !== 'string' || !b.repo.trim()) return { status: 400, json: { error: 'repo required' } };
     const gate = deps.canStart(b.repo);
     if (!gate.ok) return { status: 409, json: { error: gate.reason ?? 'cannot start' } };
     const tuning: { model?: string; effort?: string } = { model: b.model, effort: b.effort };
@@ -145,6 +193,8 @@ export async function handleApi(
       const runId = deps.launch({ repo: b.repo, task: b.task, ...tuning });
       return { status: 200, json: { runId } };
     }
+    if (typeof b.ticketId === 'string' && deps.todos?.get(b.ticketId)) return { status: 409, json: { error: 'Local todos must be launched from Todos with Jira disabled.' } };
+    if (deps.jiraEnabled?.() === false) return { status: 409, json: { error: 'Jira is disabled. Start a voyage from Todos.' } };
     if (!b.ticketId) return { status: 400, json: { error: 'ticketId and repo required' } };
     const runId = deps.launch({ ticketId: b.ticketId, title: b.title, repo: b.repo, ...tuning });
     return { status: 200, json: { runId } };

@@ -163,3 +163,19 @@ describe('AutoClaimScheduler', () => {
     expect(launchSpy).not.toHaveBeenCalled();
   });
 });
+
+it('preserves todo identity for authoritative local launch', async () => {
+  const launch = vi.fn();
+  const scheduler = new AutoClaimScheduler({ canStart: () => true, fetchTopBacklog: async () => ({ ticketId: 'TODO-1', title: 'Local work', todoId: 'TODO-1', mode: 'todo' }), launch });
+  scheduler.setEnabled('o/r', true);
+  await scheduler.tick();
+  expect(launch).toHaveBeenCalledWith({ ticketId: 'TODO-1', title: 'Local work', todoId: 'TODO-1', mode: 'todo', repo: 'o/r' });
+});
+
+it('does not launch if auto-claim is disabled while fetching', async () => {
+  const launch = vi.fn();
+  const scheduler = new AutoClaimScheduler({ canStart: () => true, fetchTopBacklog: async () => { scheduler.setEnabled('o/r', false); return { ticketId: 'T-1', title: 'Work' }; }, launch });
+  scheduler.setEnabled('o/r', true);
+  await scheduler.tick();
+  expect(launch).not.toHaveBeenCalled();
+});

@@ -8,6 +8,7 @@ describe('routes', () => {
     ['/', 'dashboard'], ['/helm', 'dashboard'], ['/triage', 'triage'],
     ['/terminal', 'cmux'], ['/terminal/', 'cmux'], ['/cmux', 'cmux'], ['/bugs', 'bugs'], ['/prs', 'prs'], ['/pr', 'prs'],
     ['/config', 'config'], ['/runs', 'runs'], ['/runs/', 'runs'], ['/unknown', 'dashboard'],
+    ['/todos', 'todos'], ['/todos/', 'todos'],
   ])('resolves %s to %s', (path, view) => {
     expect(parse(path).view).toBe(view);
   });

@@ -36,6 +36,7 @@ import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 const PRIORITY_CLASS: Record<Priority, string> = { P0: 'pri-p0', P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3', P4: 'pri-p4' };
 
 export const CONFIG_HELP: Record<string, string> = {
+  JIRA_ENABLED: 'Use Jira tickets for voyages; disable to use local todos instead. Applies immediately. Example: false',
   GITHUB_REVIEW_WATCH_ENABLED: 'Automatically review GitHub PRs requesting your review every five minutes: true or false. Changes apply immediately. Example: true',
   SLACK_WATCH_ENABLED: 'Enable automatic PR reviews from the watched Slack channel: true or false. Changes apply immediately. Example: true',
   SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
@@ -212,6 +213,7 @@ const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'dashboard', label: 'Helm' },
   { view: 'prs', label: 'PR' },
   { view: 'triage', label: 'Triage' },
+  { view: 'todos', label: 'Todos' },
   { view: 'cmux', label: 'Terminal' },
   { view: 'bugs', label: 'Bugs' },
   { view: 'runs', label: 'Voyages' },
@@ -237,6 +239,7 @@ interface PanelDef {
 
 export interface HelmHeadOpts {
   active: PageView;
+  jiraEnabled?: boolean;
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
@@ -252,7 +255,8 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
       ),
     )
     .join('');
-  const tabs: string = PAGE_TABS.map(
+  const tabs: string = PAGE_TABS.filter(t => t.view === 'todos' ? opts.jiraEnabled === false
+    : t.view === 'triage' || t.view === 'bugs' ? opts.jiraEnabled !== false : true).map(
     (t) =>
       `<a class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" href="${esc(routeHref({ view: t.view, repo: opts.selectedRepo }))}" data-view="${t.view}" role="tab" id="page-tab-${t.view}" aria-selected="${t.view === opts.active}" aria-controls="page-content" tabindex="${t.view === opts.active ? 0 : -1}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`,
   ).join('');
@@ -350,6 +354,7 @@ export function renderDashboard(
   layout: RackLayout = defaultLayout(),
   jiraBaseUrl: string | null = null,
   repoPrs?: PrListState,
+  jiraEnabled: boolean = true,
 ): void {
   const queue = sortByPriority(data.queue);
   const scopedRuns: RunSummary[] = selectedRepo
@@ -360,8 +365,8 @@ export function renderDashboard(
   const underway = Array.isArray(data.underway) ? data.underway.filter(ticket => ticket && ticket.status !== 'done') : [];
   const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
   const underwayItems = underwayKnown && underway.length
-    ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, selectedRepo)).join('')
-    : `<li class="empty-note">${underwayKnown ? 'No unfinished tickets assigned to you.' : 'Underway tickets unavailable.'}</li>`;
+    ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, jiraEnabled ? selectedRepo : null)).join('')
+    : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : 'Underway tickets unavailable.'}</li>`;
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
 
@@ -379,7 +384,7 @@ export function renderDashboard(
       </li>`,
         )
         .join('')
-    : '<li class="empty-note">No backlog tickets assigned.</li>';
+    : `<li class="empty-note">${jiraEnabled ? 'No backlog tickets assigned.' : 'No todos ready to launch. Add a description and set the state to To do.'}</li>`;
 
   const agentRows: string = activeRuns.length
     ? activeRuns
@@ -436,7 +441,7 @@ export function renderDashboard(
   const sampleSources = degraded.filter(source => source !== 'jira-underway');
   const banner: string =
     sampleSources.length > 0
-      ? `<div class="degraded-banner">Showing sample data for: ${sampleSources.join(', ')} — check server credentials.</div>`
+      ? `<div class="degraded-banner">${jiraEnabled ? 'Showing sample data for' : 'Unavailable integrations'}: ${sampleSources.join(', ')} — check server credentials.</div>`
       : '';
 
   const newRunRepoOptions: string = sortedRepos
@@ -452,7 +457,7 @@ export function renderDashboard(
             run.prNumber != null
               ? `<a class="recent-run-pr" href="https://github.com/${esc(run.repo)}/pull/${run.prNumber}" target="_blank" rel="noopener">#${run.prNumber}</a>`
               : '';
-          const canRerun: boolean = TICKET_RE.test(run.ticketId);
+          const canRerun: boolean = jiraEnabled && TICKET_RE.test(run.ticketId);
           const rerunBtn: string = canRerun
             ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Relaunch voyage for ${esc(run.ticketId)}" title="Relaunch voyage for ${esc(run.ticketId)}">${ICON_REDO}</button>`
             : `<button class="recent-rerun" type="button" disabled aria-label="Cannot relaunch voyage" title="Cannot relaunch voyage — original task is unavailable">${ICON_REDO}</button>`;
@@ -478,21 +483,21 @@ export function renderDashboard(
     newrun: {
       lamp: 'idle',
       count: null,
-      body: `
+      body: `${jiraEnabled ? '' : `<p class="config-warning"><a class="app-link" href="${esc(routeHref({ view: 'todos', repo: selectedRepo }))}">Create or launch a todo →</a></p>`}
         <div class="newrun-body">
           <div class="newrun-mode-toggle">
-            <label class="newrun-mode-label">
+            ${jiraEnabled ? `<label class="newrun-mode-label">
               <input type="radio" class="newrun-mode" name="newrun-mode" value="ticket" checked>
               <span>Ticket</span>
-            </label>
+            </label>` : ''}
             <label class="newrun-mode-label">
-              <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform">
+              <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform"${jiraEnabled ? '' : ' checked'}>
               <span>Free-form</span>
             </label>
           </div>
           <div class="newrun-fields">
-            <input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
-            <input class="newrun-title" type="text" placeholder="Title (optional)">
+            ${jiraEnabled ? `<input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
+            <input class="newrun-title" type="text" placeholder="Title (optional)">` : ''}
             <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
             <select class="newrun-repo" aria-label="Repository for new voyage">${newRunRepoOptions}</select>
             ${tuningSelects('newrun')}
@@ -513,7 +518,7 @@ export function renderDashboard(
     underway: {
       lamp: underwayKnown && underway.length ? 'queued' : 'idle',
       count: underwayKnown ? underway.length : null,
-      body: `${underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
+      body: `${jiraEnabled && underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
     },
     recent: {
       lamp: 'idle',
@@ -1085,7 +1090,7 @@ export interface ConfigViewOpts {
 
 function configRowsHtml(uiConfig: UiConfig): string {
   const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {})
-    .filter(([key]) => !PRE_PR_CONFIG_KEYS.some((reviewKey) => reviewKey === key));
+    .filter(([key]) => key !== 'JIRA_ENABLED' && !PRE_PR_CONFIG_KEYS.some((reviewKey) => reviewKey === key));
   if (entries.length === 0) return '<div class="empty-note">No configuration keys.</div>';
   return entries
     .map(([key, value]) => {
@@ -1145,10 +1150,27 @@ function jiraTokenRowHtml(tokenSet: boolean): string {
 }
 
 export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
+  const jiraEnabled = uiConfig.config?.JIRA_ENABLED !== 'false' && uiConfig.config?.JIRA_ENABLED !== false;
   const themeOptions = THEMES.map(
     (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
   ).join('');
   return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <section class="panel config-panel" aria-labelledby="work-source-title">
+        <div class="panel-head"><span class="panel-title" id="work-source-title">Voyage source</span></div>
+        <div class="config-list">
+          <div class="config-row" data-key="JIRA_ENABLED">
+            <label class="config-key" for="jira-enabled">Jira integration</label>
+            <select class="config-input" id="jira-enabled" aria-describedby="jira-enabled-help">
+              <option value="true"${jiraEnabled ? ' selected' : ''}>Enabled — Jira tickets</option>
+              <option value="false"${jiraEnabled ? '' : ' selected'}>Disabled — local todos</option>
+            </select>
+            <button type="button" class="config-save" data-key="JIRA_ENABLED">Save</button>
+            <span class="config-error" role="alert"></span>
+          </div>
+        </div>
+        <p class="config-warning" id="jira-enabled-help">Disabling Jira replaces Triage and Bugs with Todos. The backlog and auto-claim use local todos. Saved credentials and todos are kept when switching sources.</p>
+        ${jiraEnabled ? '' : `<p class="config-warning"><a class="app-link" href="${esc(routeHref({ view: 'todos', repo: opts.selectedRepo }))}">Manage todos →</a></p>`}
+      </section>
       <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
         <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
         <div class="ui-customization-body">

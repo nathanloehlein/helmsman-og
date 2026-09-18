@@ -330,7 +330,7 @@ merge stays a deliberate action on GitHub, and the agent never merges.
 
 ### Direct links
 
-Each tab has a page URL: `/helm`, `/triage`, `/terminal`, `/bugs`, `/prs`, `/config`, and
+Each tab has a page URL: `/helm`, `/triage`, `/todos`, `/terminal`, `/bugs`, `/prs`, `/config`, and
 `/runs`. `/` opens Helm, and `/pr` is an alias for `/prs`. Links can include a pane
 and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 
@@ -379,14 +379,39 @@ The Config tab edits supported runtime values and offers a write-only Jira token
 update. See [Configuration](#configuration) for every field, its default, storage,
 and restart behavior. UI customization and local Git controls are on the same page.
 
+### Local todos
+
+In Config → Voyage source, disable Jira to use a local backlog. The change is live
+and persisted: Todos replaces the Jira-specific Triage and Bugs tabs, and Helm's
+queue uses local todos. Re-enabling Jira keeps your todos and saved credentials.
+Helmsman stops issuing Jira requests while disabled; already running agents keep
+their original task context.
+
+Each todo has a title, repository (`owner/name`), priority P0–P4, description,
+acceptance criteria, state, timestamps, and a link to its latest voyage. Repositories
+must already be cloned under `AGENTS_ROOT` as described in setup. Save title-only
+drafts, then add a description to make them launchable. Use acceptance criteria for
+tests, edge cases, and constraints the crew must satisfy. The list supports search,
+state filters, and repository scope.
+
+Launching atomically claims a To do item and sends its saved details to the agent.
+In progress items cannot be edited or deleted. Successful voyages move to In review;
+failed or stopped voyages move to Blocked. Review the output before marking Done,
+or return the todo to To do to retry. No completion state automatically merges a PR.
+Todo state and run links survive server restarts; interrupted claims are reconciled
+against persisted voyages. Todos are stored in the same SQLite database as voyages.
+
 ### Auto-claim
 
-The dashboard has no auto-claim control. The backend's opt-in API remains available. Every `AUTO_CLAIM_INTERVAL_MS` a
+The Todos tab offers opt-in auto-claim for the selected repository. The backend API
+is also available for either source. Every `AUTO_CLAIM_INTERVAL_MS` a
 per-repo heartbeat pulls the top backlog ticket for the repo's mapped Jira project
 (`REPO_PROJECT_MAP`) and launches an agent — but only while that repo is idle, so it
 never double-claims (it defers to the same single-flight gate as manual Launch). One
-ticket per tick; off by default; toggling off stops further claims. A repo with no
-`REPO_PROJECT_MAP` entry can't be auto-claimed. Toggle state is held in memory
+ticket per tick; off by default; toggling off stops further claims. With Jira disabled,
+it selects described To do items by priority (P0 first), then creation order; no Jira
+project mapping is required. In Jira mode, a repo needs a `REPO_PROJECT_MAP` entry.
+Toggle state is held in memory
 (`POST /api/repos/:repo/auto-claim {enabled}`), so it resets when Helmsman restarts.
 
 ### Agent backends
@@ -447,6 +472,7 @@ request an immediate poll, followed by the normal five-minute interval.
 
 | Value | Default | Where it applies / how to set it | Change |
 | --- | --- | --- | --- |
+| `JIRA_ENABLED` | `true` | Config → Voyage source. Disable to use persistent local Todos for the backlog and auto-claim, without Jira requests. Saved Jira credentials remain available when re-enabled. | Live |
 | `JIRA_BASE_URL` | Empty | Jira Cloud site URL, e.g. `https://your-team.atlassian.net`, without an issue/API path. Required with email and token to enable Jira. | Restart |
 | `JIRA_EMAIL` | Empty | Email of the account that owns the API token. Never returned to the UI. | Restart |
 | `JIRA_API_TOKEN` | Empty | Atlassian API token for that account; see setup for read/write permissions. Config accepts a replacement without revealing the existing token and stores it in SQLite. Empty token updates are rejected. | Live, write-only |

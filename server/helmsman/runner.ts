@@ -234,7 +234,7 @@ async function finalizeRun(p: FinalizeParams): Promise<void> {
 
   deps.db.updateRun(runId, { status, prNumber, costUsd: totalCost, endedAt: deps.now() });
 
-  if (createdPr && deps.jira && !task.task) {
+  if (createdPr && deps.jira && !task.todoId && !task.task) {
     await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
   }
 
@@ -327,7 +327,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       deps.bus.publish(runId, e);
     };
 
-    if (deps.jira && deps.botAccountId && !task.task && !task.prBranch) {
+    if (deps.jira && deps.botAccountId && !task.todoId && !task.task && !task.prBranch) {
       await claimTicket(deps.jira, task.ticketId, deps.botAccountId, statusInProgress, onEvent);
     }
 

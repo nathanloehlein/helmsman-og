@@ -1,5 +1,6 @@
 export interface AgentTask {
   ticketId: string;
+  todoId?: string;
   title: string;
   repo: string;
   jiraBaseUrl: string;

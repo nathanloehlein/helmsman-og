@@ -18,6 +18,7 @@ export interface GithubConfig {
 export type RepoProjectMap = Record<string, string>;
 
 export interface AppConfig {
+  jiraEnabled: boolean;
   jira: JiraConfig | null;
   github: GithubConfig | null;
   repoLabel: string;
@@ -55,11 +56,12 @@ function parseRepoProjectMap(raw: string | null): RepoProjectMap {
 }
 
 export function loadConfig(env: Env): AppConfig {
+  const jiraEnabled = env.JIRA_ENABLED !== 'false';
   const baseUrl: string | null = req(env, 'JIRA_BASE_URL');
   const email: string | null = req(env, 'JIRA_EMAIL');
   const apiToken: string | null = req(env, 'JIRA_API_TOKEN');
   const jira: JiraConfig | null =
-    baseUrl && email && apiToken
+    jiraEnabled && baseUrl && email && apiToken
       ? {
           baseUrl,
           email,
@@ -101,6 +103,7 @@ export function loadConfig(env: Env): AppConfig {
     prePr[definition.key] = parsePrePrSettingValue(env[definition.envKey], definition) ?? definition.defaultValue;
   }
   return {
+    jiraEnabled,
     jira,
     github,
     repoLabel,

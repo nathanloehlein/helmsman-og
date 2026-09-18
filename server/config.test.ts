@@ -228,3 +228,14 @@ describe('loadConfig', () => {
     expect(cfg.maxCostUsd).toBeNull();
   });
 });
+
+describe('Jira source toggle', () => {
+  it('defaults on and disables credentials without affecting GitHub', () => {
+    expect(loadConfig(FULL).jiraEnabled).toBe(true);
+    const cfg = loadConfig({ ...FULL, JIRA_ENABLED: 'false' });
+    expect(cfg.jiraEnabled).toBe(false);
+    expect(cfg.jira).toBeNull();
+    expect(cfg.github).toEqual(loadConfig(FULL).github);
+    expect(loadConfig({ ...FULL, JIRA_ENABLED: 'true' }).jira).not.toBeNull();
+  });
+});
