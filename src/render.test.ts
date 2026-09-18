@@ -1,6 +1,6 @@
 import type { PrInboxState } from './data/prLists';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRepoPrs, renderRunsDrawer, renderTriageView } from './render';
+import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRepoPrs, renderRunsDrawer, renderTriageView, renderVoyage, runTabStatus } from './render';
 import { EDITABLE_KEYS } from '../server/helmsman/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
@@ -941,14 +941,54 @@ describe('renderRunsDrawer', () => {
   });
 
   it('marks the active tab', () => {
-    const html: string = renderRunsDrawer([tab({ id: 'a' }), tab({ id: 'b' })], 'b');
-    const bTab: string = html.slice(html.indexOf('data-tabid="b"') - 40, html.indexOf('data-tabid="b"'));
-    expect(bTab).toContain('is-active');
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ id: 'a' }), tab({ id: 'b' })], 'b');
+    expect(el.querySelector('.run-tab[data-tabid="b"]')?.classList.contains('is-active')).toBe(true);
+    const active = el.querySelector<HTMLButtonElement>('.run-tab-select[data-tabid="b"]');
+    expect(active?.getAttribute('role')).toBe('tab');
+    expect(active?.getAttribute('aria-selected')).toBe('true');
+    expect(active?.tabIndex).toBe(0);
+    expect(el.querySelector<HTMLButtonElement>('.run-tab-select[data-tabid="a"]')?.tabIndex).toBe(-1);
+    expect(el.querySelector('.run-drawer-body')?.getAttribute('aria-labelledby')).toBe(active?.id);
   });
 
-  it('flags completed tabs', () => {
-    const html: string = renderRunsDrawer([tab({ complete: true })], 'run-1');
-    expect(html).toContain('run-tab-dot is-complete');
+  it('shows an unknown completed result neutrally instead of implying success', () => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ complete: true })], 'run-1');
+    expect(el.querySelector('.run-tab')?.getAttribute('data-run-status')).toBe('completed');
+    expect(el.querySelector('.run-tab-status')?.textContent).toBe('Completed');
+    expect(el.querySelector('.run-tab-dot')).toBeNull();
+  });
+
+  it.each([
+    ['failed', 'Failed'], ['succeeded', 'Succeeded'], ['running', 'Running'], ['stopped', 'Stopped'], ['queued', 'Queued'],
+  ])('labels %s with its own status for theme colors', (status, label) => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ status, complete: true })], 'run-1');
+    expect(el.querySelector('.run-tab')?.getAttribute('data-run-status')).toBe(status);
+    expect(el.querySelector('.run-tab-status')?.textContent).toBe(label);
+    expect(runTabStatus(status, true)).toEqual({ kind: status, label });
+  });
+
+  it('keeps copy, select, open, and close controls separate', () => {
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab()], 'run-1');
+    const card = el.querySelector('.run-tab')!;
+    expect(card.querySelectorAll('button button, a button, button a')).toHaveLength(0);
+    expect(card.querySelector('.run-tab-select [data-copy-run-id]')).toBeNull();
+    expect(card.querySelector('[data-copy-run-id]')?.getAttribute('aria-label')).toBe('Copy full voyage ID run-1');
+    expect(card.querySelector('[data-copy-run-id] .voyage-copy-feedback')?.getAttribute('role')).toBe('status');
+    expect(card.querySelector('.run-tab-open')?.getAttribute('aria-label')).toContain('Open');
+    expect(card.querySelector('.run-tab-close')?.getAttribute('aria-label')).toContain('Close');
+  });
+
+  it('renders a separate full-ID copy button outside history navigation', () => {
+    const el = document.createElement('div');
+    const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
+    el.innerHTML = renderVoyage({ id, ticketId: 'T-1', repo: 'org/repo', status: 'succeeded', attempt: 1, prNumber: null, startedAt: '2026-09-18T00:00:00Z', costUsd: null });
+    expect(el.querySelector('.runs-voyage-link [data-copy-run-id]')).toBeNull();
+    expect(el.querySelector('.recent-run > [data-copy-run-id]')?.getAttribute('data-copy-run-id')).toBe(id);
+    expect(el.querySelector('.voyage-id')?.textContent).toBe('b5fcda706766');
   });
 
   it('provides body, footer, and pr shells', () => {
@@ -967,6 +1007,7 @@ describe('renderRunsDrawer', () => {
     for (const selector of ['.run-tab .voyage-id', '.run-log-toolbar .voyage-id']) {
       expect(el.querySelector(selector)?.textContent).toBe('b5fcda706766');
       expect(el.querySelector(selector)?.getAttribute('title')).toBe(id);
+      expect(el.querySelector(selector)?.getAttribute('data-copy-run-id')).toBe(id);
     }
     expect(el.querySelector('.run-tab')?.getAttribute('data-tabid')).toBe(id);
     expect(el.querySelector('.run-log-download')?.getAttribute('href')).toBe(`/api/agents/${id}/log/download`);

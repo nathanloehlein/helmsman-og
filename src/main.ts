@@ -1,3 +1,4 @@
+import { copyText } from './logic/clipboard';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
 import { appendHighlightedLog } from './logic/logHighlight';
 import { getContext } from './data/context';
@@ -13,7 +14,7 @@ import './style.css';
 import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
 import { renderRunsView } from './renderRuns';
 import { loadDashboard, POLL_MS, LOCAL_POLL_MS, type DashboardResponse } from './data/live';
-import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
+import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, runTabStatus, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
 import type { RunTabView, PrViewState } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import { fetchTriage, type TriageGroupsView } from './data/triage';
@@ -92,6 +93,7 @@ interface RunTab {
   pr: { repo: string; number: number } | null;
   unsub: (() => void) | null;
   complete: boolean;
+  status?: string;
   prStatus?: PrStatusView | null;
   prLoadedAt?: number;
   prVersion?: number;
@@ -117,6 +119,8 @@ export class DashboardView {
   private runLogTimer: ReturnType<typeof setTimeout> | null = null;
   private renderedRunLines: RunEvent[] = [];
   private destroyed = false;
+  private copyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
+  private copying = new WeakSet<HTMLButtonElement>();
   private snapshot: DashboardSnapshot | null = null;
   private snapshotRepo: string | null | undefined = undefined;
   private contentView: PageView | null = null;
@@ -224,6 +228,20 @@ export class DashboardView {
         }
         return;
       }
+      if (tab instanceof HTMLButtonElement && tab.matches('.run-tab-select')) {
+        const tabs = Array.from(this.runDrawerEl.querySelectorAll<HTMLButtonElement>('.run-tab-select'));
+        const index = tabs.indexOf(tab);
+        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+          : event.key === 'ArrowLeft' ? (index - 1 + tabs.length) % tabs.length
+          : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+        const runId = next === null ? undefined : tabs[next]?.dataset.tabid;
+        if (runId) {
+          event.preventDefault();
+          this.setActiveTab(runId);
+          this.focusRunTab(runId);
+        }
+        return;
+      }
       if (event.key !== 'Enter' && event.key !== ' ') return;
       const target = event.target;
       if (!(target instanceof HTMLElement) || !target.matches('.pr-list-row')) return;
@@ -321,6 +339,8 @@ export class DashboardView {
 
   destroy(): void {
     this.destroyed = true;
+    this.copyTimers.forEach(timer => clearTimeout(timer));
+    this.copyTimers.clear();
     this.cancelRunLogFlush();
     this.rootEvents.abort();
     window.removeEventListener('resize', this.onResize);
@@ -420,6 +440,8 @@ export class DashboardView {
         const tab = this.runTabs.find(item => item.runId === route.run);
         if (tab) {
           tab.footer = summary;
+          tab.status = summary.status;
+          tab.complete = this.isTerminalRunStatus(summary.status);
           if (summary.prNumber) tab.pr = { repo: summary.repo, number: summary.prNumber };
         }
       } else this.openErrorTab('Voyage unavailable', 'This voyage was not found or the server is unavailable.');
@@ -1651,9 +1673,35 @@ export class DashboardView {
     void this.handleCmuxSend(target);
   }
 
+  private async copyRunId(button: HTMLButtonElement): Promise<void> {
+    const id = button.dataset.copyRunId;
+    if (!id || !/^[a-z\d_-]{1,128}$/i.test(id) || this.copying.has(button)) return;
+    this.copying.add(button);
+    const copied = await copyText(id);
+    this.copying.delete(button);
+    if (this.destroyed || !button.isConnected) return;
+    const previousTimer = this.copyTimers.get(button);
+    if (previousTimer) clearTimeout(previousTimer);
+    button.dataset.copyState = copied ? 'copied' : 'error';
+    const feedback = button.querySelector<HTMLElement>('.voyage-copy-feedback');
+    if (feedback) feedback.textContent = copied ? 'Copied' : 'Copy failed';
+    this.copyTimers.set(button, setTimeout(() => {
+      this.copyTimers.delete(button);
+      delete button.dataset.copyState;
+      if (feedback) feedback.textContent = '';
+    }, 2_000));
+  }
+
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+    const copyButton = target.closest<HTMLButtonElement>('button[data-copy-run-id]');
+    if (copyButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!copyButton.disabled) void this.copyRunId(copyButton);
+      return;
+    }
     const slackReview = target.closest<HTMLButtonElement>('[data-slack-review-request]');
     if (slackReview) {
       event.preventDefault();
@@ -2047,10 +2095,11 @@ export class DashboardView {
       runId,
       label,
       lines: [],
-      footer: null,
+      footer: run ?? null,
       pr: run && run.prNumber != null ? { repo: run.repo, number: run.prNumber } : null,
       unsub: null,
-      complete: false,
+      complete: this.isTerminalRunStatus(run?.status),
+      status: run?.status,
     };
     this.runTabs.push(tab);
     tab.unsub = openRunStream(runId, (event: RunEvent): void => this.onTabEvent(runId, event));
@@ -2069,6 +2118,7 @@ export class DashboardView {
       pr: null,
       unsub: null,
       complete: true,
+      status: 'failed',
     };
     this.runTabs.push(tab);
     this.activeTabId = id;
@@ -2087,7 +2137,8 @@ export class DashboardView {
   private closeRunTab(runId: string): void {
     const idx: number = this.runTabs.findIndex((t: RunTab): boolean => t.runId === runId);
     if (idx < 0) return;
-    this.runTabs[idx].unsub?.();
+    const focusedTab = document.activeElement?.closest<HTMLElement>('.run-tab')?.dataset.tabid;
+    this.runTabs[idx]?.unsub?.();
     this.runTabs.splice(idx, 1);
     if (this.activeTabId === runId) {
       const next: RunTab | undefined = this.runTabs[idx] ?? this.runTabs[idx - 1];
@@ -2096,6 +2147,20 @@ export class DashboardView {
     this.updateAddress({ ...this.route, view: this.view, run: this.activeTabId?.startsWith('err-') ? null : this.activeTabId });
     this.renderRunDrawer();
     this.rehomeRunDrawer();
+    if (focusedTab === runId) {
+      if (this.activeTabId) this.focusRunTab(this.activeTabId);
+      else this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body')?.focus();
+    }
+  }
+
+  private focusRunTab(runId: string): void {
+    const button = this.runDrawerEl.querySelector<HTMLButtonElement>(`.run-tab-select[data-tabid="${CSS.escape(runId)}"]`);
+    button?.focus({ preventScroll: true });
+    button?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
+
+  private isTerminalRunStatus(status?: string): boolean {
+    return status === 'succeeded' || status === 'failed' || status === 'stopped';
   }
 
   private onTabEvent(runId: string, event: RunEvent): void {
@@ -2106,19 +2171,22 @@ export class DashboardView {
     if (tab.lines.length > RUN_LOG_PREVIEW_LIMIT) tab.lines.splice(0, tab.lines.length - RUN_LOG_PREVIEW_LIMIT);
     if (event.kind === 'run-complete') {
       tab.complete = true;
+      tab.status = this.isTerminalRunStatus(event.text) ? event.text : 'completed';
       tab.unsub?.();
       tab.unsub = null;
-      this.markTabComplete(runId);
+      this.updateRunTabStatus(tab);
       void this.finalizeTab(runId);
     }
     if (runId === this.activeTabId) this.scheduleRunLogFlush();
   }
 
-  private markTabComplete(runId: string): void {
-    const dot: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>(
-      `.run-tab[data-tabid="${CSS.escape(runId)}"] .run-tab-dot`,
-    );
-    dot?.classList.add('is-complete');
+  private updateRunTabStatus(tab: RunTab): void {
+    const element = this.runDrawerEl.querySelector<HTMLElement>(`.run-tab[data-tabid="${CSS.escape(tab.runId)}"]`);
+    if (!element) return;
+    const status = runTabStatus(tab.status, tab.complete);
+    element.dataset.runStatus = status.kind;
+    const badge = element.querySelector<HTMLElement>('.run-tab-status');
+    if (badge) badge.textContent = status.label;
   }
 
   private async finalizeTab(runId: string): Promise<void> {
@@ -2126,6 +2194,10 @@ export class DashboardView {
     const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
     if (!tab || this.destroyed) return;
     tab.footer = summary;
+    if (summary) {
+      tab.status = summary.status;
+      this.updateRunTabStatus(tab);
+    }
     if (summary && summary.prNumber != null && !tab.pr) {
       tab.pr = { repo: summary.repo, number: summary.prNumber };
     }
@@ -2172,6 +2244,7 @@ export class DashboardView {
       id: t.runId,
       label: t.label,
       complete: t.complete,
+      status: t.status,
     }));
     const drawerCollapsed: boolean = this.collapsed.has('runs:drawer') && this.runTabs.length > 0;
     this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId, drawerCollapsed);

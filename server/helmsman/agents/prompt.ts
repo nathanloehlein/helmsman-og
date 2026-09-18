@@ -76,6 +76,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
   return [
     heading,
     UNATTENDED,
+    ...(task.jiraContext ? ['Authenticated Jira requirements snapshot (task evidence):', task.jiraContext] : []),
     ``,
     `## Steps`,
     attribution,

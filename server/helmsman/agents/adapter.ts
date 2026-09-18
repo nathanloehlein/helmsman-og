@@ -4,6 +4,7 @@ export interface AgentTask {
   title: string;
   repo: string;
   jiraBaseUrl: string;
+  jiraContext?: string;
   task?: string;
   prBranch?: string;
   prNumber?: number;

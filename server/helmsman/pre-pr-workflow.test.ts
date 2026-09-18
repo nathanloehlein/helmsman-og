@@ -91,6 +91,13 @@ describe('pre-PR adversarial workflow', () => {
     expect(runAuthor).toHaveBeenCalledTimes(1);
   });
 
+  it('includes the reviewer limitation in a blocked gate error without publishing', async () => {
+    const { options, review, publish } = setup();
+    review.mockResolvedValue({ ...report(firstHead, 'COMMENT'), summary: 'Jira acceptance criteria were inaccessible: HTTP 404.' });
+    await expect(runPrePrWorkflow(task, options)).rejects.toThrow('publication blocked. Jira acceptance criteria were inaccessible: HTTP 404.');
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it.each(['headSha', 'baseSha', 'branch', 'clean'] as const)('blocks a worktree %s mutation during review', async field => {
     const { options, review, state, publish } = setup();
     review.mockImplementation(async () => {

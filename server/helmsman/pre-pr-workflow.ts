@@ -163,7 +163,7 @@ export async function runPrePrWorkflow(task: AgentTask, options: PrePrOptions): 
       const report = parsePrePrReview(await invoke(`${reviewer} review`, () => options.review(reviewer,
         { baseSha: initial.baseSha, headSha: revision.headSha, round })), revision);
       await assertUnchanged(revision);
-      if (report.verdict === 'COMMENT') throw new PrePrGateError(`${reviewer} did not approve or provide actionable change requests; publication blocked.`);
+      if (report.verdict === 'COMMENT') throw new PrePrGateError(`${reviewer} did not approve or provide actionable change requests; publication blocked. ${report.summary}`);
       reviews.push({ reviewer, report });
     }
     if (reviews.every(({ report }) => report.verdict === 'APPROVE' && report.findings.length === 0)) {

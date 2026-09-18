@@ -108,6 +108,12 @@ const ICON_INFO: string =
 const ICON_CHECK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>'
 
+const ICON_COPY: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="7" height="8" rx="1.2"/><path d="M3 10.5H2.5V2.5h7V3"/></svg>';
+
+const ICON_OPEN: string =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5h4.5V7M13 3l-7 7M6.5 3H3v10h10V9.5"/></svg>';
+
 const ICON_X_MARK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'
 
@@ -558,7 +564,7 @@ export function renderDashboard(
 function renderVoyageId(id: unknown): string {
   const shortId = shortVoyageId(id);
   return shortId && typeof id === 'string'
-    ? `<span class="voyage-id mono" title="${esc(id)}" aria-label="Voyage ${esc(shortId)}">${esc(shortId)}</span>`
+    ? `<button type="button" class="voyage-id mono" data-copy-run-id="${esc(id)}" title="${esc(id)}" aria-label="Copy full voyage ID ${esc(id)}">${ICON_COPY}<span>${esc(shortId)}</span><span class="voyage-copy-feedback" role="status" aria-live="polite"></span></button>`
     : '';
 }
 
@@ -566,20 +572,33 @@ export interface RunTabView {
   id: string;
   label: string;
   complete: boolean;
+  status?: string;
+}
+
+export function runTabStatus(status?: string, complete = false): { kind: string; label: string } {
+  const labels: Record<string, string> = { running: 'Running', succeeded: 'Succeeded', failed: 'Failed', stopped: 'Stopped', queued: 'Queued', completed: 'Completed' };
+  const kind = status && Object.hasOwn(labels, status) ? status : complete ? 'completed' : 'running';
+  return { kind, label: labels[kind] ?? 'Running' };
 }
 
 export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, collapsed: boolean = false): string {
   const strip: string = tabs
     .map(
-      (t) => `
-      <div class="run-tab${t.id === activeId ? ' is-active' : ''}" data-tabid="${esc(t.id)}">
-        <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}">
-          <span class="run-tab-dot${t.complete ? ' is-complete' : ''}" aria-hidden="true"></span>
-          <span class="run-tab-identity"><span class="run-tab-label">${esc(t.label)}</span>${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}</span>
+      (t, index) => {
+        const status = runTabStatus(t.status, t.complete);
+        const selected = t.id === activeId;
+        return `
+      <div class="run-tab${selected ? ' is-active' : ''}" data-tabid="${esc(t.id)}" data-run-status="${status.kind}" role="presentation">
+        <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}" role="tab" id="run-tab-${esc(encodeURIComponent(t.id))}" aria-selected="${selected}" aria-controls="run-log-panel" tabindex="${selected || activeId === null && index === 0 ? 0 : -1}" title="${esc(t.label)}">
+          <span class="run-tab-label">${esc(t.label)}</span>
+          <span class="run-tab-status">${status.label}</span>
         </button>
-        ${!t.id.startsWith('err-') ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Link to ${esc(t.label)}">↗</a>` : ''}
-        <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}">${ICON_CLOSE}</button>
-      </div>`,
+        <div class="run-tab-meta">${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}
+          <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Open ${esc(t.label)} in Voyages" title="Open voyage">${ICON_OPEN}</a>` : ''}
+          <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}" title="Close voyage">${ICON_CLOSE}</button></div>
+        </div>
+      </div>`;
+      },
     )
     .join('');
   const emptyBody: string =
@@ -594,9 +613,9 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
     ? `<div class="run-log-toolbar mono">${renderVoyageId(activeId)}<span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
     : '';
   return `
-    <div class="run-tabs" role="tablist">${header}${strip}${collapseBtn}</div>
+    <div class="run-tabs" role="tablist" aria-label="Open voyages">${header}${strip}${collapseBtn}</div>
     ${logToolbar}
-    <div class="run-drawer-body mono">${emptyBody}</div>
+    <div class="run-drawer-body mono" id="run-log-panel" role="tabpanel"${activeId ? ` aria-labelledby="run-tab-${esc(encodeURIComponent(activeId))}"` : ' aria-label="Voyage output"'} tabindex="0">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
 }
@@ -819,14 +838,15 @@ export function renderVoyage(run: RunSummary): string {
   const startedAt = typeof run.startedAt === 'string' && Number.isFinite(Date.parse(run.startedAt))
     ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}">${esc(formatRelativeTime(run.startedAt, new Date()))}</time>` : '';
   const href = `/runs?${new URLSearchParams({ run: run.id })}`;
-  return `<li class="recent-run" data-runid="${esc(run.id)}">
+  return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
     <a class="app-link lane runs-voyage-link" href="${esc(href)}">
       ${renderVoyageResult(run)}
-      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span>${renderVoyageId(run.id)}</span>
+      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span></span>
       <span class="agent-repo mono">${esc(run.repo.split('/').pop() ?? run.repo)}</span>
       ${startedAt}
       <span class="chip ${status.chipClass}">${esc(status.label)}</span>
     </a>
+    ${renderVoyageId(run.id)}
   </li>`;
 }
 

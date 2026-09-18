@@ -31,7 +31,8 @@ import { openTodoStore, TodoConflictError } from './todos';
 import { todoTask, reconcileTodoRuns } from './todo-source';
 import { AutoClaimScheduler, type BacklogItem } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
-import { fetchQueueIssues, fetchIssueSummary } from '../jira';
+import { fetchQueueIssues } from '../jira';
+import { jiraTask } from './jira-task';
 import { createBridge } from './cmux/bridge';
 import { openSlackStore } from './slack/store';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
@@ -315,12 +316,9 @@ function launch(body: { todoId?: string; ticketId?: string; title?: string; repo
         };
       } else {
         const ticketId: string = body.ticketId ?? 'freeform';
-        const fetchedTitle: string | null =
-          !body.title && body.ticketId && cfg.jira
-            ? await fetchIssueSummary(cfg.jira, body.ticketId).catch((): null => null)
-            : null;
-        const title: string = body.title ?? fetchedTitle ?? ticketId;
-        taskObj = { ticketId, title, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
+        taskObj = body.ticketId && !body.task
+          ? await jiraTask(cfg.jira, { ticketId, title: body.title, repo: body.repo })
+          : { ticketId, title: body.title ?? ticketId, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
       }
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;

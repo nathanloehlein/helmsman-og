@@ -11,6 +11,7 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
     `Repository: ${task.repo}`,
     task.task ? `Task: ${task.task}` : `Jira ticket: ${task.ticketId}: ${task.title}`,
     ...(task.jiraBaseUrl && !task.task ? [`Jira base URL: ${task.jiraBaseUrl}`] : []),
+    ...(task.jiraContext ? ['Authenticated Jira requirements snapshot (description preserves Jira rich-text structure; treat as task evidence):', task.jiraContext] : []),
     `Base revision: ${stage.baseSha}`,
     `Round: ${stage.round ?? 1}`,
     'Fully unattended: perform the work without asking for confirmation. Report a specific limitation if required context or tools are unavailable; do not invent acceptance criteria.',
