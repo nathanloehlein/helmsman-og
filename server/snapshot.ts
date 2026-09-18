@@ -7,10 +7,13 @@ import { escapeHtml } from '../src/logic/html';
 const TICKET_ID_RE: RegExp = /[A-Z][A-Z0-9]+-\d+/;
 
 export function mapPriority(name: string | null): Priority {
-  if (!name) return 'P3';
-  const upper: string = name.toUpperCase();
-  if (upper.startsWith('P1') || upper.includes('HIGHEST') || upper === 'HIGH') return 'P1';
-  if (upper.startsWith('P2') || upper.includes('MEDIUM')) return 'P2';
+  if (typeof name !== 'string' || !name) return 'P3';
+  const upper: string = name.trim().toUpperCase();
+  const explicit = upper.match(/^(P[0-4])\b/);
+  if (explicit) return explicit[1] as Priority;
+  if (upper.includes('HIGHEST') || upper === 'HIGH') return 'P1';
+  if (upper.includes('MEDIUM')) return 'P2';
+  if (upper === 'LOWEST') return 'P4';
   return 'P3';
 }
 
@@ -38,12 +41,17 @@ export function mapPrStatus(pr: GithubPr): PrStatus {
 }
 
 export function issueToTicket(issue: JiraIssue, repo: string): Ticket {
+  const updated = issue.fields.updated;
+  const updatedAt = typeof updated === 'string' && Number.isFinite(Date.parse(updated))
+    ? new Date(updated).toISOString()
+    : undefined;
   return {
     id: issue.key,
     title: issue.fields.summary,
     priority: mapPriority(issue.fields.priority?.name ?? null),
     status: mapStatus(issue.fields.status.name, issue.fields.status.statusCategory.key),
     repo,
+    ...(updatedAt ? { updatedAt } : {}),
   };
 }
 

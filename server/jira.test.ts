@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchIssueSummary, fetchTriageGroups, fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations } from './jira';
+import { fetchIssueSummary, fetchMineOpenIssues, fetchTriageGroups, fetchApproxCount, fetchOpenBugs, fetchOldestOpenBug, fetchResolvedDurations } from './jira';
 import type { JiraConfig } from './config';
 import type { JiraIssue } from './types';
 import {
@@ -90,6 +90,10 @@ describe('fetchTriageGroups', () => {
     expect(groups.unassignedBacklog.map((i) => i.key)).toEqual(['B-1']);
     expect(groups.unassignedTodo.map((i) => i.key)).toEqual(['T-1', 'T-2']);
     expect(groups.mineOpen.map((i) => i.key)).toEqual(['M-1']);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const [url] of vi.mocked(fetchMock).mock.calls) {
+      expect(new URL(String(url)).searchParams.get('fields')?.split(',')).toContain('updated');
+    }
   });
 
   it('empties only the failing group and keeps the others', async () => {
@@ -113,6 +117,65 @@ describe('fetchTriageGroups', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(fetchTriageGroups(jira, 'Backlog', 'To Do')).rejects.toThrow();
+  });
+});
+
+describe('fetchMineOpenIssues', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('shares an assigned unfinished search with triage without fetching changelogs', async () => {
+    const oldIssue = { ...issue('PROJ-1'), fields: { ...issue('PROJ-1').fields, updated: '2025-01-01T00:00:00Z' } };
+    const fetchMock = vi.fn(async (_url: string | URL) => ({ ok: true, json: async () => ({ issues: [oldIssue] }) }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [first, second] = await Promise.all([fetchMineOpenIssues(jira), fetchMineOpenIssues(jira)]);
+    expect(first).toEqual([oldIssue]);
+    expect(second).toEqual(first);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const mineUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(mineUrl.pathname).toBe('/rest/api/3/search/jql');
+    expect(mineUrl.searchParams.get('jql')).toContain('statusCategory != Done');
+    expect(mineUrl.searchParams.get('jql')).toContain('assignee = "bot"');
+    expect(mineUrl.searchParams.get('jql')).not.toContain('updated');
+    expect(mineUrl.searchParams.has('expand')).toBe(false);
+
+    const triage = await fetchTriageGroups(jira, 'Backlog', 'To Do');
+    expect(triage.mineOpen).toEqual(first);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('refreshes after five minutes and isolates project, assignee, base URL and credentials', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ issues: [] }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchMineOpenIssues(jira);
+    vi.advanceTimersByTime(299_999);
+    await fetchMineOpenIssues(jira);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    await fetchMineOpenIssues(jira);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    for (const override of [
+      { project: 'OTHER' }, { assignee: 'someone' }, { baseUrl: 'https://other.atlassian.net' },
+      { email: 'other@example.com' }, { apiToken: 'other-token' },
+    ]) await fetchMineOpenIssues({ ...jira, ...override });
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it('backs off failed requests until the next five-minute refresh', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 429, text: async () => 'rate limited' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchMineOpenIssues(jira)).rejects.toThrow('429');
+    await expect(fetchMineOpenIssues(jira)).rejects.toThrow('429');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(300_000);
+    await expect(fetchMineOpenIssues(jira)).rejects.toThrow('429');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

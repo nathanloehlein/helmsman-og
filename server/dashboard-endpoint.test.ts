@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildDashboardResponse } from './dashboard-endpoint';
+import type { JiraConfig } from './config';
 
 const NOW = new Date('2026-08-17T12:00:00.000Z');
 
@@ -23,6 +24,45 @@ describe('buildDashboardResponse', () => {
     expect(r.degraded).toEqual([]);
     expect(r.snapshot.queue[0].id).toBe('Q-1');
     expect(r.jiraBaseUrl).toBe('https://x.atlassian.net');
+    expect(r.snapshot.underway).toEqual([]);
+    expect(r.snapshot.underwayAvailable).toBe(false);
+  });
+
+  it('maps older assigned work using the selected repository Jira project and full configuration', async () => {
+    let seenJira: JiraConfig | undefined;
+    const r = await buildDashboardResponse(
+      { ...FULL_ENV, REPO_PROJECT_MAP: 'o/a=PROJA' }, NOW,
+      {
+        ...OK_DEPS,
+        fetchMineOpenIssues: async (jira) => {
+          seenJira = jira;
+          return [{ key: 'PROJA-1', fields: {
+            summary: 'Older assigned work', status: { name: 'To Do', statusCategory: { key: 'new' } },
+            priority: { name: 'P2' }, resolutiondate: null, updated: '2025-01-01T00:00:00Z',
+          } }];
+        },
+      }, 'o/a',
+    );
+    expect(seenJira).toEqual({
+      baseUrl: FULL_ENV.JIRA_BASE_URL, email: FULL_ENV.JIRA_EMAIL, apiToken: FULL_ENV.JIRA_API_TOKEN,
+      project: 'PROJA', assignee: 'me', jql: null,
+    });
+    expect(r.snapshot.underwayAvailable).toBe(true);
+    expect(r.snapshot.underway).toEqual([{
+      id: 'PROJA-1', title: 'Older assigned work', status: 'backlog', priority: 'P2', repo: 'a',
+      updatedAt: '2025-01-01T00:00:00.000Z',
+    }]);
+  });
+
+  it('preserves live dashboard fields when assigned work is unavailable', async () => {
+    const r = await buildDashboardResponse(FULL_ENV, NOW, {
+      ...OK_DEPS,
+      fetchMineOpenIssues: async () => { throw new Error('unavailable'); },
+    });
+    expect(r.degraded).toEqual(['jira-underway']);
+    expect(r.snapshot.queue[0]?.id).toBe('Q-1');
+    expect(r.snapshot.underway).toEqual([]);
+    expect(r.snapshot.underwayAvailable).toBe(false);
   });
 
   it('returns a null jiraBaseUrl when Jira is not configured', async () => {
@@ -31,6 +71,8 @@ describe('buildDashboardResponse', () => {
       loadMock: async () => (await import('../src/data/mock')).loadDashboard(),
     });
     expect(r.jiraBaseUrl).toBeNull();
+    expect(r.snapshot.underway).toEqual([]);
+    expect(r.snapshot.underwayAvailable).toBe(false);
   });
 
   it('degrades to mock queue when Jira throws, keeps GitHub', async () => {

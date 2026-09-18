@@ -16,6 +16,7 @@ export interface JiraIssue {
     status: { name: string; statusCategory: { key: string } };
     priority: { name: string } | null;
     resolutiondate: string | null;
+    updated?: string | null;
   };
   changelog?: { histories: JiraHistory[] };
 }

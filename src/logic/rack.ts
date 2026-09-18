@@ -1,11 +1,12 @@
-export type PanelId = 'newrun' | 'backlog' | 'running' | 'recent' | 'myprs' | 'shipped' | 'activity';
+export type PanelId = 'newrun' | 'backlog' | 'underway' | 'running' | 'recent' | 'repoprs' | 'shipped' | 'activity';
 
 export const ALL_PANELS: PanelId[] = [
   'newrun',
   'backlog',
+  'underway',
   'running',
   'recent',
-  'myprs',
+  'repoprs',
   'shipped',
   'activity',
 ];
@@ -26,7 +27,7 @@ function unit(panel: PanelId): RackSlot {
 
 export function defaultLayout(): RackLayout {
   return [
-    [unit('newrun'), unit('backlog'), unit('running'), unit('myprs')],
+    [unit('underway'), unit('newrun'), unit('backlog'), unit('running'), unit('repoprs')],
     [unit('recent'), unit('activity'), unit('shipped')],
   ];
 }
@@ -132,15 +133,17 @@ export function deserialize(raw: string | null): RackLayout {
       const rawPanels: unknown = rawSlot?.panels;
       if (!Array.isArray(rawPanels)) continue;
       const panels: PanelId[] = [];
-      for (const p of rawPanels) {
+      for (const rawPanel of rawPanels) {
+        const p: unknown = rawPanel === 'myprs' ? 'repoprs' : rawPanel;
         if (typeof p === 'string' && PANEL_SET.has(p) && !seen.has(p)) {
           seen.add(p);
           panels.push(p as PanelId);
         }
       }
       if (panels.length === 0) continue;
-      const active: PanelId = panels.includes(rawSlot?.active as PanelId)
-        ? (rawSlot!.active as PanelId)
+      const rawActive: unknown = rawSlot?.active === 'myprs' ? 'repoprs' : rawSlot?.active;
+      const active: PanelId = panels.includes(rawActive as PanelId)
+        ? (rawActive as PanelId)
         : panels[0]!;
       col.push({ panels, active, collapsed: rawSlot?.collapsed === true });
     }

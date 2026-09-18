@@ -13,8 +13,8 @@
 - TypeScript strict; explicit annotations on all locals/params/returns; no `any`.
 - No inline comments (repo hook); JSDoc directly above an `export` is allowed.
 - Tests do no network — inject a fake `fetch`/deps.
-- The agent never merges; the orchestrator only assigns + transitions Jira status.
-- Jira writes must fail soft: a transition/assign error degrades the run to a logged event, never crashes the orchestrator and never blocks the agent from working.
+- The agent never merges; Helmsman only assigns + transitions Jira status.
+- Jira writes must fail soft: a transition/assign error degrades the run to a logged event, never crashes Helmsman and never blocks the agent from working.
 - New env: `BOT_ACCOUNT_ID` (Jira accountId the bot claims as), `AGENT_MAX_ATTEMPTS` (default 2), optional `JIRA_STATUS_IN_PROGRESS` / `JIRA_STATUS_IN_REVIEW` (default "In Progress" / "In Review").
 - Conventional Commits; commit after each task.
 
@@ -22,7 +22,7 @@
 
 ### Task 1: Jira write actions (`jira-actions.ts`)
 
-**Files:** Create `server/orchestrator/jira-actions.ts`; Test `server/orchestrator/jira-actions.test.ts`.
+**Files:** Create `server/helmsman/jira-actions.ts`; Test `server/helmsman/jira-actions.test.ts`.
 
 **Interfaces:**
 - Consumes: `JiraConfig` (`server/config.ts`).
@@ -33,32 +33,32 @@
 
 - [ ] **Step 1: Write the failing test** — inject a fake `fetch` that records calls and returns canned transition lists. Assert: `assign` PUTs `/issue/K/assignee` with `{accountId}` + Basic auth header; `transition` looks up the id for "In Review" and POSTs it; `transition` returns `false` when the status isn't offered; neither throws on a 500 (returns false / resolves).
 
-- [ ] **Step 2: Run → FAIL.** `npx vitest run server/orchestrator/jira-actions.test.ts`
+- [ ] **Step 2: Run → FAIL.** `npx vitest run server/helmsman/jira-actions.test.ts`
 
 - [ ] **Step 3: Implement** using `node` global `fetch` (default param `fetchImpl: typeof fetch = fetch`), Basic auth from `jira.email`/`jira.apiToken` (`Buffer.from(...).toString('base64')`), `jira.baseUrl`. Wrap network in try/catch → return false / resolve; do not throw.
 
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit`.
 
-- [ ] **Step 5: Commit** `feat(orchestrator): Jira assign + transition write actions`.
+- [ ] **Step 5: Commit** `feat(helmsman): Jira assign + transition write actions`.
 
 ---
 
 ### Task 2: GitHub PR detection by branch
 
-**Files:** Modify `server/orchestrator/github.ts` (add export); no unit test (I/O wrapper) — covered by the runner test via injection.
+**Files:** Modify `server/helmsman/github.ts` (add export); no unit test (I/O wrapper) — covered by the runner test via injection.
 
 **Interfaces:**
 - Produces: `findPrNumberByBranch(github: GithubConfig, repo: string, branch: string): Promise<number | null>` — `GET /repos/{repo}/pulls?head={owner}:{branch}&state=all&per_page=1`, returns the PR number or null.
 
 - [ ] **Step 1: Implement** the helper (array-arg-free URL via `URLSearchParams`; `repo` is `owner/name`, so `head` = `${owner}:${branch}`). Return `null` on non-2xx / empty.
 - [ ] **Step 2:** `npx tsc --noEmit` clean.
-- [ ] **Step 3: Commit** `feat(orchestrator): detect the PR a run opened by branch`.
+- [ ] **Step 3: Commit** `feat(helmsman): detect the PR a run opened by branch`.
 
 ---
 
 ### Task 3: Run driver lifecycle + gate + re-run cap
 
-**Files:** Modify `server/orchestrator/runner.ts` + `runner.test.ts`.
+**Files:** Modify `server/helmsman/runner.ts` + `runner.test.ts`.
 
 **Interfaces:**
 - Extend `RunnerDeps` with (all optional so P1 tests still compile):
@@ -83,19 +83,19 @@
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** the lifecycle in `startRun`, fail-soft around every Jira call.
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit` + `npm test` full suite green.
-- [ ] **Step 5: Commit** `feat(orchestrator): claim/In-Progress on launch, In-Review on PR, bounded re-runs`.
+- [ ] **Step 5: Commit** `feat(helmsman): claim/In-Progress on launch, In-Review on PR, bounded re-runs`.
 
 ---
 
 ### Task 4: Wire config + main.ts
 
-**Files:** Modify `server/config.ts` (+ test), `server/orchestrator/main.ts`, `.env.example`.
+**Files:** Modify `server/config.ts` (+ test), `server/helmsman/main.ts`, `.env.example`.
 
 - [ ] **Step 1:** `loadConfig` parses `BOT_ACCOUNT_ID`, `AGENT_MAX_ATTEMPTS` (int, default 2), `JIRA_STATUS_IN_PROGRESS`/`JIRA_STATUS_IN_REVIEW` (defaults). Add config-test cases.
 - [ ] **Step 2:** In `main.ts` `launch()`, build `jira = config.jira ? makeJiraActions(config.jira) : null` and pass `jira`, `botAccountId`, statuses, `findPrNumber: (repo, branch) => config.github ? findPrNumberByBranch(config.github, repo, branch) : Promise.resolve(null)`, `maxAttempts` into the runner deps.
 - [ ] **Step 3:** `.env.example` documents the new vars + notes the Jira token now needs **write** scope.
 - [ ] **Step 4:** `npx tsc --noEmit` + `npm test` green.
-- [ ] **Step 5: Commit** `feat(orchestrator): wire Jira lifecycle config into launch`.
+- [ ] **Step 5: Commit** `feat(helmsman): wire Jira lifecycle config into launch`.
 
 ---
 

@@ -22,7 +22,7 @@
 
 ### Task 1: `AutoClaimScheduler` core
 
-**Files:** Create `server/orchestrator/scheduler.ts`; Test `server/orchestrator/scheduler.test.ts`.
+**Files:** Create `server/helmsman/scheduler.ts`; Test `server/helmsman/scheduler.test.ts`.
 
 **Interfaces:**
 - `interface SchedulerDeps { canStart: (repo: string) => boolean; fetchTopBacklog: (repo: string) => Promise<{ ticketId: string; title: string } | null>; launch: (body: { ticketId: string; title: string; repo: string }) => void; onLog?: (msg: string) => void }`
@@ -31,19 +31,19 @@
 
 - [ ] **Step 1: Failing test** — with two enabled repos, one idle (`canStart` true) with a top ticket and one busy (`canStart` false): `tick()` launches exactly the idle repo's ticket (launch spy called once with the right body), never the busy one. Enabled/disabled toggles reflect in `isEnabled`/`enabledRepos`. A repo whose `fetchTopBacklog` returns null → no launch. A repo whose `fetchTopBacklog` rejects → no launch, no throw (other repos still processed). Disabling a repo stops it being ticked.
 
-- [ ] **Step 2: Run → FAIL.** `npx vitest run server/orchestrator/scheduler.test.ts`
+- [ ] **Step 2: Run → FAIL.** `npx vitest run server/helmsman/scheduler.test.ts`
 
 - [ ] **Step 3: Implement** `scheduler.ts` — a `Set<string>` of enabled repos; `tick()` iterates a snapshot of the set, `canStart` gate, `await fetchTopBacklog`, `launch`, each repo in its own try/catch calling `onLog` on error. No real timer inside the class (the caller drives `tick`).
 
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit`.
 
-- [ ] **Step 5: Commit** `feat(orchestrator): per-repo auto-claim scheduler core`.
+- [ ] **Step 5: Commit** `feat(helmsman): per-repo auto-claim scheduler core`.
 
 ---
 
 ### Task 2: Wire scheduler into the server + toggle endpoint
 
-**Files:** Modify `server/orchestrator/main.ts`, `server/orchestrator/router.ts` (+ `router.test.ts`), `server/config.ts` (interval), `.env.example`.
+**Files:** Modify `server/helmsman/main.ts`, `server/helmsman/router.ts` (+ `router.test.ts`), `server/config.ts` (interval), `.env.example`.
 
 **Interfaces:**
 - `RouterDeps` gains `setAutoClaim: (repo: string, enabled: boolean) => void` and `autoClaimRepos: () => string[]`.
@@ -56,9 +56,9 @@
 
 - [ ] **Step 3: Implement** — extend `RouterDeps` + `handleApi` (the `POST /api/repos/:repo/auto-claim` branch via regex + decode; add `autoClaim` to the `/api/agents` json). In `config.ts` parse `AUTO_CLAIM_INTERVAL_MS` (default 60000, non-numeric → 60000). In `main.ts`: build `fetchTopBacklog(repo)` = resolve the repo's mapped Jira project from `config.repoProjectMap`; if none, return null; else `fetchQueueIssues({ ...config.jira, project })` → map the first issue to `{ticketId: issue.key, title: issue.fields.summary}` (or null). Construct `new AutoClaimScheduler({ canStart: (r) => pm.canStart(r).ok, fetchTopBacklog, launch, onLog: (m) => process.stderr.write(m + '\n') })`. `setInterval(() => void scheduler.tick(), config.autoClaimIntervalMs)`. Wire `setAutoClaim`/`autoClaimRepos` into `handleApi` deps.
 
-- [ ] **Step 4: Run → PASS** (`npx vitest run server/orchestrator` + `npx tsc --noEmit` + `npm test`).
+- [ ] **Step 4: Run → PASS** (`npx vitest run server/helmsman` + `npx tsc --noEmit` + `npm test`).
 
-- [ ] **Step 5: Commit** `feat(orchestrator): auto-claim toggle endpoint + heartbeat wiring`.
+- [ ] **Step 5: Commit** `feat(helmsman): auto-claim toggle endpoint + heartbeat wiring`.
 
 ---
 

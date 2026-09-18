@@ -1,6 +1,7 @@
+import type { PrInboxState } from './data/prLists';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRunsDrawer, renderTriageView } from './render';
-import { EDITABLE_KEYS } from '../server/orchestrator/config-store';
+import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRepoPrs, renderRunsDrawer, renderTriageView } from './render';
+import { EDITABLE_KEYS } from '../server/helmsman/config-store';
 import type { CmuxViewState, RunTabView } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import type { RunSummary } from './data/agents';
@@ -43,7 +44,7 @@ describe('renderDashboard', () => {
     const el: HTMLDivElement = root();
     expect(() => renderDashboard(el, snapshot({ steps: [] }), NOW)).not.toThrow();
     expect(el.innerHTML.length).toBeGreaterThan(0);
-    expect(el.innerHTML).toContain('GoMaestro');
+    expect(el.innerHTML).toContain('Helmsman');
   });
 
   it('shows the degraded banner when sources are degraded', () => {
@@ -93,26 +94,52 @@ describe('renderDashboard', () => {
     renderDashboard(el, scoped, NOW, [], ['org/alpha', 'org/beta'], 'org/alpha');
     const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.repo-select');
     expect(select).not.toBeNull();
-    expect(el.querySelector('.bench-head .repo-select')).not.toBeNull();
+    expect(el.querySelector('.helm-head .nameplate-scope .repo-select')).toBe(select);
+    expect(select?.previousElementSibling?.classList.contains('nameplate-name')).toBe(true);
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(['', 'org/alpha', 'org/beta']);
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('org/alpha');
     expect(el.querySelectorAll('.pr-card').length).toBe(2);
   });
 
-  it('renders a theme-select with an option per theme and marks the current one selected', () => {
+  it('renders theme selection in its own Config customization panel', () => {
     const el: HTMLDivElement = root();
-    renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, 'dracula');
+    el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { repos: [], selectedRepo: null, themeId: 'dracula' });
     const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
     expect(select).not.toBeNull();
+    expect(el.querySelector('.ui-customization-panel .theme-select')).toBe(select);
+    expect(el.querySelector('.ui-customization-panel .theme-preview')).not.toBeNull();
+    expect(el.querySelector('.helm-head .theme-select')).toBeNull();
+    expect(el.querySelector('label[for="ui-theme"]')?.textContent).toBe('Theme');
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(THEMES.map((t) => t.id));
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('dracula');
   });
 
-  it('defaults the theme-select to the default theme id when no themeId is passed', () => {
+  it('omits theme selection from the dashboard', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
-    const select: HTMLSelectElement | null = el.querySelector<HTMLSelectElement>('.theme-select');
-    expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe(DEFAULT_THEME_ID);
+    expect(el.querySelector('.theme-select')).toBeNull();
+  });
+
+  it.each(['dashboard', 'config'] as const)('places %s content in the panel controlled by the separate tab row', (page) => {
+    const el = root();
+    if (page === 'dashboard') renderDashboard(el, snapshot(), NOW);
+    else el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+
+    const header = el.querySelector('.helm-head');
+    const tabs = el.querySelector('[role="tablist"].page-tabs');
+    const panel = el.querySelector('#page-content');
+    const selected = tabs?.querySelector('[aria-selected="true"]');
+    expect(header?.nextElementSibling).toBe(tabs);
+    expect(tabs?.nextElementSibling).toBe(panel);
+    expect(panel?.getAttribute('role')).toBe('tabpanel');
+    expect(panel?.getAttribute('aria-labelledby')).toBe(selected?.id);
+    expect(selected?.getAttribute('data-view')).toBe(page);
+    expect(tabs?.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+    expect(tabs?.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    for (const tab of tabs?.querySelectorAll('[role="tab"]') ?? []) {
+      expect(tab.getAttribute('aria-controls')).toBe(panel?.id);
+    }
+    expect(panel?.contains(el.querySelector(page === 'dashboard' ? '.helm-rack' : '.ui-customization-panel'))).toBe(true);
   });
 
   it('escapes untrusted ticket titles to prevent XSS', () => {
@@ -181,7 +208,7 @@ describe('renderDashboard', () => {
     renderDashboard(el, snapshot(), NOW, [], [], null, []);
     const emptyNote: Element | null = el.querySelector('.agent-list .empty-note');
     expect(emptyNote).not.toBeNull();
-    expect(emptyNote?.textContent).toContain('No agents running.');
+    expect(emptyNote?.textContent).toContain('No crew tasks underway.');
   });
 
   it('scopes running and recent runs to the selected repo', () => {
@@ -218,10 +245,10 @@ describe('renderDashboard', () => {
     expect(footer).not.toBeNull();
     const text: string = footer.textContent ?? '';
     expect(text).toContain('nloehlein@godaddy.com');
-    expect(text).toContain(`GoMaestro v${__APP_VERSION__}`);
+    expect(text).toContain(`Helmsman v${__APP_VERSION__}`);
     expect(text).toContain(`updated ${__BUILD_DATE__}`);
     expect(text).toContain('2 repos tracked');
-    expect(text).toContain('1 running');
+    expect(text).toContain('1 underway');
   });
 
   it('adds a help tooltip to each config key', () => {
@@ -286,20 +313,10 @@ describe('renderDashboard', () => {
     expect(el.innerHTML).toContain('5');
   });
 
-  it('renders the auto-claim toggle checked when the selected repo is in the auto-claim list', () => {
+  it.each([{ autoClaim: ['org/alpha'] }, { autoClaim: [] }])('omits auto-claim controls regardless of the enabled repos: $autoClaim', ({ autoClaim }) => {
     const el: HTMLDivElement = root();
-    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], ['org/alpha']);
-    const toggle: HTMLInputElement | null = el.querySelector<HTMLInputElement>('.auto-claim-toggle');
-    expect(toggle).not.toBeNull();
-    expect(toggle!.checked).toBe(true);
-  });
-
-  it('renders the auto-claim toggle unchecked when the selected repo is not in the auto-claim list', () => {
-    const el: HTMLDivElement = root();
-    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], []);
-    const toggle: HTMLInputElement | null = el.querySelector<HTMLInputElement>('.auto-claim-toggle');
-    expect(toggle).not.toBeNull();
-    expect(toggle!.checked).toBe(false);
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], autoClaim);
+    expect(el.querySelector('.auto-claim-toggle')).toBeNull();
   });
 
   it('omits the auto-claim toggle when no repo is selected', () => {
@@ -346,6 +363,7 @@ describe('renderDashboard', () => {
         prNumber: 42,
         startedAt: NOW.toISOString(),
         costUsd: 1.5,
+        reviewOutcome: 'REQUEST_CHANGES',
       },
       {
         id: 'run-3',
@@ -365,6 +383,7 @@ describe('renderDashboard', () => {
     expect(rows.length).toBe(2);
     const recentRunsHtml: string = el.querySelector('.recent-runs-list')!.innerHTML;
     expect(recentRunsHtml).not.toContain('ABC-1');
+    expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-result')?.getAttribute('aria-label')).toBe('Review recommendation: Request changes');
     const link: HTMLAnchorElement | null = el.querySelector<HTMLAnchorElement>('a[href="https://github.com/org/beta/pull/42"]');
     expect(link).not.toBeNull();
   });
@@ -451,7 +470,7 @@ describe('renderTriageView', () => {
   const groups = {
     unassignedBacklog: [{ id: 'AB-1', title: 'Backlog one', priority: 'P1' as const, status: 'backlog' as const, repo: 'o/a' }],
     unassignedTodo: [{ id: 'AB-2', title: 'Todo one', priority: 'P2' as const, status: 'backlog' as const, repo: 'o/a' }],
-    mineOpen: [{ id: 'AB-3', title: 'Mine one', priority: 'P3' as const, status: 'in-review' as const, repo: 'o/a' }],
+    mineOpen: [{ id: 'AB-3', title: 'Mine one', priority: 'P3' as const, status: 'in-progress' as const, repo: 'a' }],
   };
 
   function mount(html: string): HTMLElement {
@@ -464,18 +483,21 @@ describe('renderTriageView', () => {
     const el = mount(renderTriageView(groups, { repos: ['o/a', 'o/b'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
     expect(el.querySelector('.view-toggle[data-view="dashboard"]')).not.toBeNull();
     expect(el.querySelectorAll('.triage-group')).toHaveLength(3);
-    expect(el.querySelector('.bench-head .repo-select')).not.toBeNull();
+    expect(el.querySelector('[data-collapse-id="triage:mine"]')?.getAttribute('aria-label')).toBe('Collapse Mine · underway');
+    expect(el.querySelector('.helm-head .repo-select')).not.toBeNull();
     expect(el.textContent).toContain('AB-1');
     expect(el.textContent).toContain('AB-2');
     expect(el.textContent).toContain('AB-3');
   });
 
-  it('puts a Launch button on unassigned rows only when a repo is scoped, never on mine rows', () => {
+  it('puts a Launch button on unassigned and underway rows when a repo is scoped', () => {
     const el = mount(renderTriageView(groups, { repos: ['o/a'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
     const launchTickets: string[] = Array.from(el.querySelectorAll<HTMLButtonElement>('.launch-btn')).map((b) => b.dataset.ticket ?? '');
     expect(launchTickets).toContain('AB-1');
     expect(launchTickets).toContain('AB-2');
-    expect(launchTickets).not.toContain('AB-3');
+    expect(launchTickets).toContain('AB-3');
+    expect(el.querySelector('.launch-btn[data-ticket="AB-3"]')?.getAttribute('data-repo')).toBe('o/a');
+    expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
   });
 
   it('hides Launch and shows a scope hint when no repo is scoped', () => {
@@ -497,6 +519,46 @@ describe('renderTriageView', () => {
       { repos: [], selectedRepo: null, jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID },
     ));
     expect(el.querySelectorAll('.empty-note').length).toBeGreaterThanOrEqual(3);
+    expect(Array.from(el.querySelectorAll('.triage-page-range'), node => node.textContent)).toEqual(['0 of 0', '0 of 0', '0 of 0']);
+    expect(el.querySelectorAll('.triage-pagination button:disabled')).toHaveLength(6);
+  });
+
+  it('renders a shared page size with separate column totals, ranges, and page controls', () => {
+    const backlog = Array.from({ length: 23 }, (_, index) => ({ ...groups.unassignedBacklog[0]!, id: `AB-${index + 10}` }));
+    const todo = backlog.slice(0, 11);
+    const el = mount(renderTriageView(
+      { ...groups, unassignedBacklog: backlog, unassignedTodo: todo },
+      { repos: [], selectedRepo: null, jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID, pageSize: 10, pages: { backlog: 2, todo: 1 } },
+    ));
+    const selector = el.querySelector<HTMLSelectElement>('[data-triage-page-size]');
+    expect(Array.from(selector?.options ?? [], option => option.value)).toEqual(['5', '10', '25', '50', '100']);
+    expect(selector?.value).toBe('10');
+    expect(el.querySelector('.triage-filter-summary')).toBeNull();
+    const backlogColumn = el.querySelector('.triage-group[data-triage-column="backlog"]');
+    expect(backlogColumn?.querySelector('.panel-count')?.textContent).toBe('23');
+    expect(backlogColumn?.querySelectorAll('.triage-row')).toHaveLength(10);
+    expect(backlogColumn?.querySelector('.triage-page-range')?.textContent).toBe('11–20 of 23');
+    expect(backlogColumn?.querySelector('.triage-page-number')?.textContent).toBe('Page 2 of 3');
+    expect(backlogColumn?.querySelector('button[data-triage-page="1"]')?.getAttribute('aria-label')).toBe('Previous page for Unassigned · Backlog');
+    expect(backlogColumn?.querySelector('button[data-triage-page="3"]')?.getAttribute('aria-label')).toBe('Next page for Unassigned · Backlog');
+    const todoColumn = el.querySelector('.triage-group[data-triage-column="todo"]');
+    expect(todoColumn?.querySelector('.panel-count')?.textContent).toBe('11');
+    expect(todoColumn?.querySelector('.triage-page-range')?.textContent).toBe('1–10 of 11');
+    expect(todoColumn?.querySelector('.triage-page-number')?.textContent).toBe('Page 1 of 2');
+    expect(todoColumn?.querySelectorAll('.triage-pagination button:disabled')).toHaveLength(1);
+  });
+
+  it('paginates filtered tickets and keeps the filtered total in each column header', () => {
+    const tickets = Array.from({ length: 12 }, (_, index) => ({ ...groups.unassignedBacklog[0]!, id: `AB-${index + 10}`, priority: index < 7 ? 'P1' as const : 'P2' as const }));
+    const el = mount(renderTriageView(
+      { ...groups, unassignedBacklog: tickets },
+      { repos: [], selectedRepo: null, jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID, pageSize: 5, pages: { backlog: 2 }, filters: { priorities: ['P1'], days: 0 } },
+    ));
+    const backlogColumn = el.querySelector('.triage-group[data-triage-column="backlog"]');
+    expect(backlogColumn?.querySelectorAll('.triage-row')).toHaveLength(2);
+    expect(backlogColumn?.querySelector('.panel-count')?.textContent).toBe('7');
+    expect(backlogColumn?.querySelector('.triage-page-range')?.textContent).toBe('6–7 of 7');
+    expect(backlogColumn?.querySelector('button[data-triage-page="2"]')?.hasAttribute('disabled')).toBe(true);
   });
 
   it('gives every group a collapse button carrying its id', () => {
@@ -524,12 +586,73 @@ function prFixture(over: Partial<PrStatusView> = {}): PrStatusView {
     reviewDecision: 'REVIEW_REQUIRED',
     comments: 3,
     checks: { passed: 2, failed: 0, pending: 1 },
+    reviews: { requested: 0, approved: 0, changesRequested: 0, commented: 0 },
     url: 'https://github.com/org/alpha/pull/42',
     ...over,
   };
 }
 
 describe('renderPrPanel', () => {
+  function mount(html: string): HTMLElement {
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    return el;
+  }
+
+  it('shows personal review and activity timestamps with exact local times', () => {
+    const el = mount(renderPrPanel(prFixture({
+      viewerReviewedAt: '2026-09-17T10:00:00Z', updatedAt: '2026-09-17T12:00:00Z',
+      headSha: 'new-commit', viewerReviewedCommitId: 'reviewed-commit',
+    }), false));
+    expect(el.querySelector('.pr-last-reviewed')?.textContent).toContain('Last reviewed by you');
+    expect(el.querySelector('.pr-last-reviewed time')?.getAttribute('datetime')).toBe('2026-09-17T10:00:00.000Z');
+    expect(el.querySelector('.pr-last-updated time')?.getAttribute('datetime')).toBe('2026-09-17T12:00:00.000Z');
+    expect(el.querySelector('.pr-last-reviewed time')?.getAttribute('title')).toBeTruthy();
+    expect(el.querySelector('.pr-review-freshness')?.textContent).toBe('New commits since your review');
+  });
+
+  it('does not call later PR activity new commits when the reviewed commit matches', () => {
+    const el = mount(renderPrPanel(prFixture({
+      viewerReviewedAt: '2026-09-17T10:00:00Z', updatedAt: '2026-09-17T12:00:00Z',
+      headSha: 'same-commit', viewerReviewedCommitId: 'same-commit',
+    }), false));
+    expect(el.querySelector('.pr-review-freshness')?.textContent).toBe('You reviewed the current commit');
+    expect(el.querySelector('.pr-review-freshness.chip-review')).toBeNull();
+  });
+
+  it.each([
+    { reviewsAvailable: true, viewerReview: null, expected: 'Not reviewed yet' },
+    { reviewsAvailable: false, viewerReview: null, expected: 'Unavailable' },
+    { reviewsAvailable: true, viewerReview: 'COMMENTED', expected: 'Unavailable' },
+    { reviewsAvailable: undefined, viewerReview: null, expected: 'Unavailable' },
+  ] as const)('distinguishes unreviewed PRs from unavailable review dates: %j', ({ expected, ...fields }) => {
+    const el = mount(renderPrPanel(prFixture(fields), false));
+    expect(el.querySelector('.pr-last-reviewed')?.textContent).toContain(expected);
+    expect(el.querySelector('.pr-review-freshness')).toBeNull();
+  });
+
+  it.each([null, 42, {}, 'bad-date', '<img src=x onerror=alert(1)>'])('handles invalid timestamps safely: %j', (value) => {
+    const el = mount(renderPrPanel(prFixture({
+      viewerReviewedAt: value, updatedAt: value, reviewsAvailable: true,
+      headSha: 'new-commit', viewerReviewedCommitId: 'reviewed-commit',
+    } as unknown as Partial<PrStatusView>), false));
+    expect(el.querySelectorAll('.pr-panel-timing time, .pr-panel-timing img')).toHaveLength(0);
+    expect(el.querySelector('.pr-last-reviewed')?.textContent).toContain('Unavailable');
+    expect(el.querySelector('.pr-last-updated')?.textContent).toContain('Unavailable');
+    expect(el.querySelector('.pr-review-freshness')).toBeNull();
+  });
+
+  it('does not infer commit changes from timestamps when review commit data is missing', () => {
+    const el = mount(renderPrPanel(prFixture({ viewerReviewedAt: '2026-09-17T10:00:00Z', updatedAt: '2026-09-17T12:00:00Z' }), false));
+    expect(el.querySelector('.pr-review-freshness')).toBeNull();
+  });
+
+  it('hides stale review dates when reviews are unavailable', () => {
+    const el = mount(renderPrPanel(prFixture({ reviewsAvailable: false, viewerReviewedAt: '2026-09-17T10:00:00Z', headSha: 'new', viewerReviewedCommitId: 'old' }), false));
+    expect(el.querySelector('.pr-last-reviewed')?.textContent).toContain('Unavailable');
+    expect(el.querySelector('.pr-review-freshness')).toBeNull();
+  });
+
   it('renders the state chip, CI summary, review controls, and PR link for an open PR', () => {
     const html: string = renderPrPanel(prFixture(), false);
     expect(html).toContain('Open');
@@ -549,8 +672,8 @@ describe('renderPrPanel', () => {
     expect(html).not.toContain('pr-review-agent');
   });
 
-  it('includes the rerun control when canRerun is true', () => {
-    const html: string = renderPrPanel(prFixture(), true);
+  it('includes the rerun control only for an owned local PR', () => {
+    const html: string = renderPrPanel(prFixture({ isOwnPr: true }), true);
     expect(html).toContain('pr-rerun-feedback');
     expect(html).toContain('pr-rerun');
   });
@@ -558,7 +681,7 @@ describe('renderPrPanel', () => {
   it('includes the code-review-with-agent button when canRerun is true', () => {
     const html: string = renderPrPanel(prFixture(), true);
     expect(html).toContain('pr-review-agent');
-    expect(html).toContain('Code-review with agent');
+    expect(html).toContain('Code review with crew');
   });
 
   it('includes model + effort selectors on the review/rerun controls', () => {
@@ -566,30 +689,71 @@ describe('renderPrPanel', () => {
     el.innerHTML = renderPrPanel(prFixture(), true);
     expect(el.querySelector('.pr-model')).not.toBeNull();
     expect(el.querySelector('.pr-effort')).not.toBeNull();
+    expect(el.querySelector<HTMLSelectElement>('.pr-model')?.value).toBe('');
+    expect(el.querySelector<HTMLSelectElement>('.pr-effort')?.value).toBe('');
+    expect(el.querySelector('.pr-model option[selected]')?.textContent).toBe('Automatic by complexity');
     expect(Array.from(el.querySelectorAll<HTMLOptionElement>('.pr-effort option')).map((o) => o.value))
       .toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
   });
 
-  it('renders the reviewer tally counts', () => {
-    const html: string = renderPrPanel(
-      prFixture({ reviews: { requested: 2, approved: 3, changesRequested: 1, commented: 4 } }),
-      false,
-    );
-    const el: HTMLElement = document.createElement('div');
-    el.innerHTML = html;
-    const reviewers: HTMLElement | null = el.querySelector<HTMLElement>('.pr-reviewers');
-    expect(reviewers).not.toBeNull();
-    expect(reviewers?.textContent).toContain('2');
-    expect(reviewers?.textContent).toContain('3');
-    expect(reviewers?.textContent).toContain('1');
-    expect(reviewers?.textContent).toContain('4');
+  it.each([false, undefined])('hides relaunch for ownership %s while retaining local crew review', (isOwnPr) => {
+    const el = mount(renderPrPanel(prFixture({ isOwnPr }), true));
+    expect(el.querySelector('.pr-rerun-feedback')).toBeNull();
+    expect(el.querySelector('.pr-rerun')).toBeNull();
+    expect(el.querySelector('a[href*="mode=rerun"]')).toBeNull();
+    expect(el.querySelector('.pr-review-agent')).not.toBeNull();
+    expect(el.querySelector('.pr-model')).not.toBeNull();
+    expect(el.querySelector('.pr-effort')).not.toBeNull();
+    expect(el.querySelector('a[href*="mode=review"]')).not.toBeNull();
   });
 
-  it('renders zero reviewer counts when the tally is absent', () => {
-    const html: string = renderPrPanel(prFixture({ reviews: undefined }), false);
-    const el: HTMLElement = document.createElement('div');
-    el.innerHTML = html;
-    expect(el.querySelector('.pr-reviewers')).not.toBeNull();
+  it('hides crew actions for an owned PR outside local repositories', () => {
+    const el = mount(renderPrPanel(prFixture({ isOwnPr: true }), false));
+    expect(el.querySelector('.pr-rerun-feedback')).toBeNull();
+    expect(el.querySelector('.pr-rerun')).toBeNull();
+    expect(el.querySelector('.pr-review-agent')).toBeNull();
+    expect(el.querySelector('a[href*="mode=rerun"]')).toBeNull();
+  });
+
+  it('groups PR identity, statuses, and metadata without duplicate reviewer tallies', () => {
+    const el = mount(renderPrPanel(prFixture({
+      title: 'Fix image targeting', authorLogin: 'octocat',
+      reviews: { requested: 2, approved: 3, changesRequested: 1, commented: 4 },
+    }), false));
+    expect(el.querySelector('.pr-panel-identity')?.textContent).toContain('Fix image targeting');
+    expect(el.querySelector('.pr-panel-identity')?.textContent).toContain('org/alpha #42');
+    expect(el.querySelector('.pr-panel-identity')?.textContent).toContain('by octocat');
+    expect(el.querySelector('.pr-panel-status')?.textContent).toContain('3/2 approvals');
+    expect(el.querySelector('.pr-panel-context .pr-branch')?.textContent).toContain('feature-branch');
+    expect(el.querySelector('.pr-panel-context .pr-ci')?.getAttribute('aria-label')).toBe('Checks: 2 passed, 0 failed, 1 pending');
+    expect(el.querySelector('.pr-reviewers')).toBeNull();
+  });
+
+  it.each([
+    ['APPROVED', 'Approved'], ['CHANGES_REQUESTED', 'Changes requested'],
+    ['COMMENTED', 'Commented'], ['DISMISSED', 'Dismissed'],
+  ] as const)('shows the viewer review %s distinctly in the header', (viewerReview, label) => {
+    const el = mount(renderPrPanel(prFixture({ viewerReview }), false));
+    expect(el.querySelector('.pr-panel-head .pr-viewer-review')?.textContent).toBe(`Your review: ${label}`);
+    expect(el.querySelector('.pr-approval-progress')?.textContent).toBe('0/2 approvals · 2 needed');
+    const matching = mount(renderPrPanel(prFixture({ viewerReview, reviewDecision: viewerReview }), false));
+    expect(matching.querySelector('.pr-viewer-review')?.textContent).toBe(`Your review: ${label}`);
+    expect(matching.querySelector('.pr-approval-progress')?.textContent).toBe('0/2 approvals · 2 needed');
+  });
+
+  it.each([null, undefined])('omits the personal review badge when review is %s', (viewerReview) => {
+    const el = mount(renderPrPanel(prFixture({ viewerReview }), false));
+    expect(el.querySelector('.pr-viewer-review')).toBeNull();
+    expect(el.querySelector('.pr-panel-title')).toBeNull();
+    expect(el.querySelector('.pr-author')).toBeNull();
+  });
+
+  it('ignores malformed optional identity and review values', () => {
+    const pr = prFixture({ title: 42, authorLogin: {}, viewerReview: 'constructor' } as unknown as Partial<PrStatusView>);
+    const el = mount(renderPrPanel(pr, false));
+    expect(el.querySelector('.pr-panel-title')).toBeNull();
+    expect(el.querySelector('.pr-author')).toBeNull();
+    expect(el.querySelector('.pr-viewer-review')).toBeNull();
   });
 
   it('renders a not-found note when there is no PR', () => {
@@ -600,7 +764,7 @@ describe('renderPrPanel', () => {
 
   it('escapes a malicious headRefName and url', () => {
     const payload: string = '<img src=x onerror=alert(1)>';
-    const html: string = renderPrPanel(prFixture({ headRefName: payload, url: payload }), false);
+    const html: string = renderPrPanel(prFixture({ title: payload, authorLogin: payload, headRefName: payload, url: payload }), false);
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;img');
   });
@@ -610,7 +774,7 @@ function cmuxTabFixture(over: Partial<CmuxTabView> = {}): CmuxTabView {
   return {
     windowRef: 'win-1',
     workspaceRef: 'ws-1',
-    workspaceTitle: 'orchestrator',
+    workspaceTitle: 'helmsman',
     surfaceRef: 'surface-1',
     surfaceTitle: 'main',
     type: 'shell',
@@ -645,7 +809,7 @@ describe('renderCmuxView', () => {
     const html: string = renderCmuxView(cmuxStateFixture());
     expect(html).toContain('data-surface="surface-1"');
     expect(html).toContain('main');
-    expect(html).toContain('orchestrator');
+    expect(html).toContain('helmsman');
     expect(html).toContain('shell');
   });
 
@@ -748,6 +912,8 @@ describe('renderRunsDrawer', () => {
     expect(html).toContain('run-drawer-body');
     expect(html).toContain('run-drawer-footer');
     expect(html).toContain('run-drawer-pr');
+    expect(html).toContain('href="/api/agents/run-1/log/download"');
+    expect(html).toContain('Download full log');
   });
 
   it('escapes malicious labels', () => {
@@ -761,6 +927,7 @@ describe('renderRunsDrawer', () => {
     expect(html).toContain('run-drawer-empty');
     expect(html).toContain('run-drawer-title');
     expect(html).not.toContain('run-tab-close');
+    expect(html).not.toContain('run-log-download');
   });
 
   it('shows a drawer collapse button when tabs exist, none when empty', () => {
@@ -775,20 +942,24 @@ describe('renderRunsDrawer', () => {
   });
 });
 
-describe('renderDashboard bench rack', () => {
+describe('renderDashboard helm rack', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('renders a runs-drawer slot, the bench nameplate, and the page tabs', () => {
+  it('renders a runs-drawer slot, the helm nameplate, and the page tabs', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
-    expect(el.querySelector('.bench-head .nameplate')).not.toBeNull();
-    expect(el.querySelectorAll('.page-tab')).toHaveLength(6);
+    expect(el.querySelector('.helm-head .nameplate')).not.toBeNull();
+    expect(el.querySelectorAll('a.page-tab[href]')).toHaveLength(7);
+    expect(el.querySelector('.page-tab[data-view="runs"]')?.getAttribute('href')).toBe('/runs');
     expect(el.querySelector('.page-tab[data-view="config"]')).not.toBeNull();
     expect(el.querySelector('.page-tab[data-view="prs"]')).not.toBeNull();
     expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('dashboard');
+    expect(el.querySelector('.page-tab[data-view="dashboard"]')?.textContent).toBe('Helm');
+    expect(el.querySelector('.faceplate[data-panel="activity"] .faceplate-title')?.textContent).toBe("Ship's log");
+    expect(el.querySelector('.faceplate[data-panel="running"] .faceplate-title')?.textContent).toBe('Active crew');
   });
 
   it('renders every panel as a draggable faceplate with a collapse control', () => {
@@ -804,14 +975,14 @@ describe('renderDashboard bench rack', () => {
     expect(el.querySelector('.panel-collapse')).not.toBeNull();
   });
 
-  it('renders model + effort selectors in the New run panel', () => {
+  it('renders model + effort selectors in the New voyage panel', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.newrun-model')).not.toBeNull();
     expect(el.querySelector('.newrun-effort')).not.toBeNull();
   });
 
-  it('defaults the New Run tuning selects to astra and medium', () => {
+  it('defaults the New voyage tuning selects to astra and medium', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW);
     const model = el.querySelector<HTMLSelectElement>('.newrun-model')!;
@@ -820,29 +991,56 @@ describe('renderDashboard bench rack', () => {
     expect(effort.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('medium');
   });
 
-  it('renders the My open PRs panel with clickable rows carrying repo + number', () => {
+  it('renders only the selected repository PRs, independently of personal dashboard PRs', () => {
     const el: HTMLDivElement = root();
-    const snap = snapshot({
-      myOpenPrs: [
-        { number: 42, title: 'do a thing', repo: 'org/alpha', reviewDecision: 'CHANGES_REQUESTED', draft: false, createdAt: NOW.toISOString() },
-        { number: 43, title: 'wip thing', repo: 'org/alpha', reviewDecision: 'REVIEW_REQUIRED', draft: true, createdAt: NOW.toISOString() },
-      ],
-    });
-    renderDashboard(el, snap, NOW);
-    expect(el.querySelector('.faceplate[data-panel="myprs"]')).not.toBeNull();
-    const rows = Array.from(el.querySelectorAll<HTMLElement>('.myprs-row'));
+    const personal = { number: 99, title: 'Personal PR', repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() };
+    const repoPrs = { prs: [
+      { ...personal, number: 42, title: 'Repository PR', reviewDecision: 'CHANGES_REQUESTED' },
+      { ...personal, number: 43, title: 'Repository draft', draft: true },
+      { ...personal, number: 44, repo: 'org/beta', title: 'Other repo PR' },
+    ], loading: false, degraded: false, truncated: false };
+    renderDashboard(el, snapshot({ myOpenPrs: [personal] }), NOW, [], ['org/alpha'], 'org/alpha', [], [], undefined, DEFAULT_THEME_ID, undefined, null, repoPrs);
+    const panel = el.querySelector('.faceplate[data-panel="repoprs"]');
+    expect(panel?.textContent).toContain('Open PRs');
+    expect(panel?.textContent).not.toContain('Personal PR');
+    expect(panel?.textContent).not.toContain('Other repo PR');
+    expect(el.querySelector('[data-panel="myprs"]')).toBeNull();
+    const rows = Array.from(panel!.querySelectorAll<HTMLElement>('.pr-list-row'));
     expect(rows).toHaveLength(2);
-    expect(rows[0].dataset.repo).toBe('org/alpha');
-    expect(rows[0].dataset.number).toBe('42');
-    expect(el.textContent).toContain('#42');
-    expect(el.textContent).toContain('Draft');
+    expect(rows[0]?.dataset.repo).toBe('org/alpha');
+    expect(rows[0]?.dataset.number).toBe('42');
+    expect(rows[0]?.getAttribute('tabindex')).toBe('0');
+    expect(rows[1]?.textContent).toContain('Draft');
+    expect(rows[1]?.textContent).not.toContain('Review');
   });
 
-  it('shows an empty note in My open PRs when there are none', () => {
+  it('prompts for a repository instead of showing personal PRs when no repository is selected', () => {
     const el: HTMLDivElement = root();
-    renderDashboard(el, snapshot(), NOW);
-    const panel = el.querySelector<HTMLElement>('.faceplate[data-panel="myprs"]');
-    expect(panel?.querySelector('.empty-note')).not.toBeNull();
+    renderDashboard(el, snapshot({ myOpenPrs: [{ number: 99, title: 'Personal PR', repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() }] }), NOW);
+    const panel = el.querySelector('.faceplate[data-panel="repoprs"]');
+    expect(panel?.textContent).toContain('Select a repository to see its open PRs.');
+    expect(panel?.querySelector('.pr-list-row')).toBeNull();
+  });
+
+  it('shows a repository-specific empty message after loading', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], [], undefined, DEFAULT_THEME_ID, undefined, null, { prs: [], loading: false, degraded: false, truncated: false });
+    expect(el.querySelector('[data-panel="repoprs"]')?.textContent).toContain('No open pull requests in this repository.');
+  });
+
+  it('renders the same scoped repository body for background panel refreshes', () => {
+    const state = { prs: [
+      { number: 42, title: 'Selected repo', repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() },
+      { number: 43, title: 'Other repo', repo: 'org/beta', reviewDecision: '', draft: false, createdAt: NOW.toISOString() },
+    ], loading: false, degraded: false, truncated: false };
+    const el: HTMLDivElement = root();
+    el.innerHTML = renderRepoPrs('org/alpha', state);
+    expect(el.querySelectorAll('.pr-list-row')).toHaveLength(1);
+    expect(el.textContent).toContain('Selected repo');
+    expect(el.textContent).not.toContain('Other repo');
+    el.innerHTML = renderRepoPrs(null, state);
+    expect(el.querySelector('.pr-list-row')).toBeNull();
+    expect(el.textContent).toContain('Select a repository');
   });
 
   it('honors a custom layout: stacked panels share a slot with tabs', () => {
@@ -894,6 +1092,25 @@ describe('renderBugsView', () => {
     const slas = Array.from(el.querySelectorAll<HTMLElement>('.bug-sla'));
     expect(slas[0]!.className).toContain('chip-blocked');
     expect(slas[1]!.className).not.toContain('chip-blocked');
+  });
+
+  it.each([
+    ['P0 - Critical', 'pri-p0'],
+    ['P1 - High', 'pri-p1'],
+    ['P2 - Medium', 'pri-p2'],
+    ['P3 - Low', 'pri-p3'],
+    ['P4 - Lowest', 'pri-p4'],
+    [' p2 - Medium ', 'pri-p2'],
+    ['P10 - Unknown', 'chip-queued'],
+    ['', 'chip-queued'],
+  ])('gives bug priority %s its semantic color class', (priority, className) => {
+    const data: BugsResponse = {
+      ...res,
+      cards: [{ ...res.cards[0]!, rows: [{ ...res.cards[0]!.rows[0]!, priority }] }],
+    };
+    const chip = mount(renderBugsView(data, opts)).querySelector('.bug-row td:nth-child(3) .chip');
+    expect(chip?.classList.contains(className)).toBe(true);
+    expect(chip?.textContent).toBe(priority);
   });
 
   it('shows a degraded banner and no cards when degraded', () => {
@@ -952,6 +1169,86 @@ describe('renderPrView + renderPrDiff', () => {
     expect(el.querySelector('.pr-diff-panel')).toBeNull();
   });
 
+  it('renders review requests and authored PRs above the lookup with accessible, escaped rows', () => {
+    const title = '<img src=x onerror=alert(1)>';
+    const item = { number: 7, title, repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() };
+    const ready = { prs: [item], loading: false, degraded: false, truncated: false };
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
+      ...opts, lists: { reviewRequests: ready, authored: { ...ready, prs: [{ ...item, number: 8, title: 'My work' }] } },
+    }));
+    expect(el.querySelector('.pr-inbox-grid')?.nextElementSibling?.classList.contains('pr-recent-runs')).toBe(true);
+    expect(el.querySelector('.pr-recent-runs')?.nextElementSibling?.classList.contains('pr-lookup-panel')).toBe(true);
+    const review = el.querySelector<HTMLElement>('.pr-review-requests .pr-list-row');
+    expect(review?.dataset.repo).toBe('org/alpha');
+    expect(review?.dataset.number).toBe('7');
+    expect(review?.getAttribute('role')).toBe('button');
+    expect(review?.getAttribute('tabindex')).toBe('0');
+    expect(review?.textContent).toContain(title);
+    expect(review?.querySelector('img')).toBeNull();
+    expect(review?.getAttribute('aria-label')).toContain(title);
+    expect(el.querySelector('.pr-authored .pr-list-row')?.getAttribute('data-number')).toBe('8');
+  });
+
+  it('ignores malformed list rows and safely renders missing optional display values', () => {
+    const malformed = { prs: [null, undefined, { number: 0, repo: 'org/alpha' }, { number: 5 }, { number: 6, repo: 'org/alpha' }], loading: false, degraded: false, truncated: false };
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
+      ...opts, lists: { reviewRequests: malformed, authored: { ...malformed, prs: null } } as unknown as PrInboxState,
+    }));
+    expect(el.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(1);
+    expect(el.querySelector('.pr-review-requests .pr-list-row')?.textContent).toContain('Untitled pull request');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain('You have no open pull requests.');
+  });
+
+  it('keeps independent loading, unavailable, and truncated messages per list', () => {
+    const empty = { prs: [], loading: false, degraded: false, truncated: false };
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
+      ...opts, lists: { reviewRequests: { ...empty, degraded: true }, authored: { ...empty, loading: true, truncated: true } },
+    }));
+    expect(el.querySelector('.pr-review-requests')?.textContent).toContain('unavailable');
+    expect(el.querySelector('.pr-review-requests')?.textContent).not.toContain('No PRs');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain('Loading PRs');
+    expect(el.querySelector('.pr-authored .pr-list')?.getAttribute('aria-busy')).toBe('true');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain('More PRs may be available');
+  });
+
+  it('keeps usable PRs visible and explains incomplete results when another source fails', () => {
+    const partial = { prs: [{ number: 7, title: 'Review this', repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() }], loading: false, degraded: true, truncated: false };
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
+      ...opts, lists: { reviewRequests: partial, authored: { ...partial, prs: [] } },
+    }));
+    expect(el.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(1);
+    expect(el.querySelector('.pr-review-requests')?.textContent).toContain('Some GitHub results are unavailable. This list may be incomplete.');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain('GitHub PRs are unavailable. Retrying shortly.');
+  });
+
+  it('does not claim there are no review requests when retrieved results are incomplete and links to GitHub', () => {
+    const truncated = { prs: [], loading: false, degraded: false, truncated: true };
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
+      ...opts, lists: { reviewRequests: truncated, authored: truncated },
+    }));
+    const requests = el.querySelector('.pr-review-requests');
+    expect(requests?.textContent).toContain('No matching PRs in the retrieved results.');
+    expect(requests?.textContent).not.toContain('No PRs awaiting your review.');
+    const link = requests?.querySelector<HTMLAnchorElement>('.pr-list-github');
+    expect(link?.href).toBe('https://github.com/pulls/review-requested');
+    expect(link?.target).toBe('_blank');
+    expect(link?.rel).toBe('noopener noreferrer');
+    expect(link?.closest('.pr-list-row')).toBeNull();
+    expect(el.querySelector<HTMLAnchorElement>('.pr-authored .pr-list-github')?.href).toBe('https://github.com/pulls');
+    const repo = mount(renderRepoPrs('org/alpha', truncated));
+    expect(repo.querySelector<HTMLAnchorElement>('.pr-list-github')?.href).toBe('https://github.com/org/alpha/pulls');
+    expect(repo.textContent).not.toContain('No open pull requests in this repository.');
+  });
+
+  it('distinguishes empty review requests from empty authored PRs', () => {
+    const empty = { prs: [], loading: false, degraded: false, truncated: false };
+    const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
+      ...opts, lists: { reviewRequests: empty, authored: empty },
+    }));
+    expect(el.querySelector('.pr-review-requests')?.textContent).toContain('No PRs awaiting your review.');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain('You have no open pull requests.');
+  });
+
   it('renders the PR panel and a per-file diff when loaded', () => {
     const diff = [
       { filename: 'a.ts', status: 'modified', additions: 2, deletions: 1, patch: '@@ -1 +1 @@\n-old\n+new\n ctx' },
@@ -978,19 +1275,31 @@ describe('renderPrView + renderPrDiff', () => {
   });
 
   it('marks the PR panel decision chip when changes are requested', () => {
-    const el = mount(renderPrPanel({ ...pr, reviewDecision: 'CHANGES_REQUESTED' }, false));
+    const el = mount(renderPrPanel({ ...pr, reviewDecision: 'CHANGES_REQUESTED', reviews: { requested: 0, approved: 2, changesRequested: 1, commented: 0 } }, false));
     const chip = el.querySelector('.pr-decision-chip');
     expect(chip).not.toBeNull();
     expect(chip!.classList.contains('chip-blocked')).toBe(true);
     expect(chip!.textContent).toContain('Changes requested');
   });
 
-  it('marks the PR panel decision chip as approved / review', () => {
-    const approved = mount(renderPrPanel({ ...pr, reviewDecision: 'APPROVED' }, false)).querySelector('.pr-decision-chip');
-    expect(approved!.classList.contains('chip-done')).toBe(true);
-    expect(approved!.textContent).toContain('Approved');
-    const review = mount(renderPrPanel({ ...pr, reviewDecision: 'REVIEW_REQUIRED' }, false)).querySelector('.pr-decision-chip');
-    expect(review!.classList.contains('chip-review')).toBe(true);
-    expect(review!.textContent).toContain('Review required');
+  it.each([0, 1, 2, 3])('shows %s approvals toward the required two', (approved) => {
+    const el = mount(renderPrPanel({ ...pr, reviews: { requested: 0, approved, changesRequested: 0, commented: 0 } }, false));
+    const progress = el.querySelector('.pr-approval-progress');
+    expect(progress?.textContent).toBe(`${approved}/2 approvals${approved < 2 ? ` · ${2 - approved} needed` : ''}`);
+    expect(progress?.classList.contains('chip-done')).toBe(approved >= 2);
+    expect(el.querySelector('.pr-decision-chip')).toBeNull();
+  });
+
+  it('keeps change requests blocking even with two approvals', () => {
+    const el = mount(renderPrPanel({ ...pr, reviews: { requested: 0, approved: 2, changesRequested: 1, commented: 0 }, viewerReview: 'APPROVED' }, false));
+    expect(el.querySelector('.pr-approval-progress')?.classList.contains('chip-done')).toBe(false);
+    expect(el.querySelector('.pr-decision-chip')?.textContent).toBe('Changes requested (1)');
+    expect(el.querySelector('.pr-viewer-review')?.textContent).toBe('Your review: Approved');
+  });
+
+  it.each([undefined, false])('distinguishes unavailable approval data from zero approvals (%s)', (reviewsAvailable) => {
+    const el = mount(renderPrPanel({ ...pr, reviewsAvailable, reviews: reviewsAvailable === false ? { requested: 0, approved: 2, changesRequested: 0, commented: 0 } : undefined }, false));
+    expect(el.querySelector('.pr-approval-progress')?.textContent).toBe('Approvals unavailable · 2 required');
+    expect(el.querySelector('.pr-approval-progress')?.classList.contains('chip-done')).toBe(false);
   });
 });

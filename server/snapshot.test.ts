@@ -44,6 +44,7 @@ function issue(over: Partial<JiraIssue['fields']> = {}): JiraIssue {
 
 describe('mapPriority', () => {
   it.each([
+    ['P0 - Critical', 'P0'],
     ['P1 - Critical', 'P1'],
     ['Highest', 'P1'],
     ['High', 'P1'],
@@ -51,6 +52,10 @@ describe('mapPriority', () => {
     ['Medium', 'P2'],
     ['P3 - Low', 'P3'],
     ['Low', 'P3'],
+    ['P4 - Lowest', 'P4'],
+    ['Lowest', 'P4'],
+    [' p0 ', 'P0'],
+    ['P4 - Medium', 'P4'],
     [null, 'P3'],
     ['Weird', 'P3'],
   ])('%s -> %s', (input, expected) => {
@@ -104,6 +109,16 @@ describe('issueToTicket', () => {
   it('maps fields', () => {
     const t = issueToTicket(issue(), 'o/r');
     expect(t).toEqual({ id: 'AIROBUILD-1', title: 'Do a thing', priority: 'P2', status: 'backlog', repo: 'o/r' });
+  });
+
+  it('normalizes Jira updated timestamps for date filtering', () => {
+    expect(issueToTicket(issue({ updated: '2026-09-17T13:20:45.123-0700' }), 'o/r').updatedAt)
+      .toBe('2026-09-17T20:20:45.123Z');
+  });
+
+  it.each([undefined, null, '', 'not a date', 42, {}])('omits unavailable or invalid updated timestamps: %s', (updated) => {
+    const ticket = issueToTicket(issue({ updated: updated as string | null | undefined }), 'o/r');
+    expect(ticket).not.toHaveProperty('updatedAt');
   });
 });
 

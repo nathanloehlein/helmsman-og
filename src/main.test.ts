@@ -34,7 +34,7 @@ function cmuxTab(over: Partial<CmuxTabView> = {}): CmuxTabView {
   return {
     windowRef: 'win-1',
     workspaceRef: 'ws-1',
-    workspaceTitle: 'orchestrator',
+    workspaceTitle: 'helmsman',
     surfaceRef: 'surface-1',
     surfaceTitle: 'main',
     type: 'shell',
@@ -99,6 +99,8 @@ describe('DashboardView drawer survives polling', () => {
       const url: string = String(input);
       const payload: unknown = url.includes('/api/agents/launch')
         ? { runId: 'run-1' }
+        : url === '/api/agents/run-1'
+          ? { id: 'run-1', status: 'succeeded', prNumber: 42, repo: 'acme/widgets' }
         : url.includes('/api/agents')
           ? { runs: [{ id: 'run-1', status: 'succeeded', prNumber: 42, repo: 'acme/widgets' }] }
           : response;
@@ -482,7 +484,7 @@ describe('DashboardView drawer survives polling', () => {
     expect(configGetCalls).toBe(afterEnter);
   });
 
-  it('posts to the auto-claim endpoint when the toggle is switched off', async () => {
+  it('does not expose an auto-claim toggle or mutate auto-claim when viewing a scoped repo', async () => {
     const response: DashboardResponse = await buildResponse();
     const scopedResponse: DashboardResponse = { ...response, repos: ['org/alpha'], selectedRepo: 'org/alpha' };
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
@@ -499,25 +501,18 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
-    const toggle: HTMLInputElement | null = root.querySelector<HTMLInputElement>('.auto-claim-toggle');
-    expect(toggle).not.toBeNull();
-    expect(toggle!.checked).toBe(true);
-
-    toggle!.checked = false;
-    toggle!.dispatchEvent(new Event('change'));
-
-    await vi.waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/api/repos/org%2Falpha/auto-claim')),
-      ).toBe(true);
-    });
+    expect(root.querySelector('.auto-claim-toggle')).toBeNull();
+    expect(fetchMock.mock.calls.some(([requestInput]) => String(requestInput).includes('/auto-claim'))).toBe(false);
+    view.destroy();
   });
 
   it('submits an APPROVE review when the approve button is clicked in the PR lookup panel', async () => {
     const response: DashboardResponse = await buildResponse();
+    let submitted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
       const url: string = String(input);
-      if (url.includes('/api/pr/review')) {
+      if (url === '/api/pr/review') {
+        submitted = true;
         return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
       }
       if (url.includes('/api/pr?')) {
@@ -531,7 +526,8 @@ describe('DashboardView drawer survives polling', () => {
             draft: false,
             merged: false,
             headRefName: 'feature-branch',
-            reviewDecision: 'REVIEW_REQUIRED',
+            reviewDecision: submitted ? 'APPROVED' : 'REVIEW_REQUIRED',
+            viewerReview: submitted ? 'APPROVED' : null,
             comments: 3,
             checks: { passed: 2, failed: 0, pending: 1 },
             url: 'https://github.com/org/alpha/pull/42',
@@ -565,19 +561,23 @@ describe('DashboardView drawer survives polling', () => {
     root.querySelector<HTMLButtonElement>('.pr-lookup-result .pr-approve')!.click();
 
     await vi.waitFor(() => {
-      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes('/api/pr/review'))).toBe(true);
+      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput) === '/api/pr/review')).toBe(true);
     });
 
-    const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/pr/review'));
+    const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === '/api/pr/review');
     const reviewBody: unknown = JSON.parse((reviewCall![1] as RequestInit).body as string);
     expect(reviewBody).toEqual({ repo: 'org/alpha', number: 42, event: 'APPROVE', body: '' });
+    await vi.waitFor(() => expect(root.querySelector('.pr-panel-head')?.textContent).toContain('Your review'));
+    await view.refresh();
+    expect(root.querySelector('.pr-panel-head')?.textContent).toContain('Your review');
+    view.destroy();
   });
 
   it('does not submit a review when the comment body is empty', async () => {
     const response: DashboardResponse = await buildResponse();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
       const url: string = String(input);
-      if (url.includes('/api/pr/review')) {
+      if (url === '/api/pr/review') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
       }
       if (url.includes('/api/pr?')) {
@@ -622,7 +622,7 @@ describe('DashboardView drawer survives polling', () => {
 
     root.querySelector<HTMLButtonElement>('.pr-lookup-result .pr-comment')!.click();
 
-    expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes('/api/pr/review'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput) === '/api/pr/review')).toBe(false);
   });
 
   it('reruns with feedback and opens the drawer from the PR lookup panel', async () => {
@@ -640,6 +640,7 @@ describe('DashboardView drawer survives polling', () => {
           json: async () => ({
             number: 7,
             repo: 'o/r',
+            isOwnPr: true,
             state: 'open',
             draft: false,
             merged: false,
@@ -689,8 +690,6 @@ describe('DashboardView drawer survives polling', () => {
       repo: 'o/r',
       prNumber: 7,
       feedback: 'please fix the lint error',
-      model: 'gpt-6-astra',
-      effort: 'medium',
     });
 
     await vi.waitFor(() => {
@@ -699,7 +698,7 @@ describe('DashboardView drawer survives polling', () => {
     expect(document.querySelector('.run-drawer .run-tab')).not.toBeNull();
   });
 
-  it('launches a code review with the agent and opens the drawer from the PR lookup panel', async () => {
+  it.each([false, true])('launches a code review and opens the drawer with explicit model override: %s', async (override) => {
     const response: DashboardResponse = await buildResponse();
     response.repos = [...response.repos, 'o/r'];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
@@ -746,6 +745,10 @@ describe('DashboardView drawer survives polling', () => {
       expect(root.querySelector('.pr-lookup-result .pr-review-agent')).not.toBeNull();
     });
 
+    if (override) {
+      root.querySelector<HTMLSelectElement>('.pr-lookup-result .pr-model')!.value = 'gpt-5.6-sol';
+      root.querySelector<HTMLSelectElement>('.pr-lookup-result .pr-effort')!.value = 'high';
+    }
     root.querySelector<HTMLButtonElement>('.pr-lookup-result .pr-review-agent')!.click();
 
     await vi.waitFor(() => {
@@ -754,7 +757,7 @@ describe('DashboardView drawer survives polling', () => {
 
     const launchCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/agents/launch'));
     const launchBody: unknown = JSON.parse((launchCall![1] as RequestInit).body as string);
-    expect(launchBody).toEqual({ mode: 'review', repo: 'o/r', prNumber: 7, model: 'gpt-6-astra', effort: 'medium' });
+    expect(launchBody).toEqual({ mode: 'review', repo: 'o/r', prNumber: 7, ...(override ? { model: 'gpt-5.6-sol', effort: 'high' } : {}) });
 
     await vi.waitFor(() => {
       expect(FakeEventSource.instances.length).toBeGreaterThan(0);
@@ -811,7 +814,7 @@ describe('DashboardView drawer survives polling', () => {
     const response: DashboardResponse = await buildResponse();
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url: string = String(input);
-      if (url.includes('/api/pr/review')) {
+      if (url === '/api/pr/review') {
         return { ok: false, status: 403, json: async () => ({ error: 'you cannot approve your own PR' }) } as unknown as Response;
       }
       if (url.includes('/api/pr?')) {
@@ -865,7 +868,7 @@ describe('DashboardView drawer survives polling', () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
       const url: string = String(input);
-      if (url.includes('/api/pr/review')) {
+      if (url === '/api/pr/review') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) } as unknown as Response;
       }
       if (url.includes('/api/pr?')) {
@@ -909,10 +912,10 @@ describe('DashboardView drawer survives polling', () => {
     drawer.querySelector<HTMLButtonElement>('.run-drawer-pr .pr-approve')!.click();
 
     await vi.waitFor(() => {
-      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes('/api/pr/review'))).toBe(true);
+      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput) === '/api/pr/review')).toBe(true);
     });
 
-    const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput).includes('/api/pr/review'));
+    const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === '/api/pr/review');
     const reviewBody: unknown = JSON.parse((reviewCall![1] as RequestInit).body as string);
     expect(reviewBody).toEqual({ repo: 'org/alpha', number: 42, event: 'APPROVE', body: '' });
   });
@@ -1376,11 +1379,15 @@ describe('DashboardView drawer survives polling', () => {
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#bd93f9');
 
     await view.refresh();
+    expect(root.querySelector('.theme-select')).toBeNull();
+    root.querySelector<HTMLAnchorElement>('.page-tab[data-view="config"]')?.click();
+    await vi.waitFor(() => expect(root.querySelector('.ui-customization-panel .theme-select')).not.toBeNull());
     const select: HTMLSelectElement | null = root.querySelector<HTMLSelectElement>('.theme-select');
     expect(select!.value).toBe('dracula');
+    view.destroy();
   });
 
-  it('defaults to the amber theme when nothing is persisted', async () => {
+  it('defaults to the Quarterdeck theme when nothing is persisted', async () => {
     const response: DashboardResponse = await buildResponse();
     globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => response }) as unknown as Response) as typeof globalThis.fetch;
 
@@ -1388,7 +1395,7 @@ describe('DashboardView drawer survives polling', () => {
     void new DashboardView(root);
 
     expect(document.documentElement.dataset.theme).toBe(DEFAULT_THEME_ID);
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#dfb778');
   });
 
   it('applies and persists a new theme on select change without a full data refetch', async () => {
@@ -1400,7 +1407,12 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
+    expect(root.querySelector('.theme-select')).toBeNull();
+    root.querySelector<HTMLAnchorElement>('.page-tab[data-view="config"]')?.click();
+    await vi.waitFor(() => expect(root.querySelector('.ui-customization-panel .theme-select')).not.toBeNull());
     const select: HTMLSelectElement = root.querySelector<HTMLSelectElement>('.theme-select')!;
+    const preview = root.querySelector('.theme-preview');
+    expect(preview).not.toBeNull();
     const callsBefore: number = fetchMock.mock.calls.length;
 
     select.value = 'nord';
@@ -1409,7 +1421,65 @@ describe('DashboardView drawer survives polling', () => {
     expect(document.documentElement.dataset.theme).toBe('nord');
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#88c0d0');
     expect(localStorage.getItem('cmux.theme')).toBe('nord');
+    expect(root.querySelector('.theme-preview')).toBe(preview);
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    view.destroy();
+  });
+
+  it('moves tab focus with arrows and Home/End without navigating until Space activates it', async () => {
+    const response = await buildResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => ({
+      ok: true, status: 200,
+      json: async () => String(input).includes('/api/config') ? { config: {}, overridden: [] } : response,
+    }) as unknown as Response);
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+    const root = document.querySelector<HTMLElement>('#app')!;
+    const view = new DashboardView(root);
+    await view.refresh();
+    const tabs = Array.from(root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
+    const dashboard = tabs[0];
+    if (!dashboard) throw new Error('Missing dashboard tab');
+    dashboard.focus();
+    const callsBefore = fetchMock.mock.calls.length;
+    const press = (key: string): void => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      document.activeElement?.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    };
+
+    press('ArrowRight');
+    expect(document.activeElement).toBe(tabs[1]);
+    press('ArrowLeft');
+    expect(document.activeElement).toBe(dashboard);
+    press('ArrowLeft');
+    expect(document.activeElement).toBe(tabs.at(-1));
+    press('ArrowRight');
+    expect(document.activeElement).toBe(dashboard);
+    press('End');
+    expect(document.activeElement).toBe(tabs.at(-1));
+    press('Home');
+    expect(document.activeElement).toBe(dashboard);
+    expect(dashboard.getAttribute('aria-selected')).toBe('true');
+    expect(root.querySelector('#page-content')?.getAttribute('aria-labelledby')).toBe(dashboard.id);
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+
+    press('End');
+    const destination = document.activeElement as HTMLAnchorElement;
+    expect(root.querySelectorAll('.page-tab[tabindex="0"]')).toHaveLength(1);
+    expect(destination.tabIndex).toBe(0);
+    expect(destination.getAttribute('aria-selected')).toBe('false');
+    press(' ');
+    await vi.waitFor(() => expect(root.querySelector('#page-content')?.getAttribute('aria-labelledby')).toBe(destination.id));
+    expect(root.querySelector(`#${destination.id}`)?.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(root.querySelector(`#${destination.id}`));
+    expect(root.querySelector('#page-content')?.contains(root.querySelector('.ui-customization-panel'))).toBe(true);
+    press('Home');
+    await view.refresh();
+    expect(document.activeElement).toBe(root.querySelector('#page-tab-dashboard'));
+    expect(root.querySelector('#page-tab-dashboard')?.getAttribute('tabindex')).toBe('0');
+    expect(root.querySelector('#page-tab-config')?.getAttribute('aria-selected')).toBe('true');
+    expect(root.querySelectorAll('.page-tab[tabindex="0"]')).toHaveLength(1);
+    view.destroy();
   });
 });
 
@@ -1464,7 +1534,8 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const rows: NodeListOf<HTMLElement> = root.querySelectorAll<HTMLElement>('.agent-row');
     expect(rows.length).toBe(2);
     rows[0].click();
-    rows[1].click();
+    await vi.waitFor(() => expect(root.querySelector('[data-page="runs"]')).not.toBeNull());
+    root.querySelector<HTMLElement>('.recent-run[data-runid="run-b"]')!.click();
 
     await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
     expect(FakeEventSource.instances.every((s) => !s.closed)).toBe(true);
@@ -1474,7 +1545,7 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(drawer.querySelectorAll('.run-tab').length).toBe(2);
     expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-B');
 
-    rows[0].click();
+    root.querySelector<HTMLElement>('.recent-run[data-runid="run-a"]')!.click();
     expect(FakeEventSource.instances).toHaveLength(2);
     expect(drawer.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toContain('TICK-A');
   });
@@ -1499,7 +1570,8 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
 
     const rows: NodeListOf<HTMLElement> = root.querySelectorAll<HTMLElement>('.agent-row');
     rows[0].click();
-    rows[1].click();
+    await vi.waitFor(() => expect(root.querySelector('[data-page="runs"]')).not.toBeNull());
+    root.querySelector<HTMLElement>('.recent-run[data-runid="run-b"]')!.click();
     await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
 
     const drawer: HTMLElement = document.body.querySelector<HTMLElement>('.run-drawer')!;
@@ -1531,7 +1603,7 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(plate()!.classList.contains('is-collapsed')).toBe(false);
     plate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
     expect(plate()!.classList.contains('is-collapsed')).toBe(true);
-    expect(localStorage.getItem('gomaestro.rackLayout')).toContain('"collapsed":true');
+    expect(localStorage.getItem('helmsman.rackLayout')).toContain('"collapsed":true');
     plate()!.querySelector<HTMLButtonElement>('.panel-collapse')!.click();
     expect(plate()!.classList.contains('is-collapsed')).toBe(false);
   });
@@ -1561,6 +1633,43 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     rerunBtn!.click();
     await vi.waitFor(() => expect(launchBody).not.toBeNull());
     expect(launchBody).toMatchObject({ ticketId: 'TICK-9', repo: 'acme/widgets', mode: 'ticket' });
+  });
+
+  it('launches an underway ticket without a branch using the full selected repo and shows its log', async () => {
+    const response = await buildResponse();
+    response.repos = ['gdcorp-partners/airo-app-builder'];
+    response.selectedRepo = response.repos[0];
+    const triagePayload = {
+      groups: {
+        unassignedBacklog: [], unassignedTodo: [],
+        mineOpen: [{ id: 'AIROBUILD-6319', title: 'Finish in-progress work', priority: 'P2', status: 'in-progress', repo: 'airo-app-builder' }],
+      },
+      degraded: false, selectedRepo: response.selectedRepo, jiraBaseUrl: null,
+    };
+    const launches: unknown[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      let payload: unknown = response;
+      if (url.includes('/api/triage')) payload = triagePayload;
+      else if (url.includes('/api/config')) payload = { config: {}, overridden: [] };
+      else if (url === '/api/agents/launch') {
+        launches.push(JSON.parse(String(init?.body)));
+        payload = { runId: 'run-underway' };
+      } else if (url.includes('/api/agents')) payload = { runs: [] };
+      return new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
+    });
+    const root = document.querySelector<HTMLElement>('#app')!;
+    const view = new DashboardView(root);
+    await view.refresh();
+    root.querySelector<HTMLAnchorElement>('[data-view=triage]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.launch-btn[data-ticket="AIROBUILD-6319"]')).not.toBeNull());
+    root.querySelector<HTMLButtonElement>('.launch-btn[data-ticket="AIROBUILD-6319"]')!.click();
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(launches).toEqual([{ ticketId: 'AIROBUILD-6319', title: 'Finish in-progress work', repo: 'gdcorp-partners/airo-app-builder', mode: 'ticket' }]);
+    expect(root.querySelector('.triage-view .runs-drawer-slot .run-tab.is-active')?.textContent).toContain('AIROBUILD-6319');
+    expect(FakeEventSource.instances[0]?.url).toBe('/api/agents/run-underway/log');
+    expect(new URL(window.location.href).searchParams.get('run')).toBe('run-underway');
+    view.destroy();
   });
 
   it('collapses a triage group, persists it, and survives a repaint', async () => {
@@ -1594,14 +1703,14 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(backlogGroup()!.classList.contains('is-collapsed')).toBe(false);
     root.querySelector<HTMLButtonElement>('.surface-collapse[data-collapse-id="triage:backlog"]')!.click();
     expect(backlogGroup()!.classList.contains('is-collapsed')).toBe(true);
-    expect(localStorage.getItem('gomaestro.collapsed')).toContain('triage:backlog');
+    expect(localStorage.getItem('helmsman.collapsed')).toContain('triage:backlog');
 
     view['paintTriage']();
     expect(backlogGroup()!.classList.contains('is-collapsed')).toBe(true);
   });
 
   it('does not collapse the runs drawer when there are no tabs (no orphaned collapsed empty state)', async () => {
-    localStorage.setItem('gomaestro.collapsed', JSON.stringify(['runs:drawer']));
+    localStorage.setItem('helmsman.collapsed', JSON.stringify(['runs:drawer']));
     const root: HTMLElement = document.querySelector<HTMLElement>('#app')!;
     const view: DashboardView = new DashboardView(root);
     const drawer: HTMLElement = view['runDrawerEl'] as HTMLElement;
@@ -1694,7 +1803,7 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     } as MessageEvent<string>);
 
     emit('line 1');
-    expect(top).toBe(1000);
+    await vi.waitFor(() => expect(top).toBe(1000));
 
     top = 200;
     body.dispatchEvent(new Event('scroll'));

@@ -73,12 +73,12 @@ describe('surface collapsed set pref', () => {
   });
 
   it('returns an empty set on malformed JSON', () => {
-    localStorage.setItem('gomaestro.collapsed', '{not json');
+    localStorage.setItem('helmsman.collapsed', '{not json');
     expect(loadCollapsed().size).toBe(0);
   });
 
   it('ignores non-string entries', () => {
-    localStorage.setItem('gomaestro.collapsed', JSON.stringify(['triage:mine', 42, null]));
+    localStorage.setItem('helmsman.collapsed', JSON.stringify(['triage:mine', 42, null]));
     const loaded: Set<string> = loadCollapsed();
     expect(loaded.has('triage:mine')).toBe(true);
     expect(loaded.size).toBe(1);

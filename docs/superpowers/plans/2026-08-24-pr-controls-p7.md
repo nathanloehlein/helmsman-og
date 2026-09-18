@@ -15,7 +15,7 @@
 - Prefer `const`; no free `let` closed over by a callback. `tsconfig` has `erasableSyntaxOnly` — no constructor parameter properties.
 - No new deps. Tests do no real network/spawn/git — stub `fetch`, inject fakes; DB tests use `openDb(':memory:')`.
 - **No Merge from the UI.** No merge endpoint, no merge button. The agent never merges; merge stays a human action on GitHub.
-- **GitHub token stays server-side.** Never returned to or referenced by the client. Review/re-run writes go through the orchestrator (127.0.0.1).
+- **GitHub token stays server-side.** Never returned to or referenced by the client. Review/re-run writes go through Helmsman (127.0.0.1).
 - Re-run feedback reaches the agent prompt only (one argv element), never a shell.
 - Escape untrusted strings (PR title/branch/repo, GitHub error text, review decision) before `innerHTML` (`esc()`).
 - Conventional Commits; commit after each task.
@@ -46,7 +46,7 @@
 
 ### Task 2: PR API endpoints (`router` + `main` wiring)
 
-**Files:** Modify `server/orchestrator/router.ts` (+ `router.test.ts`), `server/orchestrator/main.ts`.
+**Files:** Modify `server/helmsman/router.ts` (+ `router.test.ts`), `server/helmsman/main.ts`.
 
 **Interfaces:**
 - `RouterDeps` gains:
@@ -63,14 +63,14 @@
 - [ ] **Step 1: Failing router tests** — add `prStatus`/`submitReview` stubs to the `deps` object. `GET /api/pr?repo=o/r&number=5` → 200 with the stubbed status; `GET /api/pr?repo=o/r` (no number) → 400; `GET /api/pr?...&number=x` (NaN) → 400; a stub returning null → 404. `POST /api/pr/review {repo,number,event:'APPROVE',body:''}` → calls submitReview + 200; `{...event:'COMMENT', body:''}` → 400 (empty body); `{...event:'BOGUS'}` → 400; a submitReview stub returning `{ok:false,error:'nope'}` → 400 `{error:'nope'}`. Assert no response contains `GITHUB_TOKEN`.
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** router branches + `RouterDeps` + `main.ts` wiring.
-- [ ] **Step 4: Run → PASS** (`npx vitest run server/orchestrator/router.test.ts` + `npx tsc --noEmit` + `npm test` + `npm run build`).
-- [ ] **Step 5: Commit** `feat(orchestrator): /api/pr status + review endpoints`.
+- [ ] **Step 4: Run → PASS** (`npx vitest run server/helmsman/router.test.ts` + `npx tsc --noEmit` + `npm test` + `npm run build`).
+- [ ] **Step 5: Commit** `feat(helmsman): /api/pr status + review endpoints`.
 
 ---
 
 ### Task 3: Re-run on the existing PR branch
 
-**Files:** Modify `server/orchestrator/worktree.ts` (+ `worktree.test.ts`), `server/orchestrator/agents/adapter.ts` (AgentTask), `server/orchestrator/agents/claude-code.ts` (buildPrompt), `server/orchestrator/runner.ts` (+ `runner.test.ts`), `server/orchestrator/router.ts` (+ `router.test.ts`), `server/orchestrator/main.ts`.
+**Files:** Modify `server/helmsman/worktree.ts` (+ `worktree.test.ts`), `server/helmsman/agents/adapter.ts` (AgentTask), `server/helmsman/agents/claude-code.ts` (buildPrompt), `server/helmsman/runner.ts` (+ `runner.test.ts`), `server/helmsman/router.ts` (+ `router.test.ts`), `server/helmsman/main.ts`.
 
 **Interfaces:**
 - `AgentTask` gains optional `prBranch?: string` and `prNumber?: number`. When `prBranch` is set the run is a rerun (update an existing PR).
@@ -88,7 +88,7 @@
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** across the files.
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit` + `npm test` + `npm run build`.
-- [ ] **Step 5: Commit** `feat(orchestrator): re-run the agent on an existing PR branch with feedback`.
+- [ ] **Step 5: Commit** `feat(helmsman): re-run the agent on an existing PR branch with feedback`.
 
 ---
 

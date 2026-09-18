@@ -1,3 +1,5 @@
+import { RUN_LOG_LINE_LIMIT } from '../logic/runLog';
+
 export interface LaunchResult {
   runId: string;
 }
@@ -40,6 +42,7 @@ export interface RunStatusSummary {
   status: string;
   prNumber: number | null;
   repo: string;
+  ticketId?: string;
 }
 
 export interface RunSummary {
@@ -51,6 +54,8 @@ export interface RunSummary {
   prNumber: number | null;
   startedAt: string;
   costUsd: number | null;
+  reviewOutcome?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+  reviewVerdict?: string;
 }
 
 export interface AgentCaps {
@@ -67,13 +72,19 @@ interface AgentsListResponse {
 }
 
 export async function getRun(runId: string): Promise<RunStatusSummary | null> {
+  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) return null;
   try {
-    const res: Response = await fetch('/api/agents');
+    const res: Response = await fetch(`/api/agents/${encodeURIComponent(runId)}`);
     if (!res.ok) return null;
-    const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
-    const row: RunSummary | undefined = payload.runs.find((r) => r.id === runId);
-    if (!row) return null;
-    return { status: row.status, prNumber: row.prNumber, repo: row.repo };
+    const run = (await res.json()) as Partial<RunSummary> | null;
+    if (!run || run.id !== runId || typeof run.status !== 'string' || typeof run.repo !== 'string') return null;
+    const prNumber = typeof run.prNumber === 'number' && Number.isSafeInteger(run.prNumber) && run.prNumber > 0 ? run.prNumber : null;
+    return {
+      status: run.status,
+      prNumber,
+      repo: run.repo,
+      ...(typeof run.ticketId === 'string' ? { ticketId: run.ticketId } : {}),
+    };
   } catch {
     return null;
   }
@@ -111,11 +122,25 @@ export async function setAutoClaim(repo: string, enabled: boolean): Promise<void
 }
 
 export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): () => void {
+  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) return () => {};
   const src: EventSource = new EventSource(`/api/agents/${encodeURIComponent(runId)}/log`);
+  let closed = false;
+  const close = (): void => { closed = true; src.close(); };
   src.onmessage = (m: MessageEvent<string>): void => {
-    const event: RunEvent = JSON.parse(m.data) as RunEvent;
-    onEvent(event);
-    if (event.kind === 'run-complete') src.close();
+    if (closed) return;
+    let event: Partial<RunEvent> | null;
+    try { event = JSON.parse(m.data) as Partial<RunEvent> | null; } catch { return; }
+    if (!event || typeof event.kind !== 'string' || !/^[a-z][a-z\d_-]*$/i.test(event.kind) || typeof event.text !== 'string'
+      || event.runId !== undefined && event.runId !== runId) return;
+    const normalized: RunEvent = {
+      id: typeof event.id === 'number' && Number.isSafeInteger(event.id) ? event.id : 0,
+      runId,
+      ts: typeof event.ts === 'string' ? event.ts : new Date().toISOString(),
+      kind: event.kind,
+      text: event.text.length > RUN_LOG_LINE_LIMIT ? `${event.text.slice(0, RUN_LOG_LINE_LIMIT)}… [full entry in downloaded log]` : event.text,
+    };
+    if (event.kind === 'run-complete') close();
+    onEvent(normalized);
   };
-  return (): void => src.close();
+  return close;
 }

@@ -5,39 +5,38 @@ Status: approved (direction), pending spec review
 
 ## Problem / motivation
 
-An agent run is a child process of the orchestrator, streamed over a live
-stdout pipe, tracked in an in-memory `ProcessManager`. When the orchestrator
+An agent run is a child process of Helmsman, streamed over a live
+stdout pipe, tracked in an in-memory `ProcessManager`. When Helmsman
 restarts or crashes mid-run, the child dies, the live state is lost, and
 `recovery.ts` marks the run `failed` (and the worktree sweep deletes its
-worktree). We want a run to **survive an orchestrator restart**: keep running,
+worktree). We want a run to **survive a Helmsman restart**: keep running,
 and on reconnect re-attach and resume the live log stream, then finalize
 normally.
 
 ## Decisions (from brainstorming)
 
-- **Full durability**: the agent keeps running through a restart; the
-  orchestrator re-attaches and resumes live streaming, then finalizes.
+- **Full durability**: the agent keeps running through a restart; Helmsman re-attaches and resumes live streaming, then finalizes.
 - **Host: cmux primary + detached fallback.** Host the agent in a cmux
   workspace when `cmux` is on PATH and connected; otherwise a detached OS
-  process. Both survive the orchestrator dying.
+  process. Both survive Helmsman dying.
 - **Single file-tail path.** All runs go through one path: a wrapper writes
   the agent's output to a per-run **log file** and its exit code to a per-run
-  **exit sentinel**; the orchestrator tails the log and waits on the sentinel.
+  **exit sentinel**; Helmsman tails the log and waits on the sentinel.
   This replaces the live child-pipe for every adapter.
 
 ## The substrate
 
-Truth lives on disk, not in orchestrator memory. Per run, under
-`RUNS_DIR` (default `<AGENTS_ROOT>/.gomaestro-runs/` — outside any worktree so
+Truth lives on disk, not in Helmsman memory. Per run, under
+`RUNS_DIR` (default `<AGENTS_ROOT>/.helmsman-runs/` — outside any worktree so
 the worktree sweep can't touch it):
 
 - `<runId>.json` — launch spec `{ cmd, args, cwd, logPath, exitPath }`.
 - `<runId>.log` — merged stdout+stderr of the agent, append-only.
 - `<runId>.exit` — the integer exit code, written once when the agent exits.
 
-The orchestrator reads these; it does not own the process.
+Helmsman reads these; it does not own the process.
 
-### Wrapper — `server/orchestrator/run-wrapper.mjs` (new, standalone)
+### Wrapper — `server/helmsman/run-wrapper.mjs` (new, standalone)
 
 Invoked as `node run-wrapper.mjs <specPath>`. Plain Node, no app imports.
 
@@ -49,7 +48,7 @@ Invoked as `node run-wrapper.mjs <specPath>`. Plain Node, no app imports.
 Passing untrusted data (ticket title) only via the spec JSON file — never a
 shell string — keeps launch injection-safe for both hosts.
 
-### Host abstraction — `server/orchestrator/run-host.ts` (new)
+### Host abstraction — `server/helmsman/run-host.ts` (new)
 
 ```ts
 export type HostRef = { kind: 'cmux'; workspace: string } | { kind: 'detached'; pid: number };
@@ -74,7 +73,7 @@ export function pickHost(deps: { hasCmux: () => Promise<boolean> }): Promise<Run
 against the real CLI during implementation — the spec fixes the shape, the
 implementer confirms the exact flags/parse.
 
-### Tailer — `server/orchestrator/log-tail.ts` (new)
+### Tailer — `server/helmsman/log-tail.ts` (new)
 
 ```ts
 export interface Tail { stop(): void; }
@@ -91,7 +90,7 @@ emit each complete line via `onLine`; call `onOffset` with the new byte offset
 after each batch (buffer a trailing partial line until its newline arrives).
 Pure of app types; unit-testable by writing to a temp file.
 
-## DB changes — `server/orchestrator/db.ts`
+## DB changes — `server/helmsman/db.ts`
 
 Add columns to `runs` (additive; migrate with `ALTER TABLE runs ADD COLUMN`
 guarded by a `PRAGMA table_info` check so existing DBs upgrade in place):
@@ -106,7 +105,7 @@ guarded by a `PRAGMA table_info` check so existing DBs upgrade in place):
 Extend `RunRow`, `COLS`, and add a `reattachableRuns()` reader (`status =
 'running'`). Keep `activeRuns()` for compatibility or replace its callers.
 
-## Adapter contract change — `server/orchestrator/agents/adapter.ts`
+## Adapter contract change — `server/helmsman/agents/adapter.ts`
 
 Replace the process-owning `start()/AgentHandle` with a command + parser:
 
@@ -123,7 +122,7 @@ export interface AgentAdapter {
 - **command** (`command.ts`): `buildCommand` from the template (`buildArgv`); `parseLine` = the existing `/(?:pull\/|PR[ #]*)(\d+)/i` regex → log event.
 
 The JIRA_* env stripping moves to the wrapper/host env (the wrapper inherits
-the orchestrator env; strip `JIRA_API_TOKEN`/`JIRA_EMAIL` before launch, or
+the Helmsman env; strip `JIRA_API_TOKEN`/`JIRA_EMAIL` before launch, or
 pass a scrubbed env in the spec — spec carries `env` additions/removals if
 needed; simplest: the runner builds the child env and the wrapper uses
 `process.env` minus those two, so the runner sets them via the spawned
@@ -131,13 +130,13 @@ wrapper's env).
 
 Env handling: `detachedHost` spawns the wrapper with `{ ...process.env }`
 minus `JIRA_API_TOKEN`/`JIRA_EMAIL`. `cmuxHost` inherits the cmux app's env
-(which already lacks orchestrator secrets in normal operation) — document that
+(which already lacks Helmsman secrets in normal operation) — document that
 cmux-hosted agents run under cmux's environment; if JIRA_* must be scrubbed
 there too, pass them out via the spec is NOT possible (spec has no secrets),
 so rely on cmux env. (Acceptable: the agent is prompt-forbidden from Jira
 writes and the token isn't in cmux's shell env by default.)
 
-## Runner rewrite — `server/orchestrator/runner.ts`
+## Runner rewrite — `server/helmsman/runner.ts`
 
 `startRun(task, deps)`:
 
@@ -170,7 +169,7 @@ writes and the token isn't in cmux's shell env by default.)
 The finalize path is shared between `startRun` and `reattachRun` (extract a
 `finalizeRun(...)` helper).
 
-## Recovery rewrite — `server/orchestrator/recovery.ts`
+## Recovery rewrite — `server/helmsman/recovery.ts`
 
 Replace mark-all-failed with: for each `reattachableRuns()` row, call
 `reattachRun(row, deps)` (fire-and-forget, each guarded). Return the ids
@@ -178,7 +177,7 @@ reattached vs failed for the startup log. Recovery now needs the full runner
 deps (adapter, host, bus, db, jira, github, worktree remove, config) — wire
 from `main.ts`.
 
-## Worktree sweep — `server/orchestrator/worktree.ts` + `main.ts`
+## Worktree sweep — `server/helmsman/worktree.ts` + `main.ts`
 
 `sweepOrphanedWorktrees` already spares worktrees whose `<runId>` is an active
 `ProcessManager` run. Change the "is active" predicate at the `main.ts` call
@@ -189,7 +188,7 @@ reattachable id set into the sweep.
 
 ## main.ts wiring
 
-- `RUNS_DIR = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.gomaestro-runs')`; mkdir.
+- `RUNS_DIR = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-runs')`; mkdir.
 - `const host = await pickHost({ hasCmux })` at startup; inject into runner/recovery deps.
 - Startup order: open db → **reattach** (`recoverOrphanedRuns` → now reattach) → worktree sweep (sparing reattached ids) → listen.
 - `stop` route → `pm.stop(id)` → `host.stop(ref)` (ProcessManager entry's stop closure).
@@ -209,7 +208,7 @@ reattachable id set into the sweep.
 
 - Exit file written but log still flushing → on finalize, read the full log tail past `logOffset` before deciding events; small race, poll a beat after exit.
 - Wrapper/node missing on the cmux host PATH → cmux workspace command fails; detect (workspace exits immediately, no exit file, isAlive false soon) → fail the run with a clear error.
-- Two orchestrators (shouldn't happen; single 127.0.0.1 bind) — out of scope.
+- Two Helmsman instances (shouldn't happen; single 127.0.0.1 bind) — out of scope.
 - Very large logs → tail reads incrementally; DB events already bounded by agent output. A janitor to prune old `<runId>.log` files is a follow-up, not this spec.
 - Stop during reattach → `host.stop(ref)` + status `stopped`.
 - cmux disconnected after launching a cmux-hosted run → `isAlive` false though the agent may still run detached inside cmux; treat as host-gone → the exit file still finalizes it if it completes; acceptable.

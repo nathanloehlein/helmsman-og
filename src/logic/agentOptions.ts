@@ -6,6 +6,8 @@ export interface AgentOption {
 export const MODEL_OPTIONS: AgentOption[] = [
   { value: '', label: 'Default model' },
   { value: 'gpt-6-astra', label: 'Astra (Codex)' },
+  { value: 'gpt-5.6-terra', label: 'Terra (Codex)' },
+  { value: 'gpt-5.6-sol', label: 'Sol (Codex)' },
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'fable', label: 'Fable' },

@@ -1,0 +1,85 @@
+{
+  "startedAt": "2026-09-17T20:31:05.519Z",
+  "sampledAt": "2026-09-17T20:36:34.597Z",
+  "observedSeconds": 329.078,
+  "windowSeconds": 300,
+  "bucketSeconds": 1,
+  "completion": "response_headers",
+  "inflight": 0,
+  "totals": {
+    "started": 122,
+    "completed": 122,
+    "errors": 0,
+    "status2xx": 122,
+    "status3xx": 0,
+    "status4xx": 0,
+    "status5xx": 0,
+    "status403": 0,
+    "status429": 0
+  },
+  "last5min": {
+    "started": 121,
+    "completed": 121,
+    "errors": 0,
+    "status2xx": 121,
+    "status3xx": 0,
+    "status4xx": 0,
+    "status5xx": 0,
+    "status403": 0,
+    "status429": 0
+  },
+  "services": [
+    {
+      "origin": "https://api.github.com",
+      "inflight": 0,
+      "totals": {
+        "started": 86,
+        "completed": 86,
+        "errors": 0,
+        "status2xx": 86,
+        "status3xx": 0,
+        "status4xx": 0,
+        "status5xx": 0,
+        "status403": 0,
+        "status429": 0
+      },
+      "last5min": {
+        "started": 85,
+        "completed": 85,
+        "errors": 0,
+        "status2xx": 85,
+        "status3xx": 0,
+        "status4xx": 0,
+        "status5xx": 0,
+        "status403": 0,
+        "status429": 0
+      }
+    },
+    {
+      "origin": "https://godaddy-corp.atlassian.net",
+      "inflight": 0,
+      "totals": {
+        "started": 36,
+        "completed": 36,
+        "errors": 0,
+        "status2xx": 36,
+        "status3xx": 0,
+        "status4xx": 0,
+        "status5xx": 0,
+        "status403": 0,
+        "status429": 0
+      },
+      "last5min": {
+        "started": 36,
+        "completed": 36,
+        "errors": 0,
+        "status2xx": 36,
+        "status3xx": 0,
+        "status4xx": 0,
+        "status5xx": 0,
+        "status403": 0,
+        "status429": 0
+      }
+    }
+  ]
+}

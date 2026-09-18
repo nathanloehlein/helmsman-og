@@ -15,7 +15,7 @@ Builds on P0–P6. One change, one PR.
 
 ## Security posture
 
-- The GitHub token stays server-side. The browser calls `/api/pr*`; the orchestrator (127.0.0.1) makes the authenticated GitHub calls. The token is never sent to or exposed in the client.
+- The GitHub token stays server-side. The browser calls `/api/pr*`; Helmsman (127.0.0.1) makes the authenticated GitHub calls. The token is never sent to or exposed in the client.
 - Review + re-run are writes gated by the same `127.0.0.1` bind as launch/config.
 - Re-run feedback is passed to the agent prompt only (a single argv element), never a shell.
 - Approving your own PR is a GitHub 422; surfaced as an inline error, not a crash.
@@ -52,7 +52,7 @@ Three additions across the existing two processes; no new services, no new deps.
 
 ### D. UI
 
-- **PR panel** (in the run drawer, when the run has a `prNumber`, and standalone for review-any-PR): renders `PrStatus` — a state chip (open/draft/merged/closed), CI summary (`✓passed ✗failed ⋯pending` with a status color), review-decision chip, comment count, and a PR link. Below it: a review row — **Approve** / **Request changes** / **Comment** buttons + a feedback `<textarea>` (required for request-changes/comment); and a separate **Re-run with feedback** button + its own textarea (shown only when the run/PR repo is one the orchestrator can check out — i.e. present in the config repo set; for an arbitrary PR whose repo isn't local, the re-run button is hidden/disabled with a note).
+- **PR panel** (in the run drawer, when the run has a `prNumber`, and standalone for review-any-PR): renders `PrStatus` — a state chip (open/draft/merged/closed), CI summary (`✓passed ✗failed ⋯pending` with a status color), review-decision chip, comment count, and a PR link. Below it: a review row — **Approve** / **Request changes** / **Comment** buttons + a feedback `<textarea>` (required for request-changes/comment); and a separate **Re-run with feedback** button + its own textarea (shown only when the run/PR repo is one Helmsman can check out — i.e. present in the config repo set; for an arbitrary PR whose repo isn't local, the re-run button is hidden/disabled with a note).
 - **Review any PR**: a small form (repo select or free text + PR number, or a single "paste PR URL" input that parses `github.com/<owner>/<repo>/pull/<n>`) → fetch `PrStatus` → show the PR panel + review buttons (no re-run unless the repo is local).
 - Data: `src/data/pr.ts` — `getPrStatus(repo, number)`, `submitReview(repo, number, event, body)`, `parsePrUrl(url)`; `launchRun` gains the `rerun` shape.
 - All untrusted strings (PR title/branch/repo, GitHub error messages, review decision) escaped before `innerHTML`.

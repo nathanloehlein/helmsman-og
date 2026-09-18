@@ -5,18 +5,18 @@
 
 ## Goal
 
-Let the dashboard **see and drive live cmux terminal tabs** — not just orchestrator-launched Jira runs. cmux ([cmux.com](https://cmux.com)) is a scriptable Ghostty-based terminal with a Unix-socket control CLI. The bridge surfaces every cmux tab (workspace/pane/surface) in the dashboard, streams a selected tab's screen live, and sends input to it: free-text commands and provider-aware high-level agent actions (continue / stop / interrupt / approve). This turns the dashboard into a single supervision surface for both headless orchestrator runs and interactive cmux agent sessions.
+Let the dashboard **see and drive live cmux terminal tabs** — not just Helmsman-launched Jira runs. cmux ([cmux.com](https://cmux.com)) is a scriptable Ghostty-based terminal with a Unix-socket control CLI. The bridge surfaces every cmux tab (workspace/pane/surface) in the dashboard, streams a selected tab's screen live, and sends input to it: free-text commands and provider-aware high-level agent actions (continue / stop / interrupt / approve). This turns the dashboard into a single supervision surface for both headless Helmsman runs and interactive cmux agent sessions.
 
-This is additive and isolated: a new `server/orchestrator/cmux/` subsystem plus a new frontend panel. Zero coupling to the existing Jira/run/PR logic. If cmux is not running, the feature degrades cleanly and the rest of the dashboard is unaffected.
+This is additive and isolated: a new `server/helmsman/cmux/` subsystem plus a new frontend panel. Zero coupling to the existing Jira/run/PR logic. If cmux is not running, the feature degrades cleanly and the rest of the dashboard is unaffected.
 
 ## Decisions (from brainstorming)
 
-- **Scope: all cmux tabs.** Every window/workspace/pane/surface cmux reports, not only orchestrator-launched agents. Full remote control of the user's terminal from the dashboard.
+- **Scope: all cmux tabs.** Every window/workspace/pane/surface cmux reports, not only Helmsman-launched agents. Full remote control of the user's terminal from the dashboard.
 - **Interaction: free-text + high-level agent actions.** Type arbitrary text into a tab (`cmux send`), plus provider-aware action buttons that map to key sequences (`cmux send-key`). Raw control-key access falls out of the action map.
 - **Readback: live screen.** Stream the selected tab's rendered screen into the dashboard so the user watches while they type.
 - **Transport: CLI shell-out + polled `read-screen` (Approach 1).** The bridge spawns the documented `cmux` CLI over argv (never a shell string). Live screen is `read-screen` polled while a tab is selected. Tree changes come from one persistent `cmux events --reconnect` child. Rejected alternatives: `pipe-pane` raw-pty streaming into xterm.js (Approach 2 — higher fidelity, needs an ANSI terminal emulator + per-tab fifo lifecycle, deferred until polling lag is proven annoying); direct Unix-socket / `rpc` framing (Approach 3 — undocumented, brittle to cmux updates).
 - **Rendering: plaintext `<pre>`, no terminal emulator.** `cmux read-screen` returns the *already-rendered* screen as plaintext (probed live 2026-09-01). No xterm.js, no ANSI parsing in v1.
-- **Security posture: 127.0.0.1-only, argv-only send.** Sending arbitrary input to any terminal is RCE-equivalent by design. Acceptable *only* because the orchestrator binds loopback for a single local user (existing invariant). The send path must use `spawn` with an argv array, never a shell string. See Security.
+- **Security posture: 127.0.0.1-only, argv-only send.** Sending arbitrary input to any terminal is RCE-equivalent by design. Acceptable *only* because Helmsman binds loopback for a single local user (existing invariant). The send path must use `spawn` with an argv array, never a shell string. See Security.
 
 ## Background: what cmux exposes (probed live)
 
@@ -37,11 +37,11 @@ Surface types: `terminal`, `browser`, `simulator`, `agent-session` (provider `cl
 
 ### Runtime placement
 
-The persistent Node orchestrator (`server/orchestrator/`, `node:http` + `node:child_process`) already spawns and supervises child processes and serves the REST + SSE API. The cmux bridge is another shell-out integration in the same mold as the existing git / `gh` / Claude adapters. In dev, Vite proxies `/api/*` to the orchestrator (existing setup); the new endpoints ride that proxy with no config change.
+The persistent Helmsman Node server (`server/helmsman/`, `node:http` + `node:child_process`) already spawns and supervises child processes and serves the REST + SSE API. The cmux bridge is another shell-out integration in the same mold as the existing git / `gh` / Claude adapters. In dev, Vite proxies `/api/*` to Helmsman (existing setup); the new endpoints ride that proxy with no config change.
 
-One long-lived `cmux events --reconnect` child is owned by the orchestrator process (started lazily on first cmux API use, restarted on exit). Everything else is short-lived per-request `cmux` invocations.
+One long-lived `cmux events --reconnect` child is owned by the Helmsman process (started lazily on first cmux API use, restarted on exit). Everything else is short-lived per-request `cmux` invocations.
 
-### Modules (`server/orchestrator/cmux/`)
+### Modules (`server/helmsman/cmux/`)
 
 | Module | Responsibility | Purity |
 |---|---|---|
@@ -79,7 +79,7 @@ deselect / panel hidden ──▶ stop screen poll
 
 ## Security
 
-- **RCE by design.** `POST /api/cmux/send` sends arbitrary bytes to arbitrary terminals; `POST /api/cmux/action` sends keystrokes. This is remote command execution over the local HTTP API. It is acceptable **only** because the orchestrator binds `127.0.0.1` for a single local user — the same posture that already gates the existing agent-launch and config endpoints.
+- **RCE by design.** `POST /api/cmux/send` sends arbitrary bytes to arbitrary terminals; `POST /api/cmux/action` sends keystrokes. This is remote command execution over the local HTTP API. It is acceptable **only** because Helmsman binds `127.0.0.1` for a single local user — the same posture that already gates the existing agent-launch and config endpoints.
 - **No shell, ever.** `bridge.ts` spawns `cmux` with an argv array. User-supplied text is passed as a single argv element to `cmux send`; it is never concatenated into a shell command line. This reuses the no-injection discipline already established for the generic-command adapter (tokenized template, per-argv substitution).
 - **Invariant test:** a unit test asserts the send/action path calls `spawn('cmux', [...])` (or the module's wrapper) with the user text as one array element and **no** `shell: true`.
 - **Non-loopback bind is forbidden.** No change to the existing loopback bind. The design does not add any config that could expose these endpoints off-host.
@@ -88,7 +88,7 @@ deselect / panel hidden ──▶ stop screen poll
 
 - **cmux not running / socket unavailable:** `bridge.ts` detects the failure; `GET /api/cmux/tabs` returns `{ connected: false, tabs: [] }`; the panel shows a "cmux not connected" state. Mirrors the existing per-source degraded-mode philosophy (name the unavailable source, keep the rest working). The rest of the dashboard is unaffected.
 - **Stale surface ref** (tab closed between list and action): the `cmux` call errors; the endpoint returns 404/409; the panel drops the selection and re-fetches the tab list.
-- **`events` child exits:** the orchestrator restarts it (bounded backoff). While it is down, the tab list still works via on-demand `GET /api/cmux/tabs`; only live change-push is briefly lost.
+- **`events` child exits:** Helmsman restarts it (bounded backoff). While it is down, the tab list still works via on-demand `GET /api/cmux/tabs`; only live change-push is briefly lost.
 
 ## Testing
 

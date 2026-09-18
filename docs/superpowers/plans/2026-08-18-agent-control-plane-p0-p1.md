@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stand up the persistent Node orchestrator (P0: serves the dashboard API + SQLite), then run one CLI agent against a ticket in a git worktree and stream its work live to the UI (P1). No Jira writes yet — the agent works, you watch.
+**Goal:** Stand up the persistent Helmsman Node server (P0: serves the dashboard API + SQLite), then run one CLI agent against a ticket in a git worktree and stream its work live to the UI (P1). No Jira writes yet — the agent works, you watch.
 
-**Architecture:** A standalone `node:http` orchestrator process replaces the dev-only Vite plugin. It serves `/api/*`, owns a SQLite database (runs + events), spawns agents via an `AgentAdapter`, isolates each run in a git worktree, and streams `AgentEvent`s over SSE. Vite proxies `/api` to it in dev. Pure seams (DB queries, router, event mapping, process registry, run driver with injected deps) are unit-tested; process/git/http I/O wrappers are integration-verified.
+**Architecture:** A standalone `node:http` Helmsman process replaces the dev-only Vite plugin. It serves `/api/*`, owns a SQLite database (runs + events), spawns agents via an `AgentAdapter`, isolates each run in a git worktree, and streams `AgentEvent`s over SSE. Vite proxies `/api` to it in dev. Pure seams (DB queries, router, event mapping, process registry, run driver with injected deps) are unit-tested; process/git/http I/O wrappers are integration-verified.
 
 **Tech Stack:** TypeScript (strict), Vite 8, Vitest 4, `node:http` / `node:child_process` / `process.loadEnvFile`, **better-sqlite3** (only new runtime dep). Spec: `docs/superpowers/specs/2026-08-18-agent-control-plane-design.md`.
 
@@ -14,7 +14,7 @@
 - No inline comments (repo hook blocks them); JSDoc directly above an `export` is allowed.
 - Only new runtime dependency is **better-sqlite3**; everything else uses Node built-ins.
 - Tests do **no** network calls, no real process spawns, no real git — inject fakes.
-- The agent never merges; the orchestrator performs no Jira writes in these phases.
+- The agent never merges; Helmsman performs no Jira writes in these phases.
 - Conventional Commit messages; commit after each task.
 - Secrets stay server-side (`.env`), never in the browser bundle.
 - Node-side code lives under `server/`; `tsconfig.json` `include` already covers it.
@@ -23,7 +23,7 @@
 
 ## PHASE 0 — Backend foundation
 
-### Task 1: Add better-sqlite3 + orchestrator entry scripts
+### Task 1: Add better-sqlite3 + Helmsman entry scripts
 
 **Files:**
 - Modify: `package.json` (dependency + scripts)
@@ -32,7 +32,7 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `npm run orchestrator` (runs the server, added in Task 3), `npm run dev` (Vite + orchestrator), dep `better-sqlite3` + `@types/better-sqlite3`.
+- Produces: `npm run helmsman` (runs the server, added in Task 3), `npm run dev` (Vite + Helmsman), dep `better-sqlite3` + `@types/better-sqlite3`.
 
 - [ ] **Step 1: Install deps**
 
@@ -48,20 +48,20 @@ In `tsconfig.json` `compilerOptions`, confirm/add `"esModuleInterop": true`. Run
 In `package.json` `scripts`, set:
 
 ```json
-"orchestrator": "tsx server/orchestrator/main.ts",
+"helmsman": "tsx server/helmsman/main.ts",
 "dev": "node scripts/dev.mjs",
-"serve": "tsx server/orchestrator/main.ts"
+"serve": "tsx server/helmsman/main.ts"
 ```
 
 Install `tsx` if not present: `npm install -D tsx`.
 
-- [ ] **Step 4: Write `scripts/dev.mjs`** (spawns Vite + orchestrator, no new dep)
+- [ ] **Step 4: Write `scripts/dev.mjs`** (spawns Vite + Helmsman, no new dep)
 
 ```js
 import { spawn } from 'node:child_process';
 
 const procs = [
-  spawn('npm', ['run', 'orchestrator'], { stdio: 'inherit' }),
+  spawn('npm', ['run', 'helmsman'], { stdio: 'inherit' }),
   spawn('npx', ['vite'], { stdio: 'inherit' }),
 ];
 
@@ -78,7 +78,7 @@ for (const p of procs) p.on('exit', shutdown);
 
 ```bash
 git add package.json package-lock.json tsconfig.json scripts/dev.mjs
-git commit -m "chore: add better-sqlite3, tsx, and dev orchestrator script"
+git commit -m "chore: add better-sqlite3, tsx, and dev helmsman script"
 ```
 
 ---
@@ -86,8 +86,8 @@ git commit -m "chore: add better-sqlite3, tsx, and dev orchestrator script"
 ### Task 2: SQLite layer (`db.ts`)
 
 **Files:**
-- Create: `server/orchestrator/db.ts`
-- Test: `server/orchestrator/db.test.ts`
+- Create: `server/helmsman/db.ts`
+- Test: `server/helmsman/db.test.ts`
 
 **Interfaces:**
 - Consumes: `better-sqlite3`.
@@ -155,10 +155,10 @@ describe('db', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run server/orchestrator/db.test.ts`
+Run: `npx vitest run server/helmsman/db.test.ts`
 Expected: FAIL (module not found).
 
-- [ ] **Step 3: Write `server/orchestrator/db.ts`**
+- [ ] **Step 3: Write `server/helmsman/db.ts`**
 
 ```ts
 import Database from 'better-sqlite3';
@@ -249,14 +249,14 @@ export function openDb(path: string): Db {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run server/orchestrator/db.test.ts && npx tsc --noEmit`
+Run: `npx vitest run server/helmsman/db.test.ts && npx tsc --noEmit`
 Expected: PASS, clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/db.ts server/orchestrator/db.test.ts
-git commit -m "feat(orchestrator): SQLite runs + events store"
+git add server/helmsman/db.ts server/helmsman/db.test.ts
+git commit -m "feat(helmsman): SQLite runs + events store"
 ```
 
 ---
@@ -264,9 +264,9 @@ git commit -m "feat(orchestrator): SQLite runs + events store"
 ### Task 3: Pure request router + HTTP server serving the dashboard
 
 **Files:**
-- Create: `server/orchestrator/router.ts` (pure: request → response object)
-- Create: `server/orchestrator/main.ts` (node:http binding; not unit-tested)
-- Test: `server/orchestrator/router.test.ts`
+- Create: `server/helmsman/router.ts` (pure: request → response object)
+- Create: `server/helmsman/main.ts` (node:http binding; not unit-tested)
+- Test: `server/helmsman/router.test.ts`
 
 **Interfaces:**
 - Consumes: `buildDashboardResponse` (`server/dashboard-endpoint.ts`), `Db` (Task 2).
@@ -309,10 +309,10 @@ describe('handleApi', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run server/orchestrator/router.test.ts`
+Run: `npx vitest run server/helmsman/router.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Write `server/orchestrator/router.ts`** (Task 12 extends this; for now dashboard + agents list)
+- [ ] **Step 3: Write `server/helmsman/router.ts`** (Task 12 extends this; for now dashboard + agents list)
 
 ```ts
 import type { Db } from './db';
@@ -350,10 +350,10 @@ export async function handleApi(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run server/orchestrator/router.test.ts`
+Run: `npx vitest run server/helmsman/router.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Write `server/orchestrator/main.ts`** (I/O binding — verified by running, not unit-tested)
+- [ ] **Step 5: Write `server/helmsman/main.ts`** (I/O binding — verified by running, not unit-tested)
 
 ```ts
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -366,9 +366,9 @@ import { handleApi } from './router';
 
 process.loadEnvFile('.env');
 
-const PORT: number = Number(process.env.ORCHESTRATOR_PORT ?? '8787');
+const PORT: number = Number(process.env.HELMSMAN_PORT ?? '8787');
 const DIST: string = join(process.cwd(), 'dist');
-const db = openDb(process.env.ORCHESTRATOR_DB ?? join(process.cwd(), '.backlog-runner.sqlite'));
+const db = openDb(process.env.HELMSMAN_DB ?? join(process.cwd(), '.backlog-runner.sqlite'));
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
@@ -411,14 +411,14 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   });
 });
 
-server.listen(PORT, () => process.stdout.write(`orchestrator on :${PORT}\n`));
+server.listen(PORT, () => process.stdout.write(`helmsman on :${PORT}\n`));
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/orchestrator/router.ts server/orchestrator/router.test.ts server/orchestrator/main.ts
-git commit -m "feat(orchestrator): http server + pure router serving dashboard and runs"
+git add server/helmsman/router.ts server/helmsman/router.test.ts server/helmsman/main.ts
+git commit -m "feat(helmsman): http server + pure router serving dashboard and runs"
 ```
 
 ---
@@ -431,8 +431,8 @@ git commit -m "feat(orchestrator): http server + pure router serving dashboard a
 - Modify: `docs`/README wiring note if present (optional)
 
 **Interfaces:**
-- Consumes: orchestrator on `ORCHESTRATOR_PORT` (default 8787).
-- Produces: dev UI served by Vite with `/api/*` proxied to the orchestrator.
+- Consumes: Helmsman on `HELMSMAN_PORT` (default 8787).
+- Produces: dev UI served by Vite with `/api/*` proxied to Helmsman.
 
 - [ ] **Step 1: Rewrite `vite.config.ts`**
 
@@ -441,7 +441,7 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const port: string = env.ORCHESTRATOR_PORT ?? '8787';
+  const port: string = env.HELMSMAN_PORT ?? '8787';
   return {
     server: {
       proxy: {
@@ -458,14 +458,14 @@ Run: `git rm vite-plugin-dashboard.ts`
 
 - [ ] **Step 3: Verify end-to-end**
 
-Run: `npm run build` (UI builds) then start both: `npm run orchestrator &` and `npx vite`. Load `https://localhost:5173` (or the Vite URL) — the dashboard renders, `/api/dashboard` served by the orchestrator (check the network tab / `curl localhost:8787/api/dashboard`).
-Expected: dashboard identical to before; data now comes through the orchestrator.
+Run: `npm run build` (UI builds) then start both: `npm run helmsman &` and `npx vite`. Load `https://localhost:5173` (or the Vite URL) — the dashboard renders, `/api/dashboard` served by Helmsman (check the network tab / `curl localhost:8787/api/dashboard`).
+Expected: dashboard identical to before; data now comes through Helmsman.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add vite.config.ts
-git commit -m "refactor: proxy /api to the orchestrator; drop the dev-only dashboard plugin"
+git commit -m "refactor: proxy /api to the helmsman; drop the dev-only dashboard plugin"
 ```
 
 ---
@@ -475,7 +475,7 @@ git commit -m "refactor: proxy /api to the orchestrator; drop the dev-only dashb
 ### Task 5: Agent adapter contract
 
 **Files:**
-- Create: `server/orchestrator/agents/adapter.ts`
+- Create: `server/helmsman/agents/adapter.ts`
 
 **Interfaces:**
 - Produces:
@@ -530,8 +530,8 @@ Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/orchestrator/agents/adapter.ts
-git commit -m "feat(orchestrator): agent adapter contract"
+git add server/helmsman/agents/adapter.ts
+git commit -m "feat(helmsman): agent adapter contract"
 ```
 
 ---
@@ -539,8 +539,8 @@ git commit -m "feat(orchestrator): agent adapter contract"
 ### Task 6: Claude Code stream-json → AgentEvent mapper (pure)
 
 **Files:**
-- Create: `server/orchestrator/agents/claude-stream.ts`
-- Test: `server/orchestrator/agents/claude-stream.test.ts`
+- Create: `server/helmsman/agents/claude-stream.ts`
+- Test: `server/helmsman/agents/claude-stream.test.ts`
 
 **Interfaces:**
 - Consumes: `AgentEvent` (Task 5).
@@ -578,10 +578,10 @@ describe('mapStreamLine', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run server/orchestrator/agents/claude-stream.test.ts`
+Run: `npx vitest run server/helmsman/agents/claude-stream.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Write `server/orchestrator/agents/claude-stream.ts`**
+- [ ] **Step 3: Write `server/helmsman/agents/claude-stream.ts`**
 
 ```ts
 import type { AgentEvent } from './adapter';
@@ -640,14 +640,14 @@ export function mapStreamLine(line: string): AgentEvent | null {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run server/orchestrator/agents/claude-stream.test.ts`
+Run: `npx vitest run server/helmsman/agents/claude-stream.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/agents/claude-stream.ts server/orchestrator/agents/claude-stream.test.ts
-git commit -m "feat(orchestrator): map Claude Code stream-json to agent events"
+git add server/helmsman/agents/claude-stream.ts server/helmsman/agents/claude-stream.test.ts
+git commit -m "feat(helmsman): map Claude Code stream-json to agent events"
 ```
 
 ---
@@ -655,7 +655,7 @@ git commit -m "feat(orchestrator): map Claude Code stream-json to agent events"
 ### Task 7: Claude Code adapter (spawn)
 
 **Files:**
-- Create: `server/orchestrator/agents/claude-code.ts`
+- Create: `server/helmsman/agents/claude-code.ts`
 
 **Interfaces:**
 - Consumes: `AgentAdapter`, `AgentTask`, `AgentEvent`, `AgentHandle`, `AgentResult` (Task 5); `mapStreamLine` (Task 6); `node:child_process`.
@@ -663,7 +663,7 @@ git commit -m "feat(orchestrator): map Claude Code stream-json to agent events"
 
 This wraps `node:child_process.spawn` and line-splits stdout; it holds no branching logic beyond wiring, so it is integration-verified (Task 14), not unit-tested.
 
-- [ ] **Step 1: Write `server/orchestrator/agents/claude-code.ts`**
+- [ ] **Step 1: Write `server/helmsman/agents/claude-code.ts`**
 
 ```ts
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -724,8 +724,8 @@ Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/orchestrator/agents/claude-code.ts
-git commit -m "feat(orchestrator): Claude Code spawn adapter"
+git add server/helmsman/agents/claude-code.ts
+git commit -m "feat(helmsman): Claude Code spawn adapter"
 ```
 
 ---
@@ -733,7 +733,7 @@ git commit -m "feat(orchestrator): Claude Code spawn adapter"
 ### Task 8: Git worktree manager
 
 **Files:**
-- Create: `server/orchestrator/worktree.ts`
+- Create: `server/helmsman/worktree.ts`
 
 **Interfaces:**
 - Consumes: `node:child_process`, `AGENTS_ROOT`.
@@ -744,7 +744,7 @@ git commit -m "feat(orchestrator): Claude Code spawn adapter"
 
 Integration-verified (git I/O), not unit-tested.
 
-- [ ] **Step 1: Write `server/orchestrator/worktree.ts`**
+- [ ] **Step 1: Write `server/helmsman/worktree.ts`**
 
 ```ts
 import { execFile } from 'node:child_process';
@@ -784,8 +784,8 @@ Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/orchestrator/worktree.ts
-git commit -m "feat(orchestrator): git worktree per run"
+git add server/helmsman/worktree.ts
+git commit -m "feat(helmsman): git worktree per run"
 ```
 
 ---
@@ -793,8 +793,8 @@ git commit -m "feat(orchestrator): git worktree per run"
 ### Task 9: Process manager (registry, single-flight, concurrency)
 
 **Files:**
-- Create: `server/orchestrator/process-manager.ts`
-- Test: `server/orchestrator/process-manager.test.ts`
+- Create: `server/helmsman/process-manager.ts`
+- Test: `server/helmsman/process-manager.test.ts`
 
 **Interfaces:**
 - Produces:
@@ -843,10 +843,10 @@ describe('ProcessManager', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run server/orchestrator/process-manager.test.ts`
+Run: `npx vitest run server/helmsman/process-manager.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Write `server/orchestrator/process-manager.ts`**
+- [ ] **Step 3: Write `server/helmsman/process-manager.ts`**
 
 ```ts
 interface Entry {
@@ -897,14 +897,14 @@ export class ProcessManager {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run server/orchestrator/process-manager.test.ts`
+Run: `npx vitest run server/helmsman/process-manager.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/process-manager.ts server/orchestrator/process-manager.test.ts
-git commit -m "feat(orchestrator): process manager with single-flight and concurrency cap"
+git add server/helmsman/process-manager.ts server/helmsman/process-manager.test.ts
+git commit -m "feat(helmsman): process manager with single-flight and concurrency cap"
 ```
 
 ---
@@ -912,8 +912,8 @@ git commit -m "feat(orchestrator): process manager with single-flight and concur
 ### Task 10: SSE event bus
 
 **Files:**
-- Create: `server/orchestrator/event-bus.ts`
-- Test: `server/orchestrator/event-bus.test.ts`
+- Create: `server/helmsman/event-bus.ts`
+- Test: `server/helmsman/event-bus.test.ts`
 
 **Interfaces:**
 - Consumes: `AgentEvent` (Task 5).
@@ -954,10 +954,10 @@ describe('RunBus', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run server/orchestrator/event-bus.test.ts`
+Run: `npx vitest run server/helmsman/event-bus.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Write `server/orchestrator/event-bus.ts`**
+- [ ] **Step 3: Write `server/helmsman/event-bus.ts`**
 
 ```ts
 import type { AgentEvent } from './agents/adapter';
@@ -987,14 +987,14 @@ export class RunBus {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run server/orchestrator/event-bus.test.ts`
+Run: `npx vitest run server/helmsman/event-bus.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/event-bus.ts server/orchestrator/event-bus.test.ts
-git commit -m "feat(orchestrator): per-run SSE event bus"
+git add server/helmsman/event-bus.ts server/helmsman/event-bus.test.ts
+git commit -m "feat(helmsman): per-run SSE event bus"
 ```
 
 ---
@@ -1002,8 +1002,8 @@ git commit -m "feat(orchestrator): per-run SSE event bus"
 ### Task 11: Run driver (`runner.ts`)
 
 **Files:**
-- Create: `server/orchestrator/runner.ts`
-- Test: `server/orchestrator/runner.test.ts`
+- Create: `server/helmsman/runner.ts`
+- Test: `server/helmsman/runner.test.ts`
 
 **Interfaces:**
 - Consumes: `Db` (Task 2), `AgentAdapter`/`AgentTask`/`AgentEvent` (Task 5), `RunBus` (Task 10); worktree fns (Task 8) — injected for testability.
@@ -1068,10 +1068,10 @@ describe('startRun', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run server/orchestrator/runner.test.ts`
+Run: `npx vitest run server/helmsman/runner.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Write `server/orchestrator/runner.ts`**
+- [ ] **Step 3: Write `server/helmsman/runner.ts`**
 
 ```ts
 import type { Db, RunRow } from './db';
@@ -1120,14 +1120,14 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run server/orchestrator/runner.test.ts && npx tsc --noEmit`
+Run: `npx vitest run server/helmsman/runner.test.ts && npx tsc --noEmit`
 Expected: PASS, clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/runner.ts server/orchestrator/runner.test.ts
-git commit -m "feat(orchestrator): single-run driver (worktree, spawn, stream, persist)"
+git add server/helmsman/runner.ts server/helmsman/runner.test.ts
+git commit -m "feat(helmsman): single-run driver (worktree, spawn, stream, persist)"
 ```
 
 ---
@@ -1135,8 +1135,8 @@ git commit -m "feat(orchestrator): single-run driver (worktree, spawn, stream, p
 ### Task 12: Wire launch / stop / list / SSE log into the router + server
 
 **Files:**
-- Modify: `server/orchestrator/router.ts` (+ its test)
-- Modify: `server/orchestrator/main.ts` (SSE + POST wiring)
+- Modify: `server/helmsman/router.ts` (+ its test)
+- Modify: `server/helmsman/main.ts` (SSE + POST wiring)
 
 **Interfaces:**
 - Consumes: `ProcessManager` (Task 9), `RunBus` (Task 10), `startRun` (Task 11), `Db` (Task 2).
@@ -1179,7 +1179,7 @@ Update `RouterDeps` in the test's `deps` object to include `canStart`/`launch`/`
 
 - [ ] **Step 2: Run to verify new tests fail**
 
-Run: `npx vitest run server/orchestrator/router.test.ts`
+Run: `npx vitest run server/helmsman/router.test.ts`
 Expected: FAIL on the new cases.
 
 - [ ] **Step 3: Extend `RouterDeps` + `handleApi` in `router.ts`**
@@ -1211,7 +1211,7 @@ Add these branches before the `startsWith('/api/')` 404:
 
 - [ ] **Step 4: Run router tests**
 
-Run: `npx vitest run server/orchestrator/router.test.ts`
+Run: `npx vitest run server/helmsman/router.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Wire real deps + SSE in `main.ts`**
@@ -1265,14 +1265,14 @@ Note the `startRun` `genId` is pinned to the pre-generated `runId` so the proces
 
 - [ ] **Step 6: Verify**
 
-Run: `npx vitest run server/orchestrator && npx tsc --noEmit`
+Run: `npx vitest run server/helmsman && npx tsc --noEmit`
 Expected: PASS, clean. (Endpoint I/O verified in Task 14.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add server/orchestrator/router.ts server/orchestrator/router.test.ts server/orchestrator/main.ts
-git commit -m "feat(orchestrator): launch/stop/log endpoints wired to runner + bus"
+git add server/helmsman/router.ts server/helmsman/router.test.ts server/helmsman/main.ts
+git commit -m "feat(helmsman): launch/stop/log endpoints wired to runner + bus"
 ```
 
 ---
@@ -1357,11 +1357,11 @@ git commit -m "feat(ui): launch agents from the backlog and stream run logs in a
 
 - [ ] **Step 1: Configure**
 
-Add to `.env.example` and set in `.env`: `ORCHESTRATOR_PORT=8787`, `AGENTS_ROOT=/absolute/path/holding/repo/checkouts`, `AGENT_MAX_CONCURRENCY=3`. Ensure a checkout of a mapped repo exists at `<AGENTS_ROOT>/<repo-basename>` with a clean default branch.
+Add to `.env.example` and set in `.env`: `HELMSMAN_PORT=8787`, `AGENTS_ROOT=/absolute/path/holding/repo/checkouts`, `AGENT_MAX_CONCURRENCY=3`. Ensure a checkout of a mapped repo exists at `<AGENTS_ROOT>/<repo-basename>` with a clean default branch.
 
 - [ ] **Step 2: Run the stack**
 
-Run: `npm run dev` (starts orchestrator + Vite). Confirm `curl localhost:8787/api/dashboard` returns JSON and the UI loads.
+Run: `npm run dev` (starts Helmsman + Vite). Confirm `curl localhost:8787/api/dashboard` returns JSON and the UI loads.
 
 - [ ] **Step 3: Launch a run**
 
@@ -1371,7 +1371,7 @@ Pick a backlog ticket, click **Launch**. Expected: a run row is created (`curl l
 
 ```bash
 git add .env.example
-git commit -m "docs: orchestrator + agent env vars for local runs"
+git commit -m "docs: helmsman + agent env vars for local runs"
 ```
 
 ---
@@ -1379,7 +1379,7 @@ git commit -m "docs: orchestrator + agent env vars for local runs"
 ## Self-Review
 
 **Spec coverage (P0 + P1 scope):**
-- Orchestrator HTTP server + dashboard move → Tasks 3, 4. ✓
+- Helmsman HTTP server + dashboard move → Tasks 3, 4. ✓
 - SQLite (runs + events) → Task 2. ✓
 - Vite proxy, plugin removed → Task 4. ✓
 - Agent adapter contract → Task 5; Claude Code adapter (stream mapping + spawn) → Tasks 6, 7. ✓

@@ -1,6 +1,6 @@
 import type { Priority, Ticket } from '../types';
 
-const PRIORITY_RANK: Record<Priority, number> = { P1: 0, P2: 1, P3: 2 };
+const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4 };
 
 /** Priority order first, original backlog order as the tiebreak — never mutates the input. */
 export function sortByPriority(tickets: Ticket[]): Ticket[] {

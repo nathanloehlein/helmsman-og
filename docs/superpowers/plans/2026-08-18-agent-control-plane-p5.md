@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Ship the second agent backend (a **generic-command adapter** behind the existing `AgentAdapter` interface, selectable by config) and three hardening features: **crash recovery** (reconcile runs left `running` after an orchestrator restart), an **orphaned-worktree sweep** (remove agent worktrees no live run owns), and **cost/attempt caps surfaced in the UI** (with a cost-cap that stops the retry loop).
+**Goal:** Ship the second agent backend (a **generic-command adapter** behind the existing `AgentAdapter` interface, selectable by config) and three hardening features: **crash recovery** (reconcile runs left `running` after a Helmsman restart), an **orphaned-worktree sweep** (remove agent worktrees no live run owns), and **cost/attempt caps surfaced in the UI** (with a cost-cap that stops the retry loop).
 
 **Architecture:** The command adapter is a factory returning an `AgentAdapter` — same contract as `claudeCodeAdapter`, spawns a configured command (no shell; argv tokenized to avoid injection from untrusted Jira titles), streams stdout lines as `log` events. `main.ts` picks the adapter from config. Recovery and sweep are pure-ish startup functions with injected I/O, run once after `openDb`. Caps add config values, a runner loop break on cost, and a `caps` object on `GET /api/agents` that the running-agents rows render. Builds on P0–P4. Spec: `docs/superpowers/specs/2026-08-18-agent-control-plane-design.md` (P5 line).
 
@@ -22,7 +22,7 @@
 
 ### Task 1: Generic-command adapter
 
-**Files:** Create `server/orchestrator/agents/command.ts`; Test `server/orchestrator/agents/command.test.ts`.
+**Files:** Create `server/helmsman/agents/command.ts`; Test `server/helmsman/agents/command.test.ts`.
 
 **Interfaces:**
 - Produces: `export function commandAdapter(template: string): AgentAdapter` — `id: 'command'`. `start(task, workdir, onEvent)` returns an `AgentHandle`.
@@ -33,17 +33,17 @@ Behavior:
 - `start`: `const argv = buildArgv(template, task); const [cmd, ...args] = argv;` strip Jira secrets: `const { JIRA_API_TOKEN, JIRA_EMAIL, ...agentEnv } = process.env;` then `spawn(cmd, args, { cwd: workdir, env: agentEnv })` (no `shell`). Each stdout line (via `readline` over `child.stdout`) → `onEvent({ kind: 'log', text: line })`; also scan the line for a PR marker with `/(?:pull\/|PR[ #]*)(\d+)/i` and keep the LAST match's number in a `let prNumber: number | undefined`. Each stderr line → `onEvent({ kind: 'log', text: line })`. `exit` resolves `{ ok: code === 0, prNumber }` on `close`; `child.on('error', (err) => { onEvent({ kind: 'error', text: err.message }); resolve({ ok: false, prNumber }); })`. `stop: () => child.kill('SIGTERM')`. (No `costUsd` — generic commands report none.)
 
 - [ ] **Step 1: Failing test** for `buildArgv` — `buildArgv('run --ticket {ticket} --repo {repo} --title {title}', { ticketId: 'ABC-1', repo: 'o/r', title: 'Fix bug', jiraBaseUrl: '' })` returns `['run','--ticket','ABC-1','--repo','o/r','--title','Fix','bug']` (note: a multi-word title splits into multiple argv tokens because the template splits on whitespace first — assert this exact array so the behavior is pinned and the security rationale is explicit: no single shell string is ever built). Also assert a title with a shell metachar, `title: 'a; rm -rf /'`, yields tokens `['a;','rm','-rf','/']` as SEPARATE argv entries (never concatenated into one shell string).
-- [ ] **Step 2: Run → FAIL** (`npx vitest run server/orchestrator/agents/command.test.ts`).
+- [ ] **Step 2: Run → FAIL** (`npx vitest run server/helmsman/agents/command.test.ts`).
 - [ ] **Step 3: Implement** `command.ts` (`buildArgv` + `commandAdapter`).
 - [ ] **Step 4: Add a spawn-level test** using an injected/real fake: spawn a real Node one-liner as the template to keep it hermetic — e.g. `commandAdapter('node -e console.log("hello");console.log("pull/42")')`, call `start({ticketId:'X-1',title:'t',repo:'o/r',jiraBaseUrl:''}, process.cwd(), onEvent)`, `await handle.exit`, assert `result.ok === true`, `result.prNumber === 42`, and that at least one `log` event carried `hello`. (This uses `node` on PATH; acceptable in this repo's test env, mirroring how other tests shell out.) If a spawn test proves flaky in review, downgrade to asserting only `buildArgv` + the event wiring via a stubbed child — but attempt the real spawn first.
 - [ ] **Step 5: Run → PASS** + `npx tsc --noEmit`.
-- [ ] **Step 6: Commit** `feat(orchestrator): generic-command agent adapter (no-shell argv)`.
+- [ ] **Step 6: Commit** `feat(helmsman): generic-command agent adapter (no-shell argv)`.
 
 ---
 
 ### Task 2: Adapter selection from config
 
-**Files:** Modify `server/config.ts` (+ `server/config.test.ts`), `server/orchestrator/main.ts`, `.env.example`.
+**Files:** Modify `server/config.ts` (+ `server/config.test.ts`), `server/helmsman/main.ts`, `.env.example`.
 
 **Interfaces:**
 - `AppConfig` gains `agentAdapter: 'claude-code' | 'command'` and `agentCmd: string | null`.
@@ -53,30 +53,30 @@ Behavior:
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** the two fields in `loadConfig` (mirror the existing `req`/default pattern). In `main.ts`, select the adapter once at module scope: `const adapter: AgentAdapter = config.agentAdapter === 'command' && config.agentCmd ? commandAdapter(config.agentCmd) : claudeCodeAdapter;` (import `commandAdapter` and the `AgentAdapter` type). Replace the hardcoded `adapter: claudeCodeAdapter` in the `startRun` deps with `adapter`. If `AGENT_ADAPTER='command'` but `AGENT_CMD` is empty, fall back to claude-code and `process.stderr.write('AGENT_ADAPTER=command but AGENT_CMD is empty; using claude-code\n')`. Add `AGENT_ADAPTER` and `AGENT_CMD` to `.env.example` with one-line comments.
 - [ ] **Step 4: Run → PASS** (`npx vitest run server/config.test.ts` + `npx tsc --noEmit` + `npm test`).
-- [ ] **Step 5: Commit** `feat(orchestrator): select agent adapter from config`.
+- [ ] **Step 5: Commit** `feat(helmsman): select agent adapter from config`.
 
 ---
 
 ### Task 3: Crash recovery for interrupted runs
 
-**Files:** Create `server/orchestrator/recovery.ts`; Test `server/orchestrator/recovery.test.ts`; Modify `server/orchestrator/main.ts`.
+**Files:** Create `server/helmsman/recovery.ts`; Test `server/helmsman/recovery.test.ts`; Modify `server/helmsman/main.ts`.
 
 **Interfaces:**
-- Produces: `export function recoverOrphanedRuns(db: Db, now: () => string): string[]` — every run with `status === 'running'` (via `db.activeRuns()`) is reconciled to `'failed'` with `endedAt: now()`, an event is appended (`db.appendEvent(id, 'error', 'run interrupted: orchestrator restarted', now())`), and the affected id is returned. Uses only existing `Db` methods (`activeRuns`, `updateRun`, `appendEvent`). No new `RunStatus` value.
+- Produces: `export function recoverOrphanedRuns(db: Db, now: () => string): string[]` — every run with `status === 'running'` (via `db.activeRuns()`) is reconciled to `'failed'` with `endedAt: now()`, an event is appended (`db.appendEvent(id, 'error', 'run interrupted: helmsman restarted', now())`), and the affected id is returned. Uses only existing `Db` methods (`activeRuns`, `updateRun`, `appendEvent`). No new `RunStatus` value.
 - Consumes: `Db` from `./db`.
 
 - [ ] **Step 1: Failing test** — build a real in-memory-ish `openDb(':memory:')`, insert two runs `status:'running'` and one `status:'succeeded'`; call `recoverOrphanedRuns(db, () => '2026-08-18T00:00:00.000Z')`; assert it returns the two running ids, that `db.getRun(id).status === 'failed'` and `endedAt` is set for both, that the succeeded run is untouched, and that each recovered run has an appended event whose text contains `interrupted`.
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** `recovery.ts`.
 - [ ] **Step 4: Wire into `main.ts`** — after `const db = openDb(...)` and before `server.listen`, call `recoverOrphanedRuns(db, () => new Date().toISOString())` inside a try/catch that `process.stderr.write`s on failure (fail-soft; must not block startup). Log a one-line summary of how many were recovered.
-- [ ] **Step 5: Run → PASS** (`npx vitest run server/orchestrator/recovery.test.ts` + `npx tsc --noEmit` + `npm test`).
-- [ ] **Step 6: Commit** `feat(orchestrator): reconcile interrupted runs on startup`.
+- [ ] **Step 5: Run → PASS** (`npx vitest run server/helmsman/recovery.test.ts` + `npx tsc --noEmit` + `npm test`).
+- [ ] **Step 6: Commit** `feat(helmsman): reconcile interrupted runs on startup`.
 
 ---
 
 ### Task 4: Orphaned-worktree sweep
 
-**Files:** Modify `server/orchestrator/worktree.ts` (+ create `server/orchestrator/worktree.test.ts` if none exists); Modify `server/orchestrator/main.ts`.
+**Files:** Modify `server/helmsman/worktree.ts` (+ create `server/helmsman/worktree.test.ts` if none exists); Modify `server/helmsman/main.ts`.
 
 **Interfaces:**
 - Produces (in `worktree.ts`):
@@ -89,14 +89,14 @@ Behavior:
 - [ ] **Step 3: Implement** `sweepOrphanedWorktrees` + `listAgentWorktrees` in `worktree.ts`. `listAgentWorktrees` uses the existing `run` (promisified `execFile`) and `sep`/`join` from `node:path`; parse porcelain output line-by-line.
 - [ ] **Step 4: Wire into `main.ts`** — after recovery (Task 3), build the real deps: `repoDirs` = the distinct repo directories under `AGENTS_ROOT` derived from `config.repoProjectMap` keys and `config.github?.repo` (map each `owner/name` → `join(AGENTS_ROOT, basename)`, de-duplicated; skip if none); `listAgentWorktrees` = the exported git helper; `remove: (repoDir, path) => removeWorktree(AGENTS_ROOT, <repo>, path)` — since `removeWorktree` needs the repo, pass a wrapper that runs `git -C repoDir worktree remove --force path` directly, OR extend `removeWorktree` to accept a repoDir; simplest: add `export async function removeWorktreeAt(repoDir: string, worktreePath: string): Promise<void>` to `worktree.ts` and use it both here and (optionally) refactor `removeWorktree` to delegate. `isActiveRunId` = `(id) => pm.activeRepos` is by repo, not id — instead use the live process set: add `pm.hasRun(runId): boolean` (checks `entries.has(runId)`) to `ProcessManager` and pass `(id) => pm.hasRun(id)`. Run the sweep inside a try/catch that logs and swallows; log the count removed. Because recovery has already marked crashed runs failed and no runs are active at startup, the sweep clears all leftover agent worktrees from prior crashes.
 - [ ] **Step 5:** Add a `ProcessManager.hasRun(runId: string): boolean` (+ a one-line test in `process-manager.test.ts`).
-- [ ] **Step 6: Run → PASS** (`npx vitest run server/orchestrator` + `npx tsc --noEmit` + `npm test`).
-- [ ] **Step 7: Commit** `feat(orchestrator): sweep orphaned agent worktrees on startup`.
+- [ ] **Step 6: Run → PASS** (`npx vitest run server/helmsman` + `npx tsc --noEmit` + `npm test`).
+- [ ] **Step 7: Commit** `feat(helmsman): sweep orphaned agent worktrees on startup`.
 
 ---
 
 ### Task 5: Cost/attempt caps surfaced in the UI
 
-**Files:** Modify `server/config.ts` (+ test), `server/orchestrator/runner.ts` (+ `runner.test.ts`), `server/orchestrator/router.ts` (+ `router.test.ts`), `server/orchestrator/main.ts`, `src/data/agents.ts`, `src/render.ts` (+ `render.test.ts`), `src/main.ts`, `src/style.css`.
+**Files:** Modify `server/config.ts` (+ test), `server/helmsman/runner.ts` (+ `runner.test.ts`), `server/helmsman/router.ts` (+ `router.test.ts`), `server/helmsman/main.ts`, `src/data/agents.ts`, `src/render.ts` (+ `render.test.ts`), `src/main.ts`, `src/style.css`.
 
 **Interfaces:**
 - `AppConfig` gains `maxCostUsd: number | null` (`AGENT_MAX_COST_USD`, parsed as float; non-numeric/absent → null).
@@ -118,7 +118,7 @@ Behavior:
 ### Task 6: Build + end-to-end check
 
 - [ ] **Step 1:** `npm run build`, `npx tsc --noEmit`, `npm test` all green.
-- [ ] **Step 2 (manual, optional live):** (a) set `AGENT_ADAPTER=command` + a trivial `AGENT_CMD` (e.g. an echo script) and launch a ticket → the run streams the command's stdout as log lines and ends. (b) Launch a run, kill the orchestrator mid-run, restart → the interrupted run shows `failed` (not stuck `running`) and its leftover worktree is gone. **These touch git worktrees + spawn — run only with consent.**
+- [ ] **Step 2 (manual, optional live):** (a) set `AGENT_ADAPTER=command` + a trivial `AGENT_CMD` (e.g. an echo script) and launch a ticket → the run streams the command's stdout as log lines and ends. (b) Launch a run, kill Helmsman mid-run, restart → the interrupted run shows `failed` (not stuck `running`) and its leftover worktree is gone. **These touch git worktrees + spawn — run only with consent.**
 - [ ] **Step 3: Commit** any doc touch-ups (README: command adapter, recovery, sweep, caps, new env vars).
 
 ---

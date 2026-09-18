@@ -2,8 +2,8 @@ import type { DashboardSnapshot } from '../src/data/mock';
 import type { GithubPr, JiraIssue } from './types';
 import type { AppConfig, GithubConfig, JiraConfig } from './config';
 import { loadConfig } from './config';
-import { assembleSnapshot } from './snapshot';
-import { fetchActiveIssues, fetchQueueIssues } from './jira';
+import { assembleSnapshot, issueToTicket } from './snapshot';
+import { fetchActiveIssues, fetchMineOpenIssues, fetchQueueIssues } from './jira';
 import { fetchAuthoredPrs, fetchOpenAuthoredPrs, type OpenAuthoredPr } from './github';
 import { loadDashboard } from '../src/data/mock';
 
@@ -18,6 +18,7 @@ export interface DashboardResponse {
 export interface Deps {
   fetchQueueIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchActiveIssues: (jira: JiraConfig) => Promise<JiraIssue[]>;
+  fetchMineOpenIssues?: (jira: JiraConfig) => Promise<JiraIssue[]>;
   fetchAuthoredPrs: (github: GithubConfig, repos: string[]) => Promise<GithubPr[]>;
   fetchOpenAuthoredPrs: (github: GithubConfig, repos: string[]) => Promise<OpenAuthoredPr[]>;
   loadMock: () => Promise<DashboardSnapshot>;
@@ -26,6 +27,7 @@ export interface Deps {
 const DEFAULT_DEPS: Deps = {
   fetchQueueIssues,
   fetchActiveIssues,
+  fetchMineOpenIssues,
   fetchAuthoredPrs,
   fetchOpenAuthoredPrs,
   loadMock: loadDashboard,
@@ -42,6 +44,8 @@ export async function buildDashboardResponse(
 
   let queueIssues: JiraIssue[] = [];
   let activeIssues: JiraIssue[] = [];
+  let underwayIssues: JiraIssue[] = [];
+  let underwayAvailable = false;
   let prs: GithubPr[] = [];
   let openPrs: OpenAuthoredPr[] = [];
 
@@ -52,14 +56,19 @@ export async function buildDashboardResponse(
     const jira: JiraConfig = mappedProject
       ? { ...config.jira, project: mappedProject }
       : config.jira;
-    try {
-      [queueIssues, activeIssues] = await Promise.all([
+    await Promise.all([
+      Promise.all([
         deps.fetchQueueIssues(jira),
         deps.fetchActiveIssues(jira),
-      ]);
-    } catch {
-      degraded.push('jira');
-    }
+      ]).then(([queue, active]) => {
+        queueIssues = queue;
+        activeIssues = active;
+      }).catch(() => { degraded.push('jira'); }),
+      deps.fetchMineOpenIssues?.(jira).then((issues) => {
+        underwayIssues = issues;
+        underwayAvailable = true;
+      }).catch(() => { degraded.push('jira-underway'); }),
+    ]);
   } else {
     degraded.push('jira');
   }
@@ -104,6 +113,8 @@ export async function buildDashboardResponse(
     repo: repoLabel,
     now,
   });
+  snapshot.underway = underwayIssues.map((issue) => issueToTicket(issue, repoLabel));
+  snapshot.underwayAvailable = underwayAvailable;
 
   if (jiraDegraded || githubDegraded) {
     const mock: DashboardSnapshot = await deps.loadMock();

@@ -1,15 +1,24 @@
+import { renderLocalGit } from './renderLocalGit';
+import { renderThemePreview } from './renderThemePreview';
+import { emptyLocalGit, type LocalGitState } from './data/localGit';
+import { routeHref, type PageView } from './logic/routes';
+import type { PrInboxState, PrListState } from './data/prLists';
 import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
 import { escapeHtml as esc } from './logic/html';
-import type { BugCard, BugsResponse, PrFileDiff, PrStatus, Priority, Ticket, TicketStatus } from './types';
+import type { BugCard, BugsResponse, PrFileDiff, PrStatus, Priority, OpenPr, Ticket, TicketStatus } from './types';
 import type { TriageGroupsView } from './data/triage';
 import { defaultLayout, type PanelId, type RackLayout, type RackSlot } from './logic/rack';
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type AgentOption } from './logic/agentOptions';
+import { REQUIRED_PR_APPROVALS } from './logic/prReviews';
+import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
+import { defaultTriageFilters, filterTriageTickets, TRIAGE_PRIORITIES, TRIAGE_DATE_OPTIONS, type TriageFilters } from './logic/triageFilters';
+import { DEFAULT_TRIAGE_PAGE_SIZE, TRIAGE_PAGE_SIZES, paginateTriageTickets, type TriageColumn, type TriagePages, type TriagePageSize } from './logic/triagePagination';
 
-function tuningSelects(prefix: string, defaultModel: string = 'gpt-6-astra', defaultEffort: string = 'medium'): string {
+function tuningSelects(prefix: string, defaultModel: string = prefix === 'pr' ? '' : 'gpt-6-astra', defaultEffort: string = prefix === 'pr' ? '' : 'medium'): string {
   const opts = (list: AgentOption[], def: string): string =>
-    list.map((o) => `<option value="${esc(o.value)}"${o.value === def ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+    list.map((o) => `<option value="${esc(o.value)}"${o.value === def ? ' selected' : ''}>${esc(prefix === 'pr' && !o.value ? 'Automatic by complexity' : o.label)}</option>`).join('');
   return `<div class="tuning">
       <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS, defaultModel)}</select>
       <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS, defaultEffort)}</select>
@@ -22,20 +31,26 @@ import type { CmuxTabView } from './logic/cmuxPanel';
 import { providerOf } from './logic/cmuxPanel';
 import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 
-const PRIORITY_CLASS: Record<Priority, string> = { P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3' };
+const PRIORITY_CLASS: Record<Priority, string> = { P0: 'pri-p0', P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3', P4: 'pri-p4' };
 
 export const CONFIG_HELP: Record<string, string> = {
+  GITHUB_REVIEW_WATCH_ENABLED: 'Automatically review GitHub PRs requesting your review every five minutes: true or false. Changes apply immediately. Example: true',
+  SLACK_WATCH_ENABLED: 'Enable automatic PR reviews from the watched Slack channel: true or false. Changes apply immediately. Example: true',
+  SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
+  SLACK_CHANNEL_ID: 'Exact Slack channel ID to watch. Only messages matching this channel are eligible for automatic review. Example: C0123456789',
+  SLACK_CHANNEL_NAME: 'Channel name used in the Slack search query, without #. Example: pr-reviews',
+  SLACK_BROWSER_SURFACE: 'Optional cmux browser surface containing signed-in Slack. Set this when multiple Slack browser surfaces are open. Example: surface:17',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
   AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
-  AGENT_MAX_ATTEMPTS: 'Maximum times a single run retries before it is abandoned. Example: 3',
-  AGENT_MAX_COST_USD: 'Per-run spend ceiling in USD; the run stops once exceeded. Blank means no cap. Example: 5.00',
+  AGENT_MAX_ATTEMPTS: 'Maximum times a single voyage retries before it is abandoned. Example: 3',
+  AGENT_MAX_COST_USD: 'Per-voyage spend ceiling in USD; the voyage stops once exceeded. Blank means no cap. Example: 5.00',
   AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart. Example: 60000',
   REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
   JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry. Example: AIROBUILD',
   JIRA_ASSIGNEE: 'Jira account that claimed tickets are assigned to — currentUser() or an accountId. Example: currentUser()',
   JIRA_JQL: 'Optional JQL filter that narrows which tickets appear in the backlog queue. Example: labels = agent-ready AND priority >= High',
   GITHUB_REPO: 'Default owner/repo used for GitHub PR lookups when none is otherwise provided. Example: gdcorp-partners/airo-app-builder',
-  GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Recently shipped and Activity panels. Example: nloehlein-godaddy',
+  GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Out to sea and Ship\'s log panels. Example: nloehlein-godaddy',
 };
 
 const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
@@ -91,30 +106,30 @@ const ICON_X_MARK: string =
 const ICON_DOTS: string =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>'
 
-const ICON_REQUEST: string =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.6V8l2.4 1.6"/></svg>'
-
-const ICON_PENCIL: string =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 3.5l2 2L6 12l-2.6.6L4 10z"/></svg>'
+export function renderVoyageResult(run: RunSummary): string {
+  if (!['succeeded', 'failed', 'stopped'].includes(run.status)) return '';
+  const results: Record<string, { label: string; tone: string; icon: string }> = {
+    APPROVE: { label: 'Review recommendation: Approve', tone: 'approved', icon: ICON_CHECK },
+    REQUEST_CHANGES: { label: 'Review recommendation: Request changes', tone: 'changes', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4v8m0-4h4a3 3 0 0 0 3-3V4"/><circle cx="5" cy="2.5" r="1.5"/><circle cx="5" cy="13.5" r="1.5"/><circle cx="12" cy="2.5" r="1.5"/></svg>' },
+    COMMENT: { label: 'Review recommendation: Comment only', tone: 'commented', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 2.5h-11v8h3v3l3-3h5z"/><path d="M5 5.5h6M5 7.5h4"/></svg>' },
+  };
+  const review = run.status === 'succeeded' && typeof run.reviewOutcome === 'string' && Object.hasOwn(results, run.reviewOutcome)
+    ? results[run.reviewOutcome] : undefined;
+  const result = review ?? (run.status === 'failed'
+    ? { label: 'Voyage failed', tone: 'changes', icon: ICON_X_MARK }
+    : run.status === 'stopped'
+      ? { label: 'Voyage stopped', tone: 'unknown', icon: ICON_STOP }
+      : { label: 'Completed · No review recommendation recorded', tone: 'unknown', icon: ICON_INFO });
+  const verdict = typeof run.reviewVerdict === 'string' ? run.reviewVerdict.slice(0, 240) : '';
+  const title = review ? `${result.label}. Published as a GitHub comment.${verdict ? ` ${verdict}` : ''}` : result.label;
+  return `<span class="voyage-result voyage-result-${result.tone}" role="img" aria-label="${esc(result.label)}" title="${esc(title)}">${result.icon}</span>`;
+}
 
 const ICON_REDO: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 3.5v3h-3"/><path d="M12.2 6.4A5 5 0 1 0 13 9.6"/></svg>'
 
-const ICON_KNOB: string =
-  '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.4" fill="currentColor" stroke="none"/><path d="M10 2.8v1.8M10 15.4v1.8M2.8 10h1.8M15.4 10h1.8M4.9 4.9l1.3 1.3M13.8 13.8l1.3 1.3M15.1 4.9l-1.3 1.3M6.2 13.8l-1.3 1.3" stroke-linecap="round"/></svg>'
-
-const ICON_BNC: string =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>'
-
-const DIRECTION_CONTRACT: string = `<!--
-  IMPECCABLE DIRECTION CONTRACT — seed key operate/direction 0bef9ada (form: benchtop instrument rack, grounded #7 assignment, user-picked over challengers + canon).
-  THESIS: GoMaestro is a bench of rack-mounted test instruments — each panel is a rack unit the operator drags to reorder, stacks into a tabbed drawer, and powers down. Refuses the mission-control HUD and the incumbent patch-bay jackfield it replaces.
-  OWN-WORLD: brushed-graphite faceplates seated on black rack rails; silkscreen small-caps labels in self-hosted JetBrains Mono; a phosphor-green oscilloscope graticule carries the live run log; amber seven-segment numerics for counts, cost, elapsed; LED indicator lamps (green live · amber queued · red fault) each with a shape tell so hue is never the sole signal; knurled-knob and BNC-jack accents; blanking panels for empty and powered-down slots.
-  STORY: the operator arranges their bench, reads fleet state at a glance across lit faceplates, and launches/stops/reviews from momentary push-buttons — and there is no merge switch anywhere on the bench.
-  FIRST VIEWPORT: a bench nameplate (brand plate, LIVE lamp, scope rotary, page tabs BENCH · TRIAGE · CMUX) over a two-bay rack of instrument faceplates; the oscilloscope log drawer seats below; the merge-gate note is screened onto a bench strip.
-  FORM: benchtop instrument rack (operate, grounded candidate 7 of 7); seed 0bef9ada.
-  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
--->`
+const HELM_EMBLEM: string =
+  '<svg viewBox="0 0 64 64" fill="none" aria-hidden="true" focusable="false"><use href="/helm-emblem.svg#helm-emblem" /></svg>';
 
 function shortRepo(repo: string): string {
   return repo.split('/').pop() ?? repo
@@ -186,25 +201,27 @@ function buildSparkline(values: number[]): string {
     </svg>`;
 }
 
-export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'config';
+export type { PageView } from './logic/routes';
 
 const PAGE_TABS: { view: PageView; label: string }[] = [
-  { view: 'dashboard', label: 'Bench' },
-  { view: 'triage', label: 'Triage' },
-  { view: 'cmux', label: 'cmux' },
-  { view: 'bugs', label: 'Bugs' },
+  { view: 'dashboard', label: 'Helm' },
   { view: 'prs', label: 'PR' },
+  { view: 'triage', label: 'Triage' },
+  { view: 'cmux', label: 'Below Decks' },
+  { view: 'bugs', label: 'Bugs' },
+  { view: 'runs', label: 'Voyages' },
   { view: 'config', label: 'Config' },
 ];
 
 const PANEL_TITLE: Record<PanelId, string> = {
-  newrun: 'New run',
+  newrun: 'New voyage',
   backlog: 'Backlog queue',
-  running: 'Agents running',
-  recent: 'Recent runs',
-  myprs: 'My open PRs',
-  shipped: 'Recently shipped',
-  activity: 'Activity feed',
+  underway: 'Mine · underway',
+  running: 'Active crew',
+  recent: 'Recent voyages',
+  repoprs: 'Open PRs',
+  shipped: 'Out to sea',
+  activity: "Ship's log",
 };
 
 interface PanelDef {
@@ -213,16 +230,15 @@ interface PanelDef {
   lamp: 'live' | 'queued' | 'idle';
 }
 
-export interface BenchHeadOpts {
+export interface HelmHeadOpts {
   active: PageView;
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
-  readout: { running: number; queued: number; review: number } | null;
-  autoClaim: string;
+  readout: { running: number | null; queued: number | null; review: number | null } | null;
 }
 
-export function renderBenchHead(opts: BenchHeadOpts): string {
+export function renderHelmHead(opts: HelmHeadOpts): string {
   const sorted: string[] = [...opts.repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
   const scopeOptions: string = ['<option value="">All repos</option>']
     .concat(
@@ -231,37 +247,51 @@ export function renderBenchHead(opts: BenchHeadOpts): string {
       ),
     )
     .join('');
-  const themeOptions: string = THEMES.map(
-    (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
-  ).join('');
   const tabs: string = PAGE_TABS.map(
     (t) =>
-      `<button class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" type="button" data-view="${t.view}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</button>`,
+      `<a class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" href="${esc(routeHref({ view: t.view, repo: opts.selectedRepo }))}" data-view="${t.view}" role="tab" id="page-tab-${t.view}" aria-selected="${t.view === opts.active}" aria-controls="page-content" tabindex="${t.view === opts.active ? 0 : -1}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`,
   ).join('');
-  const readout: string = opts.readout
-    ? `<div class="bench-readout mono" aria-label="Fleet status">
-         <span class="seg"><b class="seg7">${opts.readout.running}</b> run</span>
-         <span class="seg"><b class="seg7">${opts.readout.queued}</b> queue</span>
-         <span class="seg"><b class="seg7">${opts.readout.review}</b> review</span>
-       </div>`
-    : '';
+  const readout = `<div class="helm-readout mono" aria-label="Fleet status">
+    ${(['running', 'queued', 'review'] as const).map((key) => {
+      const value = opts.readout?.[key];
+      const known = typeof value === 'number' && Number.isFinite(value);
+      const label = key === 'running' ? 'underway' : key === 'queued' ? 'queue' : 'review';
+      return `<span class="seg"><b class="seg7" data-fleet-count="${key}"${known ? '' : ' title="Not loaded for this repository"'}>${known ? value : '—'}</b> ${label}</span>`;
+    }).join('')}
+  </div>`;
   return `
-    <header class="bench-head">
+    <header class="helm-head">
       <div class="nameplate">
-        <span class="nameplate-mark mono" aria-hidden="true">GM</span>
-        <span class="nameplate-name">GoMaestro</span>
-        <span class="nameplate-model mono">MDL·01 FLEET CONSOLE</span>
-        <span class="bench-jacks" aria-hidden="true">${ICON_KNOB}${ICON_BNC}${ICON_BNC}</span>
+        <span class="nameplate-mark" aria-hidden="true">${HELM_EMBLEM}</span>
+        <div class="nameplate-scope">
+          <span class="nameplate-name">Helmsman <span class="nameplate-alpha">Alpha</span></span>
+          <select class="repo-select" aria-label="Scope by repository">${scopeOptions}</select>
+        </div>
       </div>
-      <span class="lamp lamp-live is-pulsing" role="img" aria-label="Live">LIVE</span>
       ${readout}
-      <div class="bench-controls">
-        <select class="repo-select" aria-label="Scope by repository">${scopeOptions}</select>
-        ${opts.autoClaim}
-        <select class="theme-select" aria-label="Theme">${themeOptions}</select>
+      <div class="helm-controls">
+        <span class="lamp lamp-live is-pulsing" role="img" aria-label="Live">LIVE</span>
       </div>
-      <nav class="page-tabs" aria-label="Views">${tabs}</nav>
-    </header>`;
+    </header>
+    <nav class="page-tabs" role="tablist" aria-label="Views">${tabs}</nav>`;
+}
+
+export function renderAppShell(opts: HelmHeadOpts, content: string): string {
+  const running = opts.readout?.running ?? '—';
+  return `<div class="helm${opts.active === 'dashboard' ? '' : ` ${opts.active}-view`}" data-page="${opts.active}">
+    ${renderHelmHead(opts)}
+    <main class="page-content" id="page-content" role="tabpanel" aria-labelledby="page-tab-${opts.active}" tabindex="0">${content}</main>
+    <footer class="app-footer mono">
+      <div class="operator-note">${ICON_LOCK}<span>Read/write scoped to this branch only. Merge requires human approval &mdash; the agent never merges to main, and there is no merge control here.</span></div>
+      <div class="footer-meta">
+        <span class="footer-attr">nloehlein@godaddy.com</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span>Helmsman v${esc(__APP_VERSION__)}</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span>updated ${esc(__BUILD_DATE__)}</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} repo${opts.repos.length === 1 ? '' : 's'} tracked</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-running>${running} underway</span>
+      </div>
+    </footer>
+  </div>`;
 }
 
 function renderRackSlot(slot: RackSlot, defs: Record<PanelId, PanelDef>, c: number, s: number): string {
@@ -291,7 +321,7 @@ function renderRackSlot(slot: RackSlot, defs: Record<PanelId, PanelDef>, c: numb
 }
 
 function renderRack(layout: RackLayout, defs: Record<PanelId, PanelDef>): string {
-  return `<div class="bench-rack" data-rack>${layout
+  return `<div class="helm-rack" data-rack>${layout
     .map(
       (col, c) =>
         `<div class="rack-col" data-col="${c}">${col
@@ -309,11 +339,12 @@ export function renderDashboard(
   repos: string[] = [],
   selectedRepo: string | null = null,
   runs: RunSummary[] = [],
-  autoClaimRepos: string[] = [],
+  _autoClaimRepos: string[] = [],
   caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null },
   themeId: string = DEFAULT_THEME_ID,
   layout: RackLayout = defaultLayout(),
   jiraBaseUrl: string | null = null,
+  repoPrs?: PrListState,
 ): void {
   const queue = sortByPriority(data.queue);
   const scopedRuns: RunSummary[] = selectedRepo
@@ -321,12 +352,13 @@ export function renderDashboard(
     : runs;
   const activeRuns: RunSummary[] = scopedRuns.filter((r) => r.status === 'running');
   const terminalRuns: RunSummary[] = scopedRuns.filter((r) => r.status !== 'running');
+  const underway = Array.isArray(data.underway) ? data.underway.filter(ticket => ticket && ticket.status !== 'done') : [];
+  const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
+  const underwayItems = underwayKnown && underway.length
+    ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, selectedRepo)).join('')
+    : `<li class="empty-note">${underwayKnown ? 'No unfinished tickets assigned to you.' : 'Underway tickets unavailable.'}</li>`;
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
-
-  const autoClaimToggle: string = selectedRepo
-    ? `<label class="auto-claim"><input type="checkbox" class="auto-claim-toggle"${autoClaimRepos.includes(selectedRepo) ? ' checked' : ''}><span>Auto-claim</span></label>`
-    : '';
 
   const queueItems = queue.length
     ? queue
@@ -338,7 +370,7 @@ export function renderDashboard(
         <span class="queue-title">${esc(ticket.title)}</span>
         ${laneRail('queued')}
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
-        <button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="Launch agent for ${esc(ticket.id)}">Launch</button>
+        <button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="Launch voyage for ${esc(ticket.id)}">Launch</button>
       </li>`,
         )
         .join('')
@@ -357,11 +389,11 @@ export function renderDashboard(
         ${caps.maxAttempts > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}/${caps.maxAttempts}</span>` : run.attempt > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}</span>` : ''}
         ${run.costUsd != null ? `<span class="agent-cost mono">$${run.costUsd.toFixed(2)}${caps.maxCostUsd != null ? `/$${caps.maxCostUsd.toFixed(2)}` : ''}</span>` : ''}
         <span class="chip chip-progress">Running</span>
-        <button class="agent-stop" data-runid="${esc(run.id)}" aria-label="Stop run ${esc(run.ticketId)}">${ICON_STOP}</button>
+        <button class="agent-stop" data-runid="${esc(run.id)}" aria-label="Stop voyage ${esc(run.ticketId)}">${ICON_STOP}</button>
       </li>`,
         )
         .join('')
-    : '<li class="empty-note">No agents running.</li>';
+    : '<li class="empty-note">No crew tasks underway.</li>';
 
   const shippedCards = data.shipped
     .map((pr) => {
@@ -394,11 +426,12 @@ export function renderDashboard(
       </div>`,
         )
         .join('')
-    : '<div class="empty-note">No recent activity.</div>';
+    : '<div class="empty-note">No recent log entries.</div>';
 
+  const sampleSources = degraded.filter(source => source !== 'jira-underway');
   const banner: string =
-    degraded.length > 0
-      ? `<div class="degraded-banner">Showing sample data for: ${degraded.join(', ')} — check server credentials.</div>`
+    sampleSources.length > 0
+      ? `<div class="degraded-banner">Showing sample data for: ${sampleSources.join(', ')} — check server credentials.</div>`
       : '';
 
   const newRunRepoOptions: string = sortedRepos
@@ -416,11 +449,12 @@ export function renderDashboard(
               : '';
           const canRerun: boolean = TICKET_RE.test(run.ticketId);
           const rerunBtn: string = canRerun
-            ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Re-run ${esc(run.ticketId)}" title="Re-run ${esc(run.ticketId)}">${ICON_REDO}</button>`
-            : `<button class="recent-rerun" type="button" disabled aria-label="Cannot re-run" title="Can't re-run — original task not stored for this run">${ICON_REDO}</button>`;
+            ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Relaunch voyage for ${esc(run.ticketId)}" title="Relaunch voyage for ${esc(run.ticketId)}">${ICON_REDO}</button>`
+            : `<button class="recent-rerun" type="button" disabled aria-label="Cannot relaunch voyage" title="Cannot relaunch voyage — original task is unavailable">${ICON_REDO}</button>`;
           return `
       <li class="lane recent-run" data-runid="${esc(run.id)}">
         <span class="lane-no mono">${laneNo(i)}</span>
+        ${renderVoyageResult(run)}
         <span class="ticket-id">${ticketLabel(run.ticketId || 'freeform', jiraBaseUrl)}</span>
         <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
         ${laneRail(statusInfo.laneState)}
@@ -431,23 +465,9 @@ export function renderDashboard(
       </li>`;
         })
         .join('')
-    : '<li class="empty-note">No past runs.</li>';
+    : '<li class="empty-note">No past voyages.</li>';
 
-  const myPrItems: string = data.myOpenPrs.length
-    ? data.myOpenPrs
-        .map((pr) => {
-          const chip = reviewChip(pr.reviewDecision);
-          return `
-      <li class="lane myprs-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open PR #${pr.number} in the review panel">
-        <span class="ticket-id mono">#${pr.number}</span>
-        <span class="queue-title">${esc(pr.title)}</span>
-        <span class="agent-repo mono">${esc(shortRepo(pr.repo))}</span>
-        ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
-        <span class="chip ${chip.cls}">${chip.label}</span>
-      </li>`;
-        })
-        .join('')
-    : '<li class="empty-note">No open pull requests.</li>';
+  const repoPrCount: number = validListPrs(scopeRepoPrs(selectedRepo, repoPrs)).length;
 
   const panelDefs: Record<PanelId, PanelDef> = {
     newrun: {
@@ -469,9 +489,9 @@ export function renderDashboard(
             <input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
             <input class="newrun-title" type="text" placeholder="Title (optional)">
             <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
-            <select class="newrun-repo" aria-label="Repository for new run">${newRunRepoOptions}</select>
+            <select class="newrun-repo" aria-label="Repository for new voyage">${newRunRepoOptions}</select>
             ${tuningSelects('newrun')}
-            <button class="newrun-launch">Launch run</button>
+            <button class="newrun-launch">Launch voyage</button>
           </div>
         </div>`,
     },
@@ -485,15 +505,20 @@ export function renderDashboard(
       count: activeRuns.length,
       body: `<ul class="agent-list lane-list">${agentRows}</ul>`,
     },
+    underway: {
+      lamp: underwayKnown && underway.length ? 'queued' : 'idle',
+      count: underwayKnown ? underway.length : null,
+      body: `${underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
+    },
     recent: {
       lamp: 'idle',
       count: terminalRuns.length,
       body: `<ul class="recent-runs-list lane-list">${recentRunItems}</ul>`,
     },
-    myprs: {
-      lamp: data.myOpenPrs.length ? 'queued' : 'idle',
-      count: data.myOpenPrs.length,
-      body: `<ul class="myprs-list lane-list">${myPrItems}</ul>`,
+    repoprs: {
+      lamp: repoPrCount ? 'queued' : 'idle',
+      count: repoPrCount,
+      body: renderRepoPrs(selectedRepo, repoPrs),
     },
     shipped: {
       lamp: 'idle',
@@ -512,35 +537,10 @@ export function renderDashboard(
     },
   };
 
-  root.innerHTML = `${DIRECTION_CONTRACT}
-    <div class="bench" data-page="dashboard">
-      ${renderBenchHead({
-        active: 'dashboard',
-        repos,
-        selectedRepo,
-        themeId,
-        readout: { running: activeRuns.length, queued: queue.length, review: data.stats.awaitingReview },
-        autoClaim: autoClaimToggle,
-      })}
-      ${banner}
-      ${renderRack(layout, panelDefs)}
-      <div class="runs-drawer-slot"></div>
-      <div class="operator-note">
-        ${ICON_LOCK}
-        <span>Read/write scoped to this branch only. Merge requires human approval &mdash; the agent never merges to main, and there is no merge control here.</span>
-      </div>
-      <footer class="app-footer mono">
-        <span class="footer-attr">nloehlein@godaddy.com</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span>
-        <span>GoMaestro v${esc(__APP_VERSION__)}</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span>
-        <span>updated ${esc(__BUILD_DATE__)}</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span>
-        <span>${repos.length} repo${repos.length === 1 ? '' : 's'} tracked</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span>
-        <span>${activeRuns.length} running</span>
-      </footer>
-    </div>`;
+  root.innerHTML = renderAppShell({
+    active: 'dashboard', repos, selectedRepo, themeId,
+    readout: { running: activeRuns.length, queued: queue.length, review: data.stats.awaitingReview },
+  }, `${banner}${renderRack(layout, panelDefs)}<div class="runs-drawer-slot"></div>`);
 }
 
 export interface RunTabView {
@@ -558,23 +558,35 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
           <span class="run-tab-dot${t.complete ? ' is-complete' : ''}" aria-hidden="true"></span>
           <span class="run-tab-label">${esc(t.label)}</span>
         </button>
+        ${!t.id.startsWith('err-') ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Link to ${esc(t.label)}">↗</a>` : ''}
         <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}">${ICON_CLOSE}</button>
       </div>`,
     )
     .join('');
   const emptyBody: string =
     tabs.length === 0
-      ? '<div class="run-drawer-empty empty-note">No runs open. Click a running agent or a recent run to open it here.</div>'
+      ? '<div class="run-drawer-empty empty-note">No crew tasks open. Select active crew or a recent voyage to view its tasks here.</div>'
       : '';
   const header: string =
-    tabs.length === 0 ? '<span class="run-drawer-title mono">AGENT RUNS</span>' : '';
+    tabs.length === 0 ? '<span class="run-drawer-title mono">CREW TASKS</span>' : '';
   const collapseBtn: string =
-    tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'agent runs', collapsed) : '';
+    tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'crew tasks', collapsed) : '';
+  const logToolbar = activeId && !activeId.startsWith('err-') && /^[a-z\d_-]{1,128}$/i.test(activeId)
+    ? `<div class="run-log-toolbar mono"><span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
+    : '';
   return `
     <div class="run-tabs" role="tablist">${header}${strip}${collapseBtn}</div>
+    ${logToolbar}
     <div class="run-drawer-body mono">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
+}
+
+function prTimestamp(value: unknown, fallback: string): string {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return fallback;
+  const date = new Date(value);
+  const label = date.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `<time datetime="${esc(date.toISOString())}" title="${esc(date.toLocaleString(undefined, { timeZoneName: 'short' }))}">${esc(label)}</time>`;
 }
 
 export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false): string {
@@ -583,36 +595,74 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
   const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
   const checks: { passed: number; failed: number; pending: number } = pr.checks ?? { passed: 0, failed: 0, pending: 0 };
   const ciClass: string = checks.failed > 0 ? 'pr-ci mono pr-ci-bad' : 'pr-ci mono';
-  const reviews: { requested: number; approved: number; changesRequested: number; commented: number } =
-    pr.reviews ?? { requested: 0, approved: 0, changesRequested: 0, commented: 0 };
   const tally = (icon: string, n: number, label: string): string =>
     `<span class="tally" title="${label}"><span class="tally-ic" aria-hidden="true">${icon}</span>${n}</span>`;
   const ciBadge: string =
-    `<span class="${ciClass}">${tally(ICON_CHECK, checks.passed, 'Checks passed')}${tally(ICON_X_MARK, checks.failed, 'Checks failed')}${tally(ICON_DOTS, checks.pending, 'Checks pending')}</span>`;
-  const reviewersBadge: string =
-    `<span class="pr-reviewers mono" aria-label="Reviewers requested ${reviews.requested}, approved ${reviews.approved}, changes requested ${reviews.changesRequested}, commented ${reviews.commented}">${tally(ICON_REQUEST, reviews.requested, 'Requested')}${tally(ICON_CHECK, reviews.approved, 'Approved')}${tally(ICON_X_MARK, reviews.changesRequested, 'Changes requested')}${tally(ICON_PENCIL, reviews.commented, 'Commented')}</span>`;
-  const decisionLabel: string = pr.reviewDecision === 'CHANGES_REQUESTED'
-    ? 'Changes requested'
-    : pr.reviewDecision === 'APPROVED'
-      ? 'Approved'
-      : pr.reviewDecision === 'REVIEW_REQUIRED'
-        ? 'Review required'
-        : pr.reviewDecision;
-  const decisionChip: { cls: string; label: string } = { cls: reviewChip(pr.reviewDecision).cls, label: decisionLabel };
+    `<span class="${ciClass}" aria-label="Checks: ${checks.passed} passed, ${checks.failed} failed, ${checks.pending} pending"><span class="pr-meta-label">Checks</span>${tally(ICON_CHECK, checks.passed, 'Checks passed')}${tally(ICON_X_MARK, checks.failed, 'Checks failed')}${tally(ICON_DOTS, checks.pending, 'Checks pending')}</span>`;
+  const approved = pr.reviews?.approved;
+  const changesRequested = pr.reviews?.changesRequested;
+  const reviewsKnown = pr.reviewsAvailable !== false && typeof approved === 'number' && Number.isSafeInteger(approved) && approved >= 0
+    && typeof changesRequested === 'number' && Number.isSafeInteger(changesRequested) && changesRequested >= 0;
+  const remaining = reviewsKnown ? Math.max(0, REQUIRED_PR_APPROVALS - approved) : REQUIRED_PR_APPROVALS;
+  const approvalsLabel = reviewsKnown
+    ? `${approved}/${REQUIRED_PR_APPROVALS} approvals${remaining ? ` · ${remaining} needed` : ''}`
+    : `Approvals unavailable · ${REQUIRED_PR_APPROVALS} required`;
+  const approvalsClass = reviewsKnown && !remaining && !changesRequested ? 'chip-done' : 'chip-review';
+  const viewerReviewLabels: Record<string, string> = {
+    APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', COMMENTED: 'Commented', DISMISSED: 'Dismissed',
+  };
+  const viewerReviewLabel: string | undefined = pr.viewerReview && Object.hasOwn(viewerReviewLabels, pr.viewerReview)
+    ? viewerReviewLabels[pr.viewerReview]
+    : undefined;
+  const title: string = typeof pr.title === 'string' ? pr.title.trim() : '';
+  const authorLogin: string = typeof pr.authorLogin === 'string' ? pr.authorLogin.trim() : '';
+  const viewerReviewBadge: string = viewerReviewLabel
+    ? `<span class="chip pr-viewer-review ${reviewChip(pr.viewerReview ?? '').cls}">Your review: ${viewerReviewLabel}</span>`
+    : '';
+  const reviewTimeKnown = pr.reviewsAvailable !== false && typeof pr.viewerReviewedAt === 'string' && Number.isFinite(Date.parse(pr.viewerReviewedAt));
+  const reviewTime = prTimestamp(reviewTimeKnown ? pr.viewerReviewedAt : undefined,
+    pr.reviewsAvailable === true && !pr.viewerReview && pr.viewerReviewedAt === undefined ? 'Not reviewed yet' : 'Unavailable');
+  const canCompareCommits = reviewTimeKnown && typeof pr.headSha === 'string' && pr.headSha.trim()
+    && typeof pr.viewerReviewedCommitId === 'string' && pr.viewerReviewedCommitId.trim();
+  const commitChanged = canCompareCommits && pr.headSha !== pr.viewerReviewedCommitId;
+  const reviewFreshness = canCompareCommits
+    ? `<span class="pr-review-freshness${commitChanged ? ' chip chip-review' : ''}">${commitChanged ? 'New commits since your review' : 'You reviewed the current commit'}</span>`
+    : '';
+  const canRelaunch: boolean = canRerun && pr.isOwnPr === true;
+  const feedback: string = canRelaunch
+    ? '<textarea class="pr-rerun-feedback" aria-label="Feedback for the crew to address" placeholder="Feedback for the crew to address"></textarea>'
+    : '';
   const rerun: string = canRerun
-    ? `<textarea class="pr-rerun-feedback" placeholder="Feedback for the agent to address"></textarea>${tuningSelects('pr')}<button class="pr-rerun">Re-run with feedback</button><button class="pr-review-agent">Code-review with agent</button>`
-    : '<div class="pr-no-rerun empty-note">Re-run unavailable: this repo is not checked out locally.</div>';
+    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Relaunch with feedback</button>' : ''}<button class="pr-review-agent">Code review with crew</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Link to crew review ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Link to relaunch ↗</a>` : ''}</div></div>`
+    : '<div class="pr-no-rerun empty-note">Crew actions unavailable: this repo is not checked out locally.</div>';
   return `
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">
       <div class="pr-panel-head">
-        <span class="chip ${stateChipClass}">${stateLabel}</span>
-        ${ciBadge}
-        <span class="chip pr-decision-chip ${decisionChip.cls}">${esc(decisionChip.label)}</span>
-        ${reviewersBadge}
-        <span class="pr-branch mono">${esc(pr.headRefName)}</span>
-        <span class="pr-comments mono">${pr.comments} comments</span>
-        <a class="pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">#${pr.number}</a>
-        ${showOpenInTab ? `<button class="pr-open-in-tab" type="button" data-repo="${esc(pr.repo)}" data-number="${pr.number}">Open in PR tab ↗</button>` : ''}
+        <div class="pr-panel-heading">
+          <div class="pr-panel-identity">
+            ${title ? `<h3 class="pr-panel-title">${esc(title)}</h3>` : ''}
+            <div class="pr-panel-byline"><a class="pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">${esc(pr.repo)} #${pr.number}</a>${authorLogin ? `<span class="pr-author">by ${esc(authorLogin)}</span>` : ''}</div>
+          </div>
+          <div class="pr-panel-status">
+            <span class="chip ${stateChipClass}">${stateLabel}</span>
+            <span class="chip pr-approval-progress ${approvalsClass}" title="${REQUIRED_PR_APPROVALS} distinct reviewer approvals required">${approvalsLabel}</span>
+            ${reviewsKnown && changesRequested > 0 ? `<span class="chip pr-decision-chip chip-blocked">Changes requested (${changesRequested})</span>` : ''}
+            ${viewerReviewBadge}
+          </div>
+        </div>
+        <div class="pr-panel-meta">
+          <div class="pr-panel-context">
+            ${pr.headRefName ? `<span class="pr-branch mono"><span class="pr-meta-label">Branch</span>${esc(pr.headRefName)}</span>` : ''}
+            ${ciBadge}
+            <span class="pr-comments mono">${pr.comments} ${pr.comments === 1 ? 'comment' : 'comments'}</span>
+          </div>
+          ${showOpenInTab ? `<button class="pr-open-in-tab" type="button" data-repo="${esc(pr.repo)}" data-number="${pr.number}">Open in PR tab ↗</button>` : ''}
+        </div>
+        <div class="pr-panel-timing">
+          <span class="pr-last-reviewed"><span class="pr-meta-label">Last reviewed by you</span>${reviewTime}</span>
+          <span class="pr-last-updated" title="Latest GitHub PR activity, including commits, comments, and reviews"><span class="pr-meta-label">Last updated</span>${prTimestamp(pr.updatedAt, 'Unavailable')}</span>
+          ${reviewFreshness}
+        </div>
       </div>
       <div class="pr-review">
         <textarea class="pr-review-body" placeholder="Review comment"></textarea>
@@ -635,9 +685,73 @@ export interface PrViewState {
 }
 
 export interface PrViewOpts {
+  runs?: RunSummary[];
+  lists?: PrInboxState;
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
+}
+
+function validListPrs(state?: PrListState): OpenPr[] {
+  return Array.isArray(state?.prs)
+    ? state.prs.filter((pr) => pr && typeof pr.repo === 'string' && pr.repo.trim() && Number.isSafeInteger(pr.number) && pr.number > 0)
+    : [];
+}
+
+function renderPrList(state: PrListState | undefined, emptyMessage: string): string {
+  const prs: OpenPr[] = validListPrs(state);
+  const rows: string = prs.map((pr) => {
+    const chip = reviewChip(pr.reviewDecision ?? '');
+    const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
+    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} PR #${pr.number}: ${esc(title)}">
+      <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
+      <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span></span>
+      ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
+      ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
+    </li>`;
+  }).join('');
+  const status: string = !state || state.loading
+    ? 'Loading PRs…'
+    : state.degraded
+      ? prs.length
+        ? 'Some GitHub results are unavailable. This list may be incomplete.'
+        : 'GitHub PRs are unavailable. Retrying shortly.'
+      : prs.length === 0
+        ? state.truncated ? 'No matching PRs in the retrieved results.' : emptyMessage
+        : '';
+  return `<ul class="pr-list lane-list" aria-busy="${!state || state.loading}">${rows}</ul>
+    ${status ? `<div class="empty-note" role="status">${esc(status)}</div>` : ''}
+    ${state?.truncated ? '<div class="empty-note pr-list-truncated">Showing the most recent results. More PRs may be available on GitHub.</div>' : ''}`;
+}
+
+function scopeRepoPrs(repo: string | null, state?: PrListState): PrListState | undefined {
+  return repo && state
+    ? { ...state, prs: validListPrs(state).filter((pr) => pr.repo === repo) }
+    : undefined;
+}
+
+export function renderRepoPrs(repo: string | null, state?: PrListState): string {
+  if (!repo) return '<div class="empty-note">Select a repository to see its open PRs.</div>';
+  const repoUrl: string = `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}/pulls`;
+  return `${renderPrList(scopeRepoPrs(repo, state), 'No open pull requests in this repository.')}
+    ${state?.truncated ? `<div class="empty-note">${githubPrListLink(repoUrl)}</div>` : ''}`;
+}
+
+function githubPrListLink(url: string): string {
+  return `<a class="pr-list-github" href="${esc(url)}" target="_blank" rel="noopener noreferrer">View all on GitHub ↗</a>`;
+}
+
+function renderPrListPanel(title: string, className: string, state: PrListState | undefined, emptyMessage: string, githubUrl: string): string {
+  return `<section class="panel pr-list-panel ${className}">
+    <div class="panel-head"><span class="panel-title">${title}</span><span class="mono pr-list-count">${validListPrs(state).length}</span></div>
+    ${renderPrList(state, emptyMessage)}
+    <div class="empty-note">${githubPrListLink(githubUrl)}</div>
+  </section>`;
+}
+
+export function renderPrLists(lists?: PrInboxState): string {
+  return `${renderPrListPanel('Review requests', 'pr-review-requests', lists?.reviewRequests, 'No PRs awaiting your review.', 'https://github.com/pulls/review-requested')}
+    ${renderPrListPanel('My open PRs', 'pr-authored', lists?.authored, 'You have no open pull requests.', 'https://github.com/pulls')}`;
 }
 
 function diffLineClass(line: string): string {
@@ -666,6 +780,43 @@ export function renderPrDiff(files: PrFileDiff[] | null): string {
   return `<div class="pr-diff">${fileBlocks}</div>`;
 }
 
+export function renderVoyage(run: RunSummary): string {
+  const statusName = typeof run.status === 'string' && run.status ? run.status : 'Unknown';
+  const status = Object.hasOwn(RUN_STATUS_CHIP, statusName) ? RUN_STATUS_CHIP[statusName]
+    : statusName === 'running' ? { label: 'Underway', chipClass: 'chip-progress' }
+      : statusName === 'queued' ? { label: 'Queued', chipClass: 'chip-review' }
+        : { label: statusName, chipClass: 'chip-progress' };
+  const title = typeof run.ticketId === 'string' && run.ticketId ? run.ticketId : 'Freeform voyage';
+  const pr = Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0 ? ` · PR #${run.prNumber}` : '';
+  const startedAt = typeof run.startedAt === 'string' && Number.isFinite(Date.parse(run.startedAt))
+    ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}">${esc(formatRelativeTime(run.startedAt, new Date()))}</time>` : '';
+  const href = `/runs?${new URLSearchParams({ run: run.id })}`;
+  return `<li class="recent-run" data-runid="${esc(run.id)}">
+    <a class="app-link lane runs-voyage-link" href="${esc(href)}">
+      ${renderVoyageResult(run)}
+      <span class="ticket-id">${esc(title)}${pr}</span>
+      <span class="agent-repo mono">${esc(run.repo.split('/').pop() ?? run.repo)}</span>
+      ${startedAt}
+      <span class="chip ${status.chipClass}">${esc(status.label)}</span>
+    </a>
+  </li>`;
+}
+
+export function renderRecentPrRuns(runs: RunSummary[], repo: string | null): string {
+  const matches = (Array.isArray(runs) ? runs : [])
+    .filter(run => run && typeof run.id === 'string' && run.id && typeof run.repo === 'string'
+      && Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0 && (!repo || run.repo === repo))
+    .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
+  const recent = matches.slice(0, 10);
+  return `<section class="panel pr-recent-runs">
+    <div class="panel-head"><span class="panel-title">Recent PR voyages</span>
+      <span class="panel-count mono">${recent.length}${matches.length > recent.length ? ` of ${matches.length}` : ''}</span>
+      <a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'recent' }))}">All voyages ↗</a>
+    </div>
+    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(renderVoyage).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
+  </section>`;
+}
+
 export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
   const value: string = state.repo && state.number ? `${state.repo}#${state.number}` : '';
   const canRerun: boolean = Boolean(state.pr && opts.repos.includes(state.pr.repo));
@@ -680,9 +831,9 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
         ${renderPrDiff(state.diff)}
       </section>`
     : '';
-  return `
-    <div class="bench prs-view" data-page="prs">
-      ${renderBenchHead({ active: 'prs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
+  return renderAppShell({ active: 'prs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <div class="pr-inbox pr-inbox-grid">${renderPrLists(opts.lists)}</div>
+      ${renderRecentPrRuns(opts.runs ?? [], opts.selectedRepo)}
       <section class="panel pr-lookup-panel">
         <div class="panel-head"><span class="panel-title">Review a PR</span></div>
         <div class="pr-lookup-form">
@@ -693,7 +844,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
       </section>
       ${diffSection}
       <div class="runs-drawer-slot"></div>
-    </div>`;
+`);
 }
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
@@ -710,32 +861,37 @@ const STATUS_CHIP_CLASS: Record<TicketStatus, string> = {
   done: 'chip-done',
 };
 
-function triageLaunchRow(ticket: Ticket, jiraBaseUrl: string | null, launchable: boolean): string {
-  const action: string = launchable
-    ? `<button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="Launch agent for ${esc(ticket.id)}">Launch</button>`
+function triageLaunchAction(ticket: Ticket, launchRepo: string | null): string {
+  return launchRepo
+    ? `<button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(launchRepo)}" aria-label="Launch voyage for ${esc(ticket.id)}">Launch</button>`
     : '';
+}
+
+function triageLaunchRow(ticket: Ticket, jiraBaseUrl: string | null, launchRepo: string | null): string {
   return `
       <li class="lane triage-row">
         <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
         <span class="queue-title">${esc(ticket.title)}</span>
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
-        ${action}
+        ${triageLaunchAction(ticket, launchRepo)}
       </li>`;
 }
 
-function triageStatusRow(ticket: Ticket, jiraBaseUrl: string | null): string {
+function triageStatusRow(ticket: Ticket, jiraBaseUrl: string | null, launchRepo: string | null): string {
   return `
       <li class="lane triage-row">
         <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
         <span class="queue-title">${esc(ticket.title)}</span>
         <span class="chip ${STATUS_CHIP_CLASS[ticket.status]}">${STATUS_LABEL[ticket.status]}</span>
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
+        ${triageLaunchAction(ticket, launchRepo)}
       </li>`;
 }
 
 function triageGroup(
   title: string,
-  tickets: Ticket[],
+  column: TriageColumn,
+  pagination: ReturnType<typeof paginateTriageTickets>,
   row: (t: Ticket, base: string | null) => string,
   jiraBaseUrl: string | null,
   emptyNote: string,
@@ -743,19 +899,28 @@ function triageGroup(
   panelId: string = '',
   collapsed: boolean = false,
 ): string {
+  const { tickets, total, start, end, page, pages } = pagination;
   const items: string = tickets.length
-    ? sortByPriority(tickets).map((t) => row(t, jiraBaseUrl)).join('')
+    ? tickets.map((t) => row(t, jiraBaseUrl)).join('')
     : `<li class="empty-note">${esc(emptyNote)}</li>`;
   const hintEl: string = hint && tickets.length ? `<div class="triage-hint">${esc(hint)}</div>` : '';
   return `
-        <div class="panel triage-group${collapsed ? ' is-collapsed' : ''}">
+        <div class="panel triage-group${collapsed ? ' is-collapsed' : ''}" data-triage-column="${column}">
           <div class="panel-head">
             <span class="panel-title">${esc(title)}</span>
-            <span class="panel-count mono">${tickets.length}</span>
+            <span class="panel-count mono">${total}</span>
             ${surfaceCollapseBtn(panelId, title, collapsed)}
           </div>
           ${hintEl}
           <ul class="lane-list triage-list">${items}</ul>
+          <div class="triage-pagination" data-triage-column="${column}" tabindex="-1">
+            <span class="triage-page-range mono" role="status" aria-label="${esc(title)} ticket range">${total ? `${start}–${end} of ${total}` : '0 of 0'}</span>
+            <div class="triage-page-controls">
+              <button data-triage-column="${column}" data-triage-page="${Math.max(1, page - 1)}" aria-label="Previous page for ${esc(title)}"${page <= 1 ? ' disabled' : ''}>Previous</button>
+              <span class="triage-page-number mono">Page ${page} of ${pages}</span>
+              <button data-triage-column="${column}" data-triage-page="${Math.min(pages, page + 1)}" aria-label="Next page for ${esc(title)}"${page >= pages ? ' disabled' : ''}>Next</button>
+            </div>
+          </div>
         </div>`;
 }
 
@@ -766,6 +931,9 @@ export interface TriageViewOpts {
   degraded: boolean;
   themeId: string;
   collapsed?: Set<string>;
+  filters?: TriageFilters;
+  pageSize?: TriagePageSize;
+  pages?: Partial<TriagePages>;
 }
 
 export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts): string {
@@ -775,18 +943,37 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
     ? '<div class="degraded-banner">Jira unavailable — triage is empty.</div>'
     : '';
   const launchable: boolean = selectedRepo !== null;
-  const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, launchable);
-  const scopeHint: string = launchable ? '' : 'Select a repo to launch these against.';
-  return `
-    <div class="bench triage-view" data-page="triage">
-      ${renderBenchHead({ active: 'triage', repos, selectedRepo, themeId, readout: null, autoClaim: '' })}
+  const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, selectedRepo);
+  const statusRow = (t: Ticket, base: string | null): string => triageStatusRow(t, base, selectedRepo);
+  const scopeHint: string = launchable ? '' : 'Select a repo to launch a voyage.';
+  const filters = opts.filters ?? defaultTriageFilters();
+  const pageSize = TRIAGE_PAGE_SIZES.find(size => size === opts.pageSize) ?? DEFAULT_TRIAGE_PAGE_SIZE;
+  const now = Date.now();
+  const filtered = {
+    unassignedBacklog: filterTriageTickets(groups?.unassignedBacklog, filters, now),
+    unassignedTodo: filterTriageTickets(groups?.unassignedTodo, filters, now),
+    mineOpen: filterTriageTickets(groups?.mineOpen, filters, now),
+  };
+  const isFiltered = filters.priorities.length !== TRIAGE_PRIORITIES.length || filters.days !== 0;
+  const filterEmpty = 'No tickets match these filters.';
+  const capped = [groups?.unassignedBacklog, groups?.unassignedTodo, groups?.mineOpen].some(tickets => (tickets?.length ?? 0) >= 100);
+  return renderAppShell({ active: 'triage', repos, selectedRepo, themeId, readout: null }, `
       ${banner}
-      <div class="triage-grid">
-        ${triageGroup('Unassigned · Backlog', groups.unassignedBacklog, launchRow, jiraBaseUrl, 'No unassigned backlog tickets.', scopeHint, 'triage:backlog', collapsed.has('triage:backlog'))}
-        ${triageGroup('Unassigned · To Do', groups.unassignedTodo, launchRow, jiraBaseUrl, 'No unassigned to-do tickets.', scopeHint, 'triage:todo', collapsed.has('triage:todo'))}
-        ${triageGroup('Mine · in flight', groups.mineOpen, triageStatusRow, jiraBaseUrl, 'Nothing assigned to you outside Done.', '', 'triage:mine', collapsed.has('triage:mine'))}
+      <div class="panel triage-filters" role="group" aria-label="Filter all triage columns">
+        <fieldset class="triage-priorities"><legend>Priority</legend>
+          ${TRIAGE_PRIORITIES.map(priority => `<label class="triage-priority"><input type="checkbox" data-triage-priority="${priority}"${filters.priorities.includes(priority) ? ' checked' : ''} /><span class="pri-chip ${PRIORITY_CLASS[priority]}">${priority}</span></label>`).join('')}
+        </fieldset>
+        <label class="triage-date">Last updated <select data-triage-days>${TRIAGE_DATE_OPTIONS.map(days => `<option value="${days}"${filters.days === days ? ' selected' : ''}>${days ? `Last ${days} ${days === 1 ? 'day' : 'days'}` : 'Any time'}</option>`).join('')}</select></label>
+        <label class="triage-page-size">Tickets per column <select data-triage-page-size>${TRIAGE_PAGE_SIZES.map(size => `<option value="${size}"${pageSize === size ? ' selected' : ''}>${size}</option>`).join('')}</select></label>
       </div>
-    </div>`;
+      ${capped ? '<div class="triage-hint">Filters apply to loaded tickets. Jira returns up to 100 tickets per column.</div>' : ''}
+      <div class="triage-grid">
+        ${triageGroup('Unassigned · Backlog', 'backlog', paginateTriageTickets(filtered.unassignedBacklog, pageSize, opts.pages?.backlog ?? 1), launchRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unassigned backlog tickets.', scopeHint, 'triage:backlog', collapsed.has('triage:backlog'))}
+        ${triageGroup('Unassigned · To Do', 'todo', paginateTriageTickets(filtered.unassignedTodo, pageSize, opts.pages?.todo ?? 1), launchRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unassigned to-do tickets.', scopeHint, 'triage:todo', collapsed.has('triage:todo'))}
+        ${triageGroup('Mine · underway', 'mine', paginateTriageTickets(filtered.mineOpen, pageSize, opts.pages?.mine ?? 1), statusRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unfinished tickets assigned to you.', scopeHint, 'triage:mine', collapsed.has('triage:mine'))}
+      </div>
+      <div class="runs-drawer-slot"></div>
+`);
 }
 
 export interface BugsViewOpts {
@@ -799,8 +986,9 @@ function bugChip(text: string, cls: string): string {
   return `<span class="chip ${cls}">${esc(text)}</span>`;
 }
 
-function bugPriorityClass(priority: string): string {
-  return priority.startsWith('P1') ? 'chip-blocked' : 'chip-queued';
+function bugPriorityClass(priority: string | null | undefined): string {
+  const level = priority?.trim().match(/^P([0-4])\b/i)?.[1];
+  return level ? `pri-p${level}` : 'chip-queued';
 }
 
 function bugCardHtml(card: BugCard): string {
@@ -865,9 +1053,7 @@ export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
     res.cards.length === 0 && !res.degraded
       ? '<div class="empty-note">No bug data for this scope.</div>'
       : `<div class="bugs-grid">${cards}</div>`;
-  return `
-    <div class="bench bugs-view" data-page="bugs">
-      ${renderBenchHead({ active: 'bugs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
+  return renderAppShell({ active: 'bugs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
       <div class="bugs-windows mono">
         <span>LATEST 7 DAYS · ${esc(res.latestWindow)}</span>
         <span>PREVIOUS 7 DAYS · ${esc(res.previousWindow)}</span>
@@ -875,13 +1061,14 @@ export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
       </div>
       ${banner}
       ${bugsBody}
-    </div>`;
+`);
 }
 
 export interface ConfigViewOpts {
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
+  localGit?: LocalGitState;
 }
 
 function configRowsHtml(uiConfig: UiConfig): string {
@@ -919,9 +1106,20 @@ function jiraTokenRowHtml(tokenSet: boolean): string {
 }
 
 export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
-  return `
-    <div class="bench config-view" data-page="config">
-      ${renderBenchHead({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null, autoClaim: '' })}
+  const themeOptions = THEMES.map(
+    (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
+  ).join('');
+  return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
+        <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
+        <div class="ui-customization-body">
+          <label for="ui-theme">Theme</label>
+          <select id="ui-theme" class="theme-select" aria-describedby="ui-theme-help">${themeOptions}</select>
+          <p id="ui-theme-help">Applies immediately and is saved in this browser.</p>
+          ${renderThemePreview()}
+        </div>
+      </section>
+      ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">
         <div class="panel-head"><span class="panel-title">Config</span></div>
         <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
@@ -930,7 +1128,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
           ${configRowsHtml(uiConfig)}
         </div>
       </section>
-    </div>`;
+`);
 }
 
 interface CmuxActionSpec {
@@ -981,16 +1179,15 @@ export interface CmuxViewState {
 }
 
 export function renderCmuxView(state: CmuxViewState): string {
-  const head: string = renderBenchHead({
+  const opts: HelmHeadOpts = {
     active: 'cmux',
     repos: state.repos,
     selectedRepo: state.selectedRepo,
     themeId: state.themeId,
     readout: null,
-    autoClaim: '',
-  });
+  };
   if (!state.connected) {
-    return `<div class="bench cmux-view" data-page="cmux">${head}<div class="panel empty-note">cmux not connected. Is the cmux app running?</div></div>`;
+    return renderAppShell(opts, '<div class="panel empty-note">cmux not connected. Is the cmux app running?</div>');
   }
 
   const list: string = state.tabs.length
@@ -1031,7 +1228,7 @@ export function renderCmuxView(state: CmuxViewState): string {
   const collapsed: Set<string> = state.collapsed ?? new Set();
   const listCollapsed: boolean = collapsed.has('cmux:list');
   const detailCollapsed: boolean = collapsed.has('cmux:detail');
-  return `<div class="bench cmux-view" data-page="cmux">${head}
+  return renderAppShell(opts, `
     <div class="cmux-body">
       <div class="panel cmux-list${listCollapsed ? ' is-collapsed' : ''}">
         <div class="panel-head"><span class="panel-title">Tabs</span>${surfaceCollapseBtn('cmux:list', 'Tabs', listCollapsed)}</div>
@@ -1042,5 +1239,5 @@ export function renderCmuxView(state: CmuxViewState): string {
         <div class="cmux-detail-body">${detail}</div>
       </div>
     </div>
-  </div>`;
+`);
 }

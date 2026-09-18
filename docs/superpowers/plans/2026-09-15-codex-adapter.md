@@ -6,7 +6,7 @@
 
 **Architecture:** New `codexAdapter` spawns `codex exec` (mirrors the existing `command` adapter's spawn/parse). `buildPrompt` is extracted to a shared module both adapters import. Config default `AGENT_ADAPTER` flips to codex. UI model list gains Astra; the tuning dropdowns default-select astra/medium.
 
-**Tech Stack:** TypeScript strict + `--erasableSyntaxOnly` (NO constructor parameter properties), Node `node:child_process`/`node:readline` orchestrator under `tsx`, Vite front end, Vitest + jsdom. `codex` CLI v0.154.0 on PATH.
+**Tech Stack:** TypeScript strict + `--erasableSyntaxOnly` (NO constructor parameter properties), Node `node:child_process`/`node:readline` Helmsman under `tsx`, Vite front end, Vitest + jsdom. `codex` CLI v0.154.0 on PATH.
 
 **Spec:** `docs/superpowers/specs/2026-09-15-codex-adapter-design.md`
 
@@ -25,9 +25,9 @@
 ### Task 1: Extract shared `buildPrompt`
 
 **Files:**
-- Create: `server/orchestrator/agents/prompt.ts`
-- Modify: `server/orchestrator/agents/claude-code.ts` (remove local `buildPrompt`, import from `./prompt`)
-- Modify: `server/orchestrator/agents/claude-code.test.ts` (import `buildPrompt` from `./prompt`)
+- Create: `server/helmsman/agents/prompt.ts`
+- Modify: `server/helmsman/agents/claude-code.ts` (remove local `buildPrompt`, import from `./prompt`)
+- Modify: `server/helmsman/agents/claude-code.test.ts` (import `buildPrompt` from `./prompt`)
 
 **Interfaces:**
 - Consumes: `AgentTask` (`./adapter`).
@@ -35,7 +35,7 @@
 
 - [ ] **Step 1: Create `prompt.ts` with the current buildPrompt verbatim**
 
-Move the entire existing `buildPrompt` function (all four branches incl. the "Review the whole change path…" review-agent line) from `claude-code.ts` into a new `server/orchestrator/agents/prompt.ts`:
+Move the entire existing `buildPrompt` function (all four branches incl. the "Review the whole change path…" review-agent line) from `claude-code.ts` into a new `server/helmsman/agents/prompt.ts`:
 
 ```ts
 import type { AgentTask } from './adapter';
@@ -57,13 +57,13 @@ In `claude-code.test.ts`, change `import { agentFlags, buildPrompt } from './cla
 
 - [ ] **Step 4: Run the affected tests + typecheck**
 
-Run: `npx vitest run server/orchestrator/agents/claude-code.test.ts && npx tsc --noEmit`
+Run: `npx vitest run server/helmsman/agents/claude-code.test.ts && npx tsc --noEmit`
 Expected: PASS, clean (pure move, no behavior change).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/agents/prompt.ts server/orchestrator/agents/claude-code.ts server/orchestrator/agents/claude-code.test.ts
+git add server/helmsman/agents/prompt.ts server/helmsman/agents/claude-code.ts server/helmsman/agents/claude-code.test.ts
 git commit -m "Extract shared buildPrompt for reuse across adapters"
 ```
 
@@ -72,19 +72,19 @@ git commit -m "Extract shared buildPrompt for reuse across adapters"
 ### Task 2: `parsePrNumber` reusable
 
 **Files:**
-- Modify: `server/orchestrator/agents/claude-stream.ts` (export `parsePrNumber`)
-- Test: `server/orchestrator/agents/claude-stream.test.ts` (add a direct `parsePrNumber` test if not already covered)
+- Modify: `server/helmsman/agents/claude-stream.ts` (export `parsePrNumber`)
+- Test: `server/helmsman/agents/claude-stream.test.ts` (add a direct `parsePrNumber` test if not already covered)
 
 **Interfaces:**
 - Produces: `export function parsePrNumber(text: string): number | undefined` (same signature it already has internally).
 
 - [ ] **Step 1: Read the current `parsePrNumber`**
 
-Open `server/orchestrator/agents/claude-stream.ts`. It has a `parsePrNumber` used by `mapStreamLine`. If it is already `export`ed, skip to Task 3 (note that in your report). Otherwise continue.
+Open `server/helmsman/agents/claude-stream.ts`. It has a `parsePrNumber` used by `mapStreamLine`. If it is already `export`ed, skip to Task 3 (note that in your report). Otherwise continue.
 
 - [ ] **Step 2: Add a failing direct test**
 
-Append to `server/orchestrator/agents/claude-stream.test.ts`:
+Append to `server/helmsman/agents/claude-stream.test.ts`:
 
 ```ts
 import { parsePrNumber } from './claude-stream';
@@ -101,7 +101,7 @@ describe('parsePrNumber', () => {
 
 - [ ] **Step 3: Run to verify it fails**
 
-Run: `npx vitest run server/orchestrator/agents/claude-stream.test.ts`
+Run: `npx vitest run server/helmsman/agents/claude-stream.test.ts`
 Expected: FAIL — `parsePrNumber` is not exported.
 
 - [ ] **Step 4: Export it**
@@ -110,13 +110,13 @@ Add `export` to the existing `function parsePrNumber(...)` in `claude-stream.ts`
 
 - [ ] **Step 5: Run to verify it passes**
 
-Run: `npx vitest run server/orchestrator/agents/claude-stream.test.ts`
+Run: `npx vitest run server/helmsman/agents/claude-stream.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/orchestrator/agents/claude-stream.ts server/orchestrator/agents/claude-stream.test.ts
+git add server/helmsman/agents/claude-stream.ts server/helmsman/agents/claude-stream.test.ts
 git commit -m "Export parsePrNumber for adapter reuse"
 ```
 
@@ -125,8 +125,8 @@ git commit -m "Export parsePrNumber for adapter reuse"
 ### Task 3: Codex adapter
 
 **Files:**
-- Create: `server/orchestrator/agents/codex.ts`
-- Test: `server/orchestrator/agents/codex.test.ts`
+- Create: `server/helmsman/agents/codex.ts`
+- Test: `server/helmsman/agents/codex.test.ts`
 
 **Interfaces:**
 - Consumes: `AgentAdapter`/`AgentEvent`/`AgentHandle`/`AgentResult`/`AgentTask` (`./adapter`), `buildPrompt` (`./prompt`), `parsePrNumber` (`./claude-stream`), `validModel` (`../../../src/logic/agentOptions`).
@@ -134,7 +134,7 @@ git commit -m "Export parsePrNumber for adapter reuse"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `server/orchestrator/agents/codex.test.ts`:
+Create `server/helmsman/agents/codex.test.ts`:
 
 ```ts
 import { describe, expect, it, vi } from 'vitest';
@@ -188,7 +188,7 @@ describe('codexAdapter.start', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `npx vitest run server/orchestrator/agents/codex.test.ts`
+Run: `npx vitest run server/helmsman/agents/codex.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement `codex.ts`**
@@ -259,13 +259,13 @@ Note: `parsePrNumber` returns `number | undefined`. If Task 2 found it returns `
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run server/orchestrator/agents/codex.test.ts`
+Run: `npx vitest run server/helmsman/agents/codex.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/agents/codex.ts server/orchestrator/agents/codex.test.ts
+git add server/helmsman/agents/codex.ts server/helmsman/agents/codex.test.ts
 git commit -m "Add codex adapter (codex exec, astra/medium defaults)"
 ```
 
@@ -333,7 +333,7 @@ git commit -m "Default AGENT_ADAPTER to codex"
 ### Task 5: Wire codex adapter selection in main
 
 **Files:**
-- Modify: `server/orchestrator/main.ts`
+- Modify: `server/helmsman/main.ts`
 
 **Interfaces:**
 - Consumes: `codexAdapter` (`./agents/codex`), `cfg.agentAdapter`.
@@ -364,8 +364,8 @@ Expected: clean; all tests pass. (No unit test for main wiring — it's the comp
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/orchestrator/main.ts
-git commit -m "Select codex adapter as the default in the orchestrator"
+git add server/helmsman/main.ts
+git commit -m "Select codex adapter as the default in the helmsman"
 ```
 
 ---

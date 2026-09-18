@@ -4,7 +4,7 @@
 
 **Goal:** Add a dashboard panel that lists all live cmux terminal tabs, streams a selected tab's screen, and sends free-text commands and high-level agent actions to it.
 
-**Architecture:** A new isolated `server/orchestrator/cmux/` subsystem shells out to the documented `cmux` CLI (argv only, never a shell) for list/read/send/events. New REST + SSE endpoints ride the existing `node:http` server via the `handleApi` deps-injection pattern. A new frontend view renders the tab list + a polled live screen `<pre>` + input + action buttons. Zero coupling to the existing Jira/run/PR logic; degrades cleanly when cmux is not running.
+**Architecture:** A new isolated `server/helmsman/cmux/` subsystem shells out to the documented `cmux` CLI (argv only, never a shell) for list/read/send/events. New REST + SSE endpoints ride the existing `node:http` server via the `handleApi` deps-injection pattern. A new frontend view renders the tab list + a polled live screen `<pre>` + input + action buttons. Zero coupling to the existing Jira/run/PR logic; degrades cleanly when cmux is not running.
 
 **Tech Stack:** TypeScript, `node:child_process` (spawn), `node:http`, Vite front end (vanilla TS, html-template-string rendering), Vitest.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **No shell, ever.** All cmux invocations use `spawn('cmux', [args…])` with an argv array. User text is passed as a single argv element. Never `shell: true`, never string interpolation into a command line. (Repo invariant — same discipline as the generic-command adapter.)
-- **Loopback only.** The orchestrator binds `127.0.0.1` (`server/orchestrator/main.ts:249`). Do not change the bind. These endpoints are RCE-equivalent by design and are safe only on loopback.
+- **Loopback only.** Helmsman binds `127.0.0.1` (`server/helmsman/main.ts:249`). Do not change the bind. These endpoints are RCE-equivalent by design and are safe only on loopback.
 - **`--erasableSyntaxOnly` is on.** No TypeScript constructor parameter properties (`constructor(private readonly x)`). Use an explicit field + assignment in the constructor body.
 - **Set `CMUX_QUIET=1`** in the child env for every `cmux` spawn to suppress the legacy-alias notice lines that would otherwise corrupt JSON parsing.
 - **Tests are colocated** as `*.test.ts` next to source; run with `npm test` (`vitest run`).
@@ -23,15 +23,15 @@
 
 ## File Structure
 
-- `server/orchestrator/cmux/model.ts` — pure normalization of cmux JSON → `CmuxTab[]`. Exports the `CmuxTab` type.
-- `server/orchestrator/cmux/model.test.ts`
-- `server/orchestrator/cmux/actions.ts` — pure provider→action→key-sequence map + available-action lookup.
-- `server/orchestrator/cmux/actions.test.ts`
-- `server/orchestrator/cmux/bridge.ts` — the only module that spawns `cmux`. Methods: `listTabs`, `readScreen`, `send`, `sendKey`, `watchEvents`. Reports "not connected" instead of throwing on socket failure.
-- `server/orchestrator/cmux/bridge.test.ts` — mocks `node:child_process`.
-- `server/orchestrator/router.ts` (modify) — add cmux endpoints + deps.
-- `server/orchestrator/router.test.ts` (modify) — endpoint + security-invariant tests.
-- `server/orchestrator/main.ts` (modify) — wire cmux deps, add the SSE route + the `events` child lifecycle.
+- `server/helmsman/cmux/model.ts` — pure normalization of cmux JSON → `CmuxTab[]`. Exports the `CmuxTab` type.
+- `server/helmsman/cmux/model.test.ts`
+- `server/helmsman/cmux/actions.ts` — pure provider→action→key-sequence map + available-action lookup.
+- `server/helmsman/cmux/actions.test.ts`
+- `server/helmsman/cmux/bridge.ts` — the only module that spawns `cmux`. Methods: `listTabs`, `readScreen`, `send`, `sendKey`, `watchEvents`. Reports "not connected" instead of throwing on socket failure.
+- `server/helmsman/cmux/bridge.test.ts` — mocks `node:child_process`.
+- `server/helmsman/router.ts` (modify) — add cmux endpoints + deps.
+- `server/helmsman/router.test.ts` (modify) — endpoint + security-invariant tests.
+- `server/helmsman/main.ts` (modify) — wire cmux deps, add the SSE route + the `events` child lifecycle.
 - `src/logic/cmuxPanel.ts` — pure panel state (selection, action availability). Defines the frontend-side `CmuxTab` view type.
 - `src/logic/cmuxPanel.test.ts`
 - `src/render.ts` (modify) — render the cmux view (list + screen + input + actions).
@@ -42,8 +42,8 @@
 ## Task 1: cmux model (pure normalization)
 
 **Files:**
-- Create: `server/orchestrator/cmux/model.ts`
-- Test: `server/orchestrator/cmux/model.test.ts`
+- Create: `server/helmsman/cmux/model.ts`
+- Test: `server/helmsman/cmux/model.test.ts`
 
 **Interfaces:**
 - Consumes: raw JSON objects as returned by `cmux workspace list --json` (`{ window_ref, workspaces: [{ ref, id, index, current_directory, custom_title, title? }] }`) and `cmux list-pane-surfaces --json` (`{ pane_ref, workspace_ref, window_ref, surfaces: [{ index, ref, selected, title, type }] }`).
@@ -75,16 +75,16 @@ import { toTabs } from './model';
 describe('toTabs', () => {
   it('joins workspaces to their surfaces into flat tabs', () => {
     const tabs = toTabs(
-      [{ windowRef: 'window:1', workspaceRef: 'workspace:1', workspaceTitle: 'Open orchestrator', cwd: '/repo' }],
-      { 'workspace:1': [{ surfaceRef: 'surface:1', surfaceTitle: 'Open orchestrator', type: 'terminal', selected: true }] },
+      [{ windowRef: 'window:1', workspaceRef: 'workspace:1', workspaceTitle: 'Open helmsman', cwd: '/repo' }],
+      { 'workspace:1': [{ surfaceRef: 'surface:1', surfaceTitle: 'Open helmsman', type: 'terminal', selected: true }] },
     );
     expect(tabs).toEqual([
       {
         windowRef: 'window:1',
         workspaceRef: 'workspace:1',
-        workspaceTitle: 'Open orchestrator',
+        workspaceTitle: 'Open helmsman',
         surfaceRef: 'surface:1',
-        surfaceTitle: 'Open orchestrator',
+        surfaceTitle: 'Open helmsman',
         type: 'terminal',
         cwd: '/repo',
         selected: true,
@@ -174,7 +174,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/cmux/model.ts server/orchestrator/cmux/model.test.ts
+git add server/helmsman/cmux/model.ts server/helmsman/cmux/model.test.ts
 git commit -m "feat(cmux): pure tab-model normalization"
 ```
 
@@ -183,8 +183,8 @@ git commit -m "feat(cmux): pure tab-model normalization"
 ## Task 2: cmux actions (pure provider→key map)
 
 **Files:**
-- Create: `server/orchestrator/cmux/actions.ts`
-- Test: `server/orchestrator/cmux/actions.test.ts`
+- Create: `server/helmsman/cmux/actions.ts`
+- Test: `server/helmsman/cmux/actions.test.ts`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -277,7 +277,7 @@ Expected: PASS (5 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/cmux/actions.ts server/orchestrator/cmux/actions.test.ts
+git add server/helmsman/cmux/actions.ts server/helmsman/cmux/actions.test.ts
 git commit -m "feat(cmux): pure provider action-to-key map"
 ```
 
@@ -286,8 +286,8 @@ git commit -m "feat(cmux): pure provider action-to-key map"
 ## Task 3: cmux bridge (spawn wrapper, argv-only)
 
 **Files:**
-- Create: `server/orchestrator/cmux/bridge.ts`
-- Test: `server/orchestrator/cmux/bridge.test.ts`
+- Create: `server/helmsman/cmux/bridge.ts`
+- Test: `server/helmsman/cmux/bridge.test.ts`
 
 **Interfaces:**
 - Consumes: `toTabs` + `CmuxTab` from `./model`. `node:child_process`.
@@ -515,7 +515,7 @@ Expected: PASS (4 tests). The security test (`no shell`) passes because `send` p
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/orchestrator/cmux/bridge.ts server/orchestrator/cmux/bridge.test.ts
+git add server/helmsman/cmux/bridge.ts server/helmsman/cmux/bridge.test.ts
 git commit -m "feat(cmux): argv-only spawn bridge (list/read/send/events)"
 ```
 
@@ -524,9 +524,9 @@ git commit -m "feat(cmux): argv-only spawn bridge (list/read/send/events)"
 ## Task 4: REST endpoints + security-invariant test
 
 **Files:**
-- Modify: `server/orchestrator/router.ts`
-- Modify: `server/orchestrator/router.test.ts`
-- Modify: `server/orchestrator/main.ts` (wire deps)
+- Modify: `server/helmsman/router.ts`
+- Modify: `server/helmsman/router.test.ts`
+- Modify: `server/helmsman/main.ts` (wire deps)
 
 **Interfaces:**
 - Consumes: `Bridge` from `./cmux/bridge`, `actionsFor`/`keysFor` from `./cmux/actions`.
@@ -657,7 +657,7 @@ Expected: PASS. If existing router tests build a full `RouterDeps` literal, add 
 
 ```bash
 npx tsc --noEmit
-git add server/orchestrator/router.ts server/orchestrator/router.test.ts server/orchestrator/main.ts
+git add server/helmsman/router.ts server/helmsman/router.test.ts server/helmsman/main.ts
 git commit -m "feat(cmux): REST endpoints for tabs/screen/send/action"
 ```
 
@@ -666,7 +666,7 @@ git commit -m "feat(cmux): REST endpoints for tabs/screen/send/action"
 ## Task 5: SSE tree-change stream + events child lifecycle
 
 **Files:**
-- Modify: `server/orchestrator/main.ts`
+- Modify: `server/helmsman/main.ts`
 
 **Interfaces:**
 - Consumes: `cmux.watchEvents` from the bridge instance created in Task 4.
@@ -713,7 +713,7 @@ Expected: the `connected` line immediately, then a `cmux-tabs-changed` line on t
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/orchestrator/main.ts
+git add server/helmsman/main.ts
 git commit -m "feat(cmux): SSE tree-change stream backed by a shared events watch"
 ```
 
@@ -841,7 +841,7 @@ git commit -m "feat(cmux): pure frontend panel state"
 - [ ] **Step 1: Add `renderCmuxView` to `render.ts`** (pure string builder, mirrors `renderPrPanel` style)
 
 ```ts
-import { actionsFor } from '../server/orchestrator/cmux/actions'; // if cross-import is disallowed by tsconfig, inline the label list instead
+import { actionsFor } from '../server/helmsman/cmux/actions'; // if cross-import is disallowed by tsconfig, inline the label list instead
 import type { CmuxTabView } from './logic/cmuxPanel';
 import { providerOf } from './logic/cmuxPanel';
 
@@ -909,7 +909,7 @@ git commit -m "feat(cmux): dashboard view — tab list, live screen, send, actio
 
 - [ ] **Step 1: Full live smoke against real cmux**
   - Open a scratch cmux tab (`cmux ~/tmp` or a new workspace). From the dashboard: select it, send `pwd`, confirm output; fire Enter/Esc/Ctrl-C actions; confirm the tab list updates when you open/close a cmux workspace (SSE path).
-  - Confirm the send path is argv-only in practice: `git grep -n "shell: true" server/orchestrator/cmux` returns nothing.
+  - Confirm the send path is argv-only in practice: `git grep -n "shell: true" server/helmsman/cmux` returns nothing.
 
 - [ ] **Step 2: Degraded-mode check**
   - Quit the cmux app. Reload the dashboard cmux view → "cmux not connected". Confirm the rest of the dashboard (agents/queue/config) still works. Relaunch cmux → the view recovers on next fetch.

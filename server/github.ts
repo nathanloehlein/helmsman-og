@@ -1,6 +1,8 @@
 import type { GithubConfig } from './config';
+import { cachedGithubRead } from './github-read-cache';
 import type { GithubPr, PrReviewDecision } from './types';
 import type { PrFileDiff } from '../src/types';
+import { REQUIRED_PR_APPROVALS } from '../src/logic/prReviews';
 
 interface SearchItem {
   number: number;
@@ -25,6 +27,9 @@ export interface OpenAuthoredPr {
 interface RawReview {
   state: string;
   user: { login: string } | null;
+  submitted_at?: string | null;
+  commit_id?: string | null;
+  id?: number;
 }
 
 interface PullRequestItem {
@@ -32,6 +37,9 @@ interface PullRequestItem {
 }
 
 interface PullRequestDetail {
+  title?: string;
+  updated_at?: string | null;
+  user?: { login?: string } | null;
   state: string;
   draft?: boolean;
   merged?: boolean;
@@ -61,6 +69,13 @@ export interface ReviewTally {
 export interface PrStatus {
   number: number;
   repo: string;
+  title?: string;
+  authorLogin?: string | null;
+  isOwnPr?: boolean;
+  viewerReview?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | null;
+  updatedAt?: string;
+  viewerReviewedAt?: string;
+  viewerReviewedCommitId?: string;
   state: 'open' | 'closed';
   draft: boolean;
   merged: boolean;
@@ -70,6 +85,7 @@ export interface PrStatus {
   comments: number;
   checks: { passed: number; failed: number; pending: number };
   reviews: ReviewTally;
+  reviewsAvailable?: boolean;
   url: string;
 }
 
@@ -87,42 +103,114 @@ function repoFromUrl(repositoryUrl: string): string {
   return repositoryUrl.replace(`${API}/repos/`, '');
 }
 
+function nextReviewPage(link: string | null, endpoint: string): string | null | undefined {
+  if (!link) return null;
+  let next: string | null = null;
+  for (const part of link.split(',')) {
+    const match = part.trim().match(/^<([^>]+)>\s*;(.*)$/);
+    const relation = match?.[2]?.match(/(?:^|;)\s*rel\s*=\s*(?:"([^"]+)"|([^;\s]+))/i);
+    if (!match?.[1] || !relation) return undefined;
+    if (!(relation[1] ?? relation[2] ?? '').split(/\s+/).includes('next')) continue;
+    if (next) return undefined;
+    try {
+      const url = new URL(match[1]);
+      if (url.origin !== API || url.pathname !== new URL(endpoint).pathname || url.username || url.password || url.hash) return undefined;
+      next = url.href;
+    } catch {
+      return undefined;
+    }
+  }
+  return next;
+}
+
 async function fetchReviews(
   github: GithubConfig,
   repo: string,
   prNumber: number,
+  cached = false,
 ): Promise<RawReview[] | null> {
-  const res: Response = await fetch(`${API}/repos/${repo}/pulls/${prNumber}/reviews?per_page=100`, {
-    headers: headers(github),
-  });
-  if (!res.ok) return null;
-  return res.json();
-}
-
-function decisionFromReviews(reviews: RawReview[]): PrReviewDecision {
-  const decisive: RawReview[] = reviews.filter(
-    (r) => r.state === 'CHANGES_REQUESTED' || r.state === 'APPROVED',
-  );
-  const last: RawReview | undefined = decisive[decisive.length - 1];
-  if (!last) return 'REVIEW_REQUIRED';
-  return last.state === 'CHANGES_REQUESTED' ? 'CHANGES_REQUESTED' : 'APPROVED';
-}
-
-function tallyReviews(reviews: RawReview[], requested: number): ReviewTally {
-  const latestPerUser: Map<string, string> = new Map();
-  for (const review of reviews) {
-    const login: string | undefined = review.user?.login;
-    if (!login) continue;
-    if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
-      latestPerUser.set(login, review.state);
-    } else if (review.state === 'COMMENTED' && !latestPerUser.has(login)) {
-      latestPerUser.set(login, 'COMMENTED');
+  const endpoint = `${API}/repos/${repo}/pulls/${prNumber}/reviews`;
+  let url: string = `${endpoint}?per_page=100`;
+  const visited = new Set<string>();
+  const reviews: RawReview[] = [];
+  try {
+    for (let page = 0; page < 10; page++) {
+      if (visited.has(url)) return null;
+      visited.add(url);
+      const res: Response = cached ? await cachedGithubRead(github, url) : await fetch(url, { headers: headers(github) });
+      if (!res.ok) return null;
+      const body: unknown = await res.json();
+      if (!Array.isArray(body)) return null;
+      reviews.push(...body.filter((review): review is RawReview => review !== null && typeof review === 'object' && typeof review.state === 'string'));
+      const next = nextReviewPage(res.headers?.get('link') ?? null, endpoint);
+      if (next === null) return reviews;
+      if (next === undefined) return null;
+      url = next;
     }
+  } catch {
+    return null;
   }
+  return null;
+}
+
+function effectiveReviewState(reviews: RawReview[]): PrStatus['viewerReview'] {
+  const submitted = reviews
+    .map((review, index) => ({ review, index }))
+    .filter(({ review }) => ['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED'].includes(review.state)
+      && review.submitted_at !== null);
+  const hasTimestamps = submitted.every(({ review }) => Number.isFinite(Date.parse(review.submitted_at ?? '')));
+  const hasIds = submitted.every(({ review }) => typeof review.id === 'number' && Number.isFinite(review.id));
+  submitted.sort((a, b) => {
+    const aTime = Date.parse(a.review.submitted_at ?? '');
+    const bTime = Date.parse(b.review.submitted_at ?? '');
+    if (hasTimestamps && aTime !== bTime) return aTime - bTime;
+    if (hasIds && a.review.id !== b.review.id) return (a.review.id ?? 0) - (b.review.id ?? 0);
+    return a.index - b.index;
+  });
+  const decisive = submitted.filter(({ review }) => review.state !== 'COMMENTED');
+  const latest = decisive.at(-1) ?? submitted.at(-1);
+  return (latest?.review.state as PrStatus['viewerReview']) ?? null;
+}
+
+function effectiveReviews(reviews: RawReview[]): Map<string, PrStatus['viewerReview']> {
+  const perUser = new Map<string, RawReview[]>();
+  for (const review of reviews) {
+    const login = typeof review.user?.login === 'string' ? review.user.login.trim().toLowerCase() : '';
+    if (!login) continue;
+    const submitted = perUser.get(login) ?? [];
+    submitted.push(review);
+    perUser.set(login, submitted);
+  }
+  return new Map([...perUser].map(([login, submitted]) => [login, effectiveReviewState(submitted)]));
+}
+
+function validTimestamp(value: unknown): string | undefined {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : undefined;
+}
+
+function latestViewerReview(reviews: RawReview[], author: string): RawReview | undefined {
+  const viewer = author.trim().toLowerCase();
+  if (!viewer) return undefined;
+  let latest: RawReview | undefined;
+  for (const review of reviews) {
+    if (typeof review.user?.login !== 'string' || review.user.login.trim().toLowerCase() !== viewer
+      || !['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED'].includes(review.state)
+      || !validTimestamp(review.submitted_at)) continue;
+    if (!latest || Date.parse(review.submitted_at ?? '') >= Date.parse(latest.submitted_at ?? '')) latest = review;
+  }
+  return latest;
+}
+
+function decisionFromTally(reviews: ReviewTally): PrReviewDecision {
+  if (reviews.changesRequested > 0) return 'CHANGES_REQUESTED';
+  return reviews.approved >= REQUIRED_PR_APPROVALS ? 'APPROVED' : 'REVIEW_REQUIRED';
+}
+
+function tallyReviews(reviews: Map<string, PrStatus['viewerReview']>, requested: number): ReviewTally {
   let approved: number = 0;
   let changesRequested: number = 0;
   let commented: number = 0;
-  for (const state of latestPerUser.values()) {
+  for (const state of reviews.values()) {
     if (state === 'APPROVED') approved++;
     else if (state === 'CHANGES_REQUESTED') changesRequested++;
     else if (state === 'COMMENTED') commented++;
@@ -135,9 +223,9 @@ async function latestReviewDecision(
   repo: string,
   prNumber: number,
 ): Promise<PrReviewDecision> {
-  const reviews: RawReview[] | null = await fetchReviews(github, repo, prNumber);
+  const reviews: RawReview[] | null = await fetchReviews(github, repo, prNumber, true);
   if (reviews === null) return null;
-  return decisionFromReviews(reviews);
+  return decisionFromTally(tallyReviews(effectiveReviews(reviews), 0));
 }
 
 async function searchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]> {
@@ -147,7 +235,7 @@ async function searchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]> {
   url.searchParams.set('order', 'desc');
   url.searchParams.set('per_page', '8');
 
-  const res: Response = await fetch(url, { headers: headers(github) });
+  const res: Response = await cachedGithubRead(github, url);
   if (!res.ok) throw new Error(`GitHub ${res.status}: ${await res.text()}`);
   const body: { items?: SearchItem[] } = await res.json();
   const items: SearchItem[] = body.items ?? [];
@@ -182,7 +270,7 @@ async function repoAuthoredPrs(github: GithubConfig, repo: string): Promise<Gith
     url.searchParams.set('direction', 'desc');
     url.searchParams.set('per_page', '100');
     url.searchParams.set('page', String(page));
-    const res: Response | null = await fetch(url, { headers: headers(github) }).catch((): null => null);
+    const res: Response | null = await cachedGithubRead(github, url).catch((): null => null);
     if (!res || !res.ok) break;
     const items: PullListItem[] = await res.json().catch((): PullListItem[] => []);
     if (!Array.isArray(items) || items.length === 0) break;
@@ -264,7 +352,7 @@ async function searchOpenAuthoredPrs(github: GithubConfig): Promise<OpenAuthored
   url.searchParams.set('order', 'desc');
   url.searchParams.set('per_page', '30');
 
-  const res: Response = await fetch(url, { headers: headers(github) });
+  const res: Response = await cachedGithubRead(github, url);
   if (!res.ok) return [];
   const body: { items?: SearchItem[] } = await res.json();
   const items: SearchItem[] = body.items ?? [];
@@ -286,7 +374,7 @@ async function repoOpenAuthoredPrs(github: GithubConfig, repo: string): Promise<
     url.searchParams.set('direction', 'desc');
     url.searchParams.set('per_page', '100');
     url.searchParams.set('page', String(page));
-    const res: Response | null = await fetch(url, { headers: headers(github) }).catch((): null => null);
+    const res: Response | null = await cachedGithubRead(github, url).catch((): null => null);
     if (!res || !res.ok) break;
     const items: PullListItem[] = await res.json().catch((): PullListItem[] => []);
     if (!Array.isArray(items) || items.length === 0) break;
@@ -414,24 +502,34 @@ export async function fetchPrStatus(
       fetchReviews(github, repo, prNumber).catch(() => null),
     ]);
 
-    const reviewList: RawReview[] = reviews ?? [];
-    const reviewDecision: PrReviewDecision =
-      reviews === null ? 'REVIEW_REQUIRED' : decisionFromReviews(reviewList);
+    const reviewStates = effectiveReviews(reviews ?? []);
+    const viewerReview = latestViewerReview(reviews ?? [], github.author);
     const requested: number =
       (body.requested_reviewers?.length ?? 0) + (body.requested_teams?.length ?? 0);
+    const reviewTally = tallyReviews(reviewStates, requested);
+    const authorLogin = typeof body.user?.login === 'string' && body.user.login.trim() ? body.user.login : null;
 
     return {
       number: prNumber,
       repo,
+      title: typeof body.title === 'string' ? body.title : undefined,
+      authorLogin,
+      isOwnPr: Boolean(authorLogin && github.author.trim() && authorLogin.toLowerCase() === github.author.trim().toLowerCase()),
+      viewerReview: reviewStates.get(github.author.trim().toLowerCase()) ?? null,
+      updatedAt: validTimestamp(body.updated_at),
+      viewerReviewedAt: validTimestamp(viewerReview?.submitted_at),
+      viewerReviewedCommitId: typeof viewerReview?.commit_id === 'string' && viewerReview.commit_id.trim()
+        ? viewerReview.commit_id.trim() : undefined,
       state: body.state === 'closed' ? 'closed' : 'open',
       draft: body.draft ?? false,
       merged: body.merged ?? false,
       headRefName: body.head.ref,
       headSha: body.head.sha,
-      reviewDecision,
+      reviewDecision: decisionFromTally(reviewTally),
       comments: body.comments ?? 0,
       checks,
-      reviews: tallyReviews(reviewList, requested),
+      reviews: reviewTally,
+      reviewsAvailable: reviews !== null,
       url: body.html_url,
     };
   } catch {

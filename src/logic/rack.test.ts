@@ -85,6 +85,21 @@ describe('rack layout', () => {
     expect(l[0]![0]!.panels).toEqual(['backlog']);
   });
 
+  it('migrates the legacy personal PR panel while preserving its position, stack, active tab, and collapse state', () => {
+    const layout = toggleCollapse(stackOnto(movePanel(defaultLayout(), 'repoprs', 1, 0), 'backlog', 'repoprs'), 'repoprs');
+    const active = setActive(layout, 'repoprs');
+    const legacy = serialize(active).replaceAll('repoprs', 'myprs');
+    expect(deserialize(legacy)).toEqual(active);
+    expect(allPanelsIn(deserialize(legacy)).filter((panel) => panel === 'repoprs')).toHaveLength(1);
+  });
+
+  it('deduplicates legacy and current PR panel IDs after migration', () => {
+    const raw = JSON.stringify([[{ panels: ['myprs', 'repoprs'], active: 'myprs', collapsed: true }]]);
+    const layout = deserialize(raw);
+    expect(layout[0]?.[0]).toEqual({ panels: ['repoprs'], active: 'repoprs', collapsed: true });
+    expect(allPanelsIn(layout).sort()).toEqual([...ALL_PANELS].sort());
+  });
+
   it('deserialize falls back to default on garbage or null', () => {
     expect(deserialize('not json')).toEqual(defaultLayout());
     expect(deserialize(null)).toEqual(defaultLayout());

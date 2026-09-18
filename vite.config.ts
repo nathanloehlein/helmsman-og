@@ -3,7 +3,7 @@ import { buildMeta } from './build-meta';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const port: string = env.ORCHESTRATOR_PORT ?? '8787';
+  const port: string = env.HELMSMAN_PORT ?? '8787';
   const meta = buildMeta();
   return {
     define: {

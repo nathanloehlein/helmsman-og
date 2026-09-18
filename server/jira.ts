@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { JiraConfig } from './config';
 import {
   buildActiveJql,
@@ -17,7 +18,11 @@ export interface TriageGroups {
   mineOpen: JiraIssue[];
 }
 
-const FIELDS: string = 'summary,status,priority,resolutiondate';
+const FIELDS: string = 'summary,status,priority,resolutiondate,updated';
+const MINE_OPEN_CACHE_MS = 5 * 60_000;
+const MINE_OPEN_CACHE_LIMIT = 32;
+type MineOpenCache = Map<string, { expiresAt: number; result: Promise<JiraIssue[]> }>;
+const mineOpenCaches = new WeakMap<typeof fetch, MineOpenCache>();
 
 const BUG_FIELDS: string = 'summary,priority,duedate,resolutiondate,created,customfield_14808';
 
@@ -84,6 +89,30 @@ export function fetchQueueIssues(jira: JiraConfig): Promise<JiraIssue[]> {
   return search(jira, buildQueueJql(jira));
 }
 
+export function fetchMineOpenIssues(jira: JiraConfig): Promise<JiraIssue[]> {
+  let cache = mineOpenCaches.get(fetch);
+  if (!cache) {
+    cache = new Map();
+    mineOpenCaches.set(fetch, cache);
+  }
+  const identity = createHash('sha256').update(JSON.stringify([jira.email, jira.apiToken])).digest('hex');
+  const key = JSON.stringify([jira.baseUrl, identity, jira.project, jira.assignee]);
+  const now = Date.now();
+  const cached = cache.get(key);
+  if (cached && cached.expiresAt > now) return cached.result;
+
+  for (const [cacheKey, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(cacheKey);
+  }
+  if (cache.size >= MINE_OPEN_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) cache.delete(oldestKey);
+  }
+  const result = search(jira, buildMineOpenJql(jira));
+  cache.set(key, { expiresAt: now + MINE_OPEN_CACHE_MS, result });
+  return result;
+}
+
 export async function fetchTriageGroups(
   jira: JiraConfig,
   statusBacklog: string,
@@ -92,7 +121,7 @@ export async function fetchTriageGroups(
   const results: PromiseSettledResult<JiraIssue[]>[] = await Promise.allSettled([
     search(jira, buildUnassignedBacklogJql(jira, statusBacklog)),
     search(jira, buildUnassignedTodoJql(jira, statusTodo)),
-    search(jira, buildMineOpenJql(jira)),
+    fetchMineOpenIssues(jira),
   ]);
   if (results.every((r) => r.status === 'rejected')) {
     throw (results[0] as PromiseRejectedResult).reason;

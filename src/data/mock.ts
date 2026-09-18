@@ -3,6 +3,8 @@ import type { ActivityEvent, DailyStats, OpenPr, ShippedPr, Ticket, WorkStep } f
 export interface DashboardSnapshot {
   repo: string;
   queue: Ticket[];
+  underway?: Ticket[];
+  underwayAvailable?: boolean;
   steps: WorkStep[];
   shipped: ShippedPr[];
   myOpenPrs: OpenPr[];
@@ -73,6 +75,8 @@ export async function loadDashboard(): Promise<DashboardSnapshot> {
   return {
     repo: REPO,
     queue: QUEUE,
+    underway: [],
+    underwayAvailable: false,
     steps: STEPS,
     shipped: SHIPPED,
     myOpenPrs: MY_OPEN_PRS,

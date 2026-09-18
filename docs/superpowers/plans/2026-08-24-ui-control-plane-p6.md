@@ -4,7 +4,7 @@
 
 **Goal:** Make the browser a full control surface: launch any Jira ticket or a free-form task, view every run's output (live + historical), and edit non-secret runtime config that persists and takes effect without a restart.
 
-**Architecture:** Three additions to the existing Vite UI + Node orchestrator. (A) A SQLite config-override layer read through a `ConfigStore` so config becomes dynamic. (B) A broadened launch path (any-ticket / free-form). (C) A run-history UI over the existing `/api/agents`. Builds on P0–P5. Spec: `docs/superpowers/specs/2026-08-24-ui-control-plane-design.md`.
+**Architecture:** Three additions to the existing Vite UI + Helmsman Node server. (A) A SQLite config-override layer read through a `ConfigStore` so config becomes dynamic. (B) A broadened launch path (any-ticket / free-form). (C) A run-history UI over the existing `/api/agents`. Builds on P0–P5. Spec: `docs/superpowers/specs/2026-08-24-ui-control-plane-design.md`.
 
 **Tech Stack:** TypeScript (strict), Vitest (jsdom for UI), Node built-ins, better-sqlite3. No new deps.
 
@@ -15,14 +15,14 @@
 - Prefer `const`; no free `let` closed over by a callback. `tsconfig` has `erasableSyntaxOnly` — **no constructor parameter properties** (`constructor(private readonly x)`); use an explicit field + assignment.
 - No new deps. Tests do no real network/spawn/git — inject fakes / stub `fetch`/`EventSource`; DB tests use `openDb(':memory:')`.
 - **Secrets never leave the server or become editable:** `JIRA_API_TOKEN`, `GITHUB_TOKEN`, `JIRA_EMAIL` are never returned by `/api/config` and never accepted by `PUT /api/config`.
-- Orchestrator stays bound to `127.0.0.1`. Escape untrusted strings before `innerHTML` (`esc()`).
+- Helmsman stays bound to `127.0.0.1`. Escape untrusted strings before `innerHTML` (`esc()`).
 - Conventional Commits; commit after each task.
 
 ---
 
 ### Task 1: Config-override store (SQLite + ConfigStore)
 
-**Files:** Modify `server/orchestrator/db.ts`; Create `server/orchestrator/config-store.ts` + `server/orchestrator/config-store.test.ts`.
+**Files:** Modify `server/helmsman/db.ts`; Create `server/helmsman/config-store.ts` + `server/helmsman/config-store.test.ts`.
 
 **Interfaces:**
 - `db.ts`: add table in `openDb`'s `exec`:
@@ -42,16 +42,16 @@
     - Fields assigned explicitly in the constructor body (no param properties).
 
 - [ ] **Step 1: Failing test** (`config-store.test.ts`, `openDb(':memory:')`): `current()` equals `loadConfig(env)` with no overrides; after `setOverride('AGENT_MAX_ATTEMPTS','3',()=>ts)`, `current().maxAttempts === 3` and `overrides()` has that key; `setOverride('JIRA_API_TOKEN',...)` throws; `setOverride('NOPE',...)` throws; `publicConfig(current())` has no `JIRA_API_TOKEN`/`GITHUB_TOKEN`/`JIRA_EMAIL` keys and includes `agentAdapter` + `maxAttempts`.
-- [ ] **Step 2: Run → FAIL** (`npx vitest run server/orchestrator/config-store.test.ts`).
+- [ ] **Step 2: Run → FAIL** (`npx vitest run server/helmsman/config-store.test.ts`).
 - [ ] **Step 3: Implement** the db methods + table and `config-store.ts`.
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit` + `npm test`.
-- [ ] **Step 5: Commit** `feat(orchestrator): SQLite config-override store layered over env`.
+- [ ] **Step 5: Commit** `feat(helmsman): SQLite config-override store layered over env`.
 
 ---
 
 ### Task 2: Config API endpoints (router)
 
-**Files:** Modify `server/orchestrator/router.ts` (+ `router.test.ts`).
+**Files:** Modify `server/helmsman/router.ts` (+ `router.test.ts`).
 
 **Interfaces:**
 - `RouterDeps` gains:
@@ -65,13 +65,13 @@
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** the two branches (place before the `/api/` 404 fallthrough). Extend `RouterDeps`.
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit` + `npm test`.
-- [ ] **Step 5: Commit** `feat(orchestrator): GET/PUT /api/config endpoints`.
+- [ ] **Step 5: Commit** `feat(helmsman): GET/PUT /api/config endpoints`.
 
 ---
 
 ### Task 3: Broadened launch backend (any-ticket, free-form, title fetch)
 
-**Files:** Modify `server/orchestrator/agents/adapter.ts` (AgentTask), `server/orchestrator/agents/claude-code.ts` (buildPrompt), `server/orchestrator/runner.ts` (+ `runner.test.ts`), `server/jira.ts` (+ used in launch), `server/orchestrator/router.ts` (+ `router.test.ts`), `server/orchestrator/agents/claude-code.test.ts` (if present, else assert buildPrompt via a small exported helper).
+**Files:** Modify `server/helmsman/agents/adapter.ts` (AgentTask), `server/helmsman/agents/claude-code.ts` (buildPrompt), `server/helmsman/runner.ts` (+ `runner.test.ts`), `server/jira.ts` (+ used in launch), `server/helmsman/router.ts` (+ `router.test.ts`), `server/helmsman/agents/claude-code.test.ts` (if present, else assert buildPrompt via a small exported helper).
 
 **Interfaces:**
 - `AgentTask` gains `task?: string` (a free-form instruction; when set, there is no Jira ticket to claim).
@@ -91,13 +91,13 @@
 - [ ] **Step 2: Run → FAIL.**
 - [ ] **Step 3: Implement** across the files. Extend `AgentTask`, the `buildPrompt` branch, the runner guards, `fetchIssueSummary`, the router launch branch + `RouterDeps.launch` type.
 - [ ] **Step 4: Run → PASS** + `npx tsc --noEmit` + `npm test`.
-- [ ] **Step 5: Commit** `feat(orchestrator): launch any ticket or a free-form task`.
+- [ ] **Step 5: Commit** `feat(helmsman): launch any ticket or a free-form task`.
 
 ---
 
 ### Task 4: main.ts — dynamic config + wire config/launch
 
-**Files:** Modify `server/orchestrator/main.ts`, `server/dashboard-endpoint.ts` (accept a merged env), `.env.example` (note UI-editable keys).
+**Files:** Modify `server/helmsman/main.ts`, `server/dashboard-endpoint.ts` (accept a merged env), `.env.example` (note UI-editable keys).
 
 **Interfaces / behavior:**
 - Construct `const configStore: ConfigStore = new ConfigStore(process.env, db);` (after `db`). Remove `const config = loadConfig(process.env)`.
@@ -110,7 +110,7 @@
 
 - [ ] **Step 1:** No new unit test (composition root). Make the edits.
 - [ ] **Step 2: Verify** — `npx tsc --noEmit` clean; `npm test` green (Task 1–3 tests still pass); `npm run build` succeeds. Manually confirm (read-through) no `config.` reads remain that bypass `configStore`.
-- [ ] **Step 3: Commit** `refactor(orchestrator): read config dynamically via ConfigStore; wire config + broadened launch`.
+- [ ] **Step 3: Commit** `refactor(helmsman): read config dynamically via ConfigStore; wire config + broadened launch`.
 
 ---
 

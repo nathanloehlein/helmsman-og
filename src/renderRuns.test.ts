@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+import type { RunSummary } from './data/agents';
+import { DEFAULT_THEME_ID } from './data/themes';
+import type { PrViewState } from './render';
+import { renderRunsView } from './renderRuns';
+
+const state: PrViewState = { repo: null, number: null, pr: null, diff: null, loading: false };
+const opts = { repos: ['org/alpha'], selectedRepo: null, themeId: DEFAULT_THEME_ID, runs: [] as RunSummary[] };
+
+function mount(html: string): HTMLElement {
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  return el;
+}
+
+function run(overrides: Partial<RunSummary> = {}): RunSummary {
+  return { id: 'run-1', ticketId: 'Review PR #42', repo: 'org/alpha', status: 'running', attempt: 1,
+    prNumber: 42, startedAt: '2026-09-17T15:00:00.000Z', costUsd: null, ...overrides };
+}
+
+describe('renderRunsView', () => {
+  it.each([
+    ['APPROVE', 'Approve', 'approved'],
+    ['REQUEST_CHANGES', 'Request changes', 'changes'],
+    ['COMMENT', 'Comment only', 'commented'],
+  ] as const)('shows the saved %s recommendation independently of voyage success', (reviewOutcome, label, tone) => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'succeeded', reviewOutcome })] }));
+    const icon = el.querySelector('.voyage-result');
+    expect(icon?.getAttribute('aria-label')).toBe(`Review recommendation: ${label}`);
+    expect(icon?.classList.contains(`voyage-result-${tone}`)).toBe(true);
+    expect(icon?.querySelector('svg')).not.toBeNull();
+    expect(icon?.getAttribute('title')).toContain('Published as a GitHub comment');
+    expect(el.querySelector('.recent-run .chip')?.textContent).toBe('Succeeded');
+  });
+
+  it.each(['running', 'queued', 'failed', 'stopped'])('does not show a final review recommendation on %s voyages', (status) => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status, reviewOutcome: 'APPROVE' })] }));
+    expect(el.querySelector('.voyage-result-approved')).toBeNull();
+    if (status === 'failed' || status === 'stopped') {
+      expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`Voyage ${status}`);
+    } else expect(el.querySelector('.voyage-result')).toBeNull();
+  });
+
+  it.each([undefined, 'constructor', '<img src=x onerror=alert(1)>'])('does not invent a review result when the saved outcome is %j', (reviewOutcome) => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'succeeded', reviewOutcome } as Partial<RunSummary>)] }));
+    expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('No review recommendation recorded');
+    expect(el.querySelector('.voyage-result-approved, img')).toBeNull();
+  });
+
+  it('escapes saved verdict text in tooltips', () => {
+    const reviewVerdict = '\"><img src=x onerror=alert(1)>';
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'succeeded', reviewOutcome: 'COMMENT', reviewVerdict })] }));
+    expect(el.querySelector('.voyage-result')?.getAttribute('title')).toContain(reviewVerdict);
+    expect(el.querySelector('img')).toBeNull();
+  });
+
+  it('offers a PR lookup and linkable panes without launch controls before loading a PR', () => {
+    const el = mount(renderRunsView(state, opts));
+    expect(el.querySelector('[data-page="runs"]')).not.toBeNull();
+    expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('runs');
+    expect(el.querySelector('.pr-lookup-input')).not.toBeNull();
+    expect(el.querySelector('[data-pane="newrun"] .app-link')?.getAttribute('href')).toBe('/runs?pane=newrun');
+    expect(el.querySelector('[data-pane="recent"] .app-link')?.getAttribute('href')).toBe('/runs?pane=recent');
+    expect(el.querySelector('.runs-drawer-slot')?.getAttribute('data-pane')).toBe('tasks');
+    expect(el.querySelector('.pr-review-agent')).toBeNull();
+  });
+
+  it('preloads PR actions and includes the PR in its shareable pane URL', () => {
+    const pr = { repo: 'org/alpha', number: 42, state: 'open', draft: false, merged: false,
+      isOwnPr: true, headRefName: 'feature', reviewDecision: 'REVIEW_REQUIRED', comments: 0,
+      checks: { passed: 0, pending: 0, failed: 0 }, url: 'https://github.com/org/alpha/pull/42' };
+    const el = mount(renderRunsView({ ...state, repo: pr.repo, number: pr.number, pr }, opts));
+    expect(el.querySelector<HTMLInputElement>('.pr-lookup-input')?.value).toBe('org/alpha#42');
+    expect(el.querySelector('.pr-review-agent')).not.toBeNull();
+    expect(el.querySelector('.pr-rerun')).not.toBeNull();
+    const link = el.querySelector('[data-pane="newrun"] .app-link')?.getAttribute('href');
+    const params = new URL(link ?? '', 'https://helmsman.test').searchParams;
+    expect(params.get('repo')).toBe('org/alpha');
+    expect(params.get('pr')).toBe('42');
+  });
+
+  it('lists active and finished voyages newest first with direct links', () => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [
+      run({ id: 'finished', status: 'succeeded' }),
+      run({ id: 'active', startedAt: '2026-09-17T16:00:00.000Z' }),
+    ] }));
+    const rows = [...el.querySelectorAll('.recent-run')];
+    expect(rows.map((row) => row.getAttribute('data-runid'))).toEqual(['active', 'finished']);
+    expect(rows[0]?.textContent).toContain('Underway');
+    expect(rows[1]?.textContent).toContain('Succeeded');
+    expect(rows[0]?.querySelector('a')?.getAttribute('href')).toBe('/runs?run=active');
+  });
+
+  it('scopes voyages to the chosen repo while tolerating malformed rows and dates', () => {
+    const el = mount(renderRunsView(state, { ...opts, selectedRepo: 'org/alpha', runs: [
+      null as unknown as RunSummary, run({ startedAt: 'invalid' }), run({ id: 'other', repo: 'org/beta' }),
+    ] }));
+    expect(el.querySelectorAll('.recent-run')).toHaveLength(1);
+    expect(el.querySelector('time')).toBeNull();
+    expect(el.querySelector('[data-pane="recent"] .app-link')?.getAttribute('href')).toBe('/runs?pane=recent&repo=org%2Falpha');
+  });
+
+  it('escapes text and encodes run identifiers in links', () => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({
+      id: 'a&pane=newrun', ticketId: '<img src=x onerror=alert(1)>', status: '<script>alert(1)</script>',
+    })] }));
+    expect(el.querySelector('img, script')).toBeNull();
+    expect(el.querySelector('.recent-run a')?.getAttribute('href')).toBe('/runs?run=a%26pane%3Dnewrun');
+    expect(el.textContent).toContain('<script>alert(1)</script>');
+  });
+});

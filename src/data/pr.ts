@@ -10,6 +10,14 @@ export interface ReviewTallyView {
 export interface PrStatusView {
   number: number;
   repo: string;
+  title?: string;
+  authorLogin?: string | null;
+  isOwnPr?: boolean;
+  viewerReview?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | null;
+  viewerReviewedAt?: string;
+  viewerReviewedCommitId?: string;
+  updatedAt?: string;
+  headSha?: string;
   state: string;
   draft: boolean;
   merged: boolean;
@@ -18,6 +26,7 @@ export interface PrStatusView {
   comments: number;
   checks: { passed: number; failed: number; pending: number };
   reviews?: ReviewTallyView;
+  reviewsAvailable?: boolean;
   url: string;
 }
 

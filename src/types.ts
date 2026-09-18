@@ -1,4 +1,4 @@
-export type Priority = 'P1' | 'P2' | 'P3';
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
 
 export type TicketStatus = 'backlog' | 'in-progress' | 'in-review' | 'done';
 
@@ -8,6 +8,7 @@ export interface Ticket {
   priority: Priority;
   status: TicketStatus;
   repo: string;
+  updatedAt?: string;
 }
 
 export type StepState = 'done' | 'active';

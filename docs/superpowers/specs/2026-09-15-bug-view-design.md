@@ -5,7 +5,7 @@ Status: approved (direction), pending spec review
 
 ## Problem / motivation
 
-GoMaestro already surfaces backlog/triage tickets and PRs, but has no
+Helmsman already surfaces backlog/triage tickets and PRs, but has no
 operational read on **bug health per project**. The reference is GoDaddy's
 "Airo Opsignal → Bug View": a per-squad card showing open-bug counts, SLA
 breaches, aging, and a resolution-time percentile, plus a table of open bugs
@@ -14,8 +14,7 @@ tab driven by our own Jira (AIROBUILD and any other mapped project).
 
 ## Data semantics (grounded in our Jira, not assumed)
 
-Confirmed by querying a live AIROBUILD Bug (`AIROBUILD-6434`) with the
-orchestrator's Jira creds:
+Confirmed by querying a live AIROBUILD Bug (`AIROBUILD-6434`) with Helmsman's Jira creds:
 
 - **Issue type**: `Bug`.
 - **Priority**: `priority.name` → e.g. `"P2 - Medium"`.
@@ -70,7 +69,7 @@ Severity read helper tolerates the field being absent/null.
 - Assemble each `BugCard` via the pure metrics module.
 - Jira absent → `{ cards: [], degraded: true }`.
 
-`server/orchestrator/main.ts`: add `GET /api/bugs?repo=` wired to
+`server/helmsman/main.ts`: add `GET /api/bugs?repo=` wired to
 `buildBugsResponse(configStore.effectiveEnv(), new Date(), undefined, repo)`,
 plus a `bugs` dep in the router (mirrors `triage`).
 

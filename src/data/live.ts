@@ -8,7 +8,8 @@ export interface DashboardResponse {
   jiraBaseUrl: string | null;
 }
 
-export const POLL_MS: number = 30_000;
+export const POLL_MS: number = 5 * 60_000;
+export const LOCAL_POLL_MS: number = 30_000;
 
 export async function loadDashboard(repo: string | null = null): Promise<DashboardResponse> {
   const query: string = repo ? `?repo=${encodeURIComponent(repo)}` : '';

@@ -7,7 +7,7 @@ export interface Theme {
   vars: Record<string, string>;
 }
 
-export const DEFAULT_THEME_ID = 'amber';
+export const DEFAULT_THEME_ID = 'quarterdeck';
 
 const STORAGE_KEY = 'cmux.theme';
 
@@ -98,6 +98,48 @@ function deriveVars(anchors: ThemeAnchors): Record<string, string> {
 
 const THEME_ANCHORS: ThemeAnchors[] = [
   {
+    id: 'quarterdeck', label: 'Quarterdeck', mode: 'dark',
+    bg: '#081721', gutter: '#061019', panel: '#102938', panel2: '#2d241e', panelHi: '#3b2e24',
+    accent: '#dfb778', text: '#f3ecdc', textDim: '#c9c6b6', textFaint: '#b7b6a5',
+    bad: '#f59986', good: '#92cdb2', review: '#8ecae6', queued: '#e6c785',
+  },
+  {
+    id: 'abyss', label: 'Abyss', mode: 'dark',
+    bg: '#06131f', gutter: '#030d17', panel: '#0b1c2b', panel2: '#102738', panelHi: '#183449',
+    accent: '#55d8ee', text: '#e5f5fc', textDim: '#b1cedd', textFaint: '#8fabbc',
+    bad: '#ff8c9b', good: '#76ddb0', review: '#80bfff', queued: '#e4c582',
+  },
+  {
+    id: 'forest', label: 'Forest', mode: 'dark',
+    bg: '#0c1712', gutter: '#07100c', panel: '#12231b', panel2: '#1b2f24', panelHi: '#263c2e',
+    accent: '#9fdda2', text: '#e9f3df', textDim: '#c0d2b5', textFaint: '#a3b79a',
+    bad: '#f59b8e', good: '#a6e7b2', review: '#95cedd', queued: '#e2ca87',
+  },
+  {
+    id: 'ember', label: 'Ember', mode: 'dark',
+    bg: '#1c100d', gutter: '#130a08', panel: '#281813', panel2: '#36221a', panelHi: '#442d23',
+    accent: '#ff9a70', text: '#fff0df', textDim: '#ddbfaa', textFaint: '#c2a28e',
+    bad: '#ff96a4', good: '#b6d68b', review: '#90cddb', queued: '#f2ca7d',
+  },
+  {
+    id: 'aubergine', label: 'Aubergine', mode: 'dark',
+    bg: '#1b0e1b', gutter: '#120912', panel: '#281627', panel2: '#362035', panelHi: '#452b43',
+    accent: '#f1a3cb', text: '#fbeaf6', textDim: '#d9b8d1', textFaint: '#be9db7',
+    bad: '#ff9b93', good: '#a7d9b4', review: '#adc9fc', queued: '#e7cf94',
+  },
+  {
+    id: 'graphite', label: 'Graphite', mode: 'dark',
+    bg: '#101010', gutter: '#080808', panel: '#1a1a1a', panel2: '#252525', panelHi: '#333333',
+    accent: '#dedede', text: '#f5f5f5', textDim: '#c8c8c8', textFaint: '#a6a6a6',
+    bad: '#ff9696', good: '#a4d5ad', review: '#a9c9f5', queued: '#e5c691',
+  },
+  {
+    id: 'phosphor', label: 'Phosphor', mode: 'dark',
+    bg: '#030a04', gutter: '#010502', panel: '#09140b', panel2: '#102014', panelHi: '#19301d',
+    accent: '#8cfb69', text: '#d8ffd0', textDim: '#add89d', textFaint: '#8fb782',
+    bad: '#ff9980', good: '#a8f887', review: '#87dfd2', queued: '#dbe885',
+  },
+  {
     id: 'dracula', label: 'Dracula', mode: 'dark',
     bg: '#282a36', gutter: '#21222c', panel: '#282a36', panel2: '#343746', panelHi: '#424450',
     accent: '#bd93f9', text: '#f8f8f2', textDim: '#b8b8c0', textFaint: '#6272a4',
@@ -160,13 +202,13 @@ const THEME_ANCHORS: ThemeAnchors[] = [
 ];
 
 export const THEMES: Theme[] = [
-  { id: 'amber', label: 'Amber', mode: 'dark', vars: {} },
   ...THEME_ANCHORS.map((anchors): Theme => ({
     id: anchors.id,
     label: anchors.label,
     mode: anchors.mode,
     vars: deriveVars(anchors),
   })),
+  { id: 'amber', label: 'Amber', mode: 'dark', vars: {} },
 ];
 
 export function getTheme(id: string): Theme | undefined {
@@ -178,9 +220,9 @@ export function applyTheme(id: string): void {
   const root: HTMLElement = document.documentElement;
   const theme: Theme = getTheme(id) ?? getTheme(DEFAULT_THEME_ID)!;
 
-  if (theme.id === DEFAULT_THEME_ID) {
+  if (theme.id === 'amber') {
     for (const key of REQUIRED_VAR_KEYS) root.style.removeProperty(key);
-    root.dataset.theme = DEFAULT_THEME_ID;
+    root.dataset.theme = theme.id;
     root.style.colorScheme = 'dark';
     return;
   }

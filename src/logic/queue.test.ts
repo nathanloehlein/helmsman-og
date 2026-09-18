@@ -7,6 +7,11 @@ function ticket(id: string, priority: Ticket['priority']): Ticket {
 }
 
 describe('sortByPriority', () => {
+  it('preserves the full priority range with P0 first and P4 last', () => {
+    const input = [ticket('a', 'P4'), ticket('b', 'P2'), ticket('c', 'P0'), ticket('d', 'P3'), ticket('e', 'P1')];
+    expect(sortByPriority(input).map((t) => t.id)).toEqual(['c', 'e', 'b', 'd', 'a']);
+  });
+
   it('orders P1 before P2 before P3', () => {
     const input = [ticket('a', 'P3'), ticket('b', 'P1'), ticket('c', 'P2')];
     expect(sortByPriority(input).map((t) => t.id)).toEqual(['b', 'c', 'a']);

@@ -5,7 +5,7 @@ Status: approved (direction), pending spec review
 
 ## Problem / motivation
 
-GoMaestro launches coding agents through an `AgentAdapter`. Today there are
+Helmsman launches coding agents through an `AgentAdapter`. Today there are
 two impls — `claude-code` (default, spawns the `claude` CLI) and `command`
 (generic template). We want **Codex** (OpenAI `codex` CLI, v0.154.0, present
 on this machine) to be the **default** agent, running model **astra** at
@@ -39,15 +39,15 @@ on this machine) to be the **default** agent, running model **astra** at
 
 ### Shared prompt
 
-`buildPrompt` currently lives in `server/orchestrator/agents/claude-code.ts`
+`buildPrompt` currently lives in `server/helmsman/agents/claude-code.ts`
 and is adapter-agnostic prose (includes the merged "review the whole change
 path" rule). Extract it verbatim to
-`server/orchestrator/agents/prompt.ts` and export it. `claude-code.ts` imports
+`server/helmsman/agents/prompt.ts` and export it. `claude-code.ts` imports
 it (drops its local copy); `codex.ts` imports it. Update the one test that
 imports `buildPrompt` to import from `./prompt` (or keep a re-export from
 `claude-code.ts` — implementer's call, but no behavior change).
 
-### `server/orchestrator/agents/codex.ts` (new)
+### `server/helmsman/agents/codex.ts` (new)
 
 Mirror the `command` adapter's spawn/parse structure.
 
@@ -107,7 +107,7 @@ const agentAdapter = raw === 'command' ? 'command' : raw === 'claude-code' ? 'cl
 default is `'claude-code'` — flip it to `'codex'`, and assert `AGENT_ADAPTER=claude-code`
 still yields claude-code).
 
-### `server/orchestrator/main.ts`
+### `server/helmsman/main.ts`
 
 ```
 const adapter: AgentAdapter =

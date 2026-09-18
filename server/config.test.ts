@@ -46,9 +46,9 @@ describe('loadConfig', () => {
     expect(cfg.repoLabel).toBe('@bot');
   });
 
-  it('falls back to gomaestro label when github is absent entirely', () => {
+  it('falls back to Helmsman label when github is absent entirely', () => {
     const { GITHUB_TOKEN, GITHUB_REPO, GITHUB_PR_AUTHOR, ...rest } = FULL;
-    expect(loadConfig(rest).repoLabel).toBe('gomaestro');
+    expect(loadConfig(rest).repoLabel).toBe('Helmsman');
   });
 
   it('parses REPO_PROJECT_MAP into a repo→project record (trimming spaces)', () => {

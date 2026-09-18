@@ -1,18 +1,28 @@
+import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
+import { getContext } from './data/context';
+import { emptyLocalGit, fetchLocalGit, updateLocalGit, type LocalGitAction, type LocalGitState } from './data/localGit';
+import { renderLocalGit } from './renderLocalGit';
+import { fetchSlack, markSlackNotificationRead, unavailableSlack, type SlackState } from './data/slack';
+import { renderSlack } from './renderSlack';
 import './style.css';
-import { loadDashboard, POLL_MS, type DashboardResponse } from './data/live';
-import { renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView, renderConfigView, renderPrView } from './render';
+import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
+import { renderRunsView } from './renderRuns';
+import { loadDashboard, POLL_MS, LOCAL_POLL_MS, type DashboardResponse } from './data/live';
+import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
 import type { RunTabView, PrViewState } from './render';
 import type { DashboardSnapshot } from './data/mock';
 import { fetchTriage, type TriageGroupsView } from './data/triage';
+import { filterTriageTickets, TRIAGE_PRIORITIES, TRIAGE_DATE_OPTIONS, type TriageFilters } from './logic/triageFilters';
+import { paginateTriageTickets, TRIAGE_PAGE_SIZES, type TriagePageSize, type TriagePages } from './logic/triagePagination';
 import { fetchBugs } from './data/bugs';
 import type { BugsResponse } from './types';
+import { fetchReviewRequests, fetchRepoOpenPrs, type PrListState, type PrInboxState } from './data/prLists';
 import {
   launchAgent,
   launchRun,
   openRunStream,
   getRun,
   fetchAgents,
-  setAutoClaim,
   stopAgent,
   type AgentCaps,
   type LaunchResult,
@@ -33,6 +43,10 @@ import {
   saveRackLayoutRaw,
   loadCollapsed,
   saveCollapsed,
+  loadTriageFilters,
+  saveTriageFilters,
+  loadTriagePageSize,
+  saveTriagePageSize,
 } from './logic/prefs';
 import {
   deserialize as deserializeRack,
@@ -45,7 +59,9 @@ import {
   type RackLayout,
 } from './logic/rack';
 
-const CMUX_SCREEN_POLL_MS: number = 750;
+const RUN_LOG_BATCH_MS = 32;
+
+const CMUX_SCREEN_POLL_MS: number = 2_000;
 const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
 
 interface CmuxTabsPayload {
@@ -70,6 +86,10 @@ interface RunTab {
   pr: { repo: string; number: number } | null;
   unsub: (() => void) | null;
   complete: boolean;
+  prStatus?: PrStatusView | null;
+  prLoadedAt?: number;
+  prVersion?: number;
+  prPending?: Promise<void>;
 }
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
@@ -82,14 +102,21 @@ function deriveTicketStatus(summary: RunStatusSummary): string {
 
 export class DashboardView {
   private readonly root: HTMLElement;
+  private readonly rootEvents = new window.AbortController();
   private readonly runDrawerEl: HTMLElement;
   private runTabs: RunTab[] = [];
   private activeTabId: string | null = null;
   private tabSeq: number = 0;
   private stickToBottom: boolean = true;
+  private runLogTimer: ReturnType<typeof setTimeout> | null = null;
+  private renderedRunLines: RunEvent[] = [];
+  private destroyed = false;
   private snapshot: DashboardSnapshot | null = null;
+  private snapshotRepo: string | null | undefined = undefined;
+  private contentView: PageView | null = null;
   private degraded: string[] = [];
   private repos: string[] = [];
+  private hasContext: boolean = false;
   private selectedRepo: string | null = loadRepoScope();
   private runs: RunSummary[] = [];
   private autoClaimRepos: string[] = [];
@@ -98,28 +125,140 @@ export class DashboardView {
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
-  private view: 'dashboard' | 'cmux' | 'triage' | 'bugs' | 'prs' | 'config' = 'dashboard';
+  private refreshSeq: number = 0;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshPending: { repo: string | null; view: PageView; promise: Promise<void> } | null = null;
+  private lastLocalRefresh: number = -Infinity;
+  private lastDashboardRefresh: number = -Infinity;
+  private dashboardRepo: string | null | undefined = undefined;
+  private lastReviewRequestsRefresh: number = -Infinity;
+  private lastRepoPrsRefresh: number = -Infinity;
+  private repoPrsRepo: string | null | undefined = undefined;
+  private readonly onVisibilityChange = (): void => {
+    this.syncCmuxPolling();
+    if (document.hidden) this.cancelRunLogFlush();
+    else this.scheduleRunLogFlush();
+    if (!document.hidden) {
+      void this.refresh(false);
+      if (this.view === 'cmux') void this.handleCmuxTabsChanged();
+    }
+  };
+  private repoPrsSeq: number = 0;
+  private reviewRequestsSeq: number = 0;
+  private reviewRequestsPending: Promise<void> | null = null;
+  private repoPrsPending: { repo: string | null; seq: number; promise: Promise<void> } | null = null;
+  private prViewSeq: number = 0;
+  private dashboardUnavailable: boolean = false;
+  private repoPrs: PrListState = { prs: [], loading: false, degraded: false, truncated: false };
+  private reviewRequests: PrListState = { prs: [], loading: true, degraded: false, truncated: false };
+  private view: PageView = 'dashboard';
+  private route: AppRoute = parseRoute(new URL('/helm', window.location.origin));
+  private routeSeq: number = 0;
+  private triageSeq: number = 0;
+  private bugsSeq: number = 0;
+  private localGit: LocalGitState = emptyLocalGit(null);
+  private localGitSeq: number = 0;
+  private localGitPending: { repo: string; promise: Promise<void> } | null = null;
+  private localGitOperations = new Map<string, Promise<void>>();
+  private readonly onResize = (): void => { this.revealActiveTab(); };
+  private readonly onPopState = (): void => { void this.navigate(parseRoute(new URL(window.location.href)), 'none'); };
   private prView: PrViewState = { repo: null, number: null, pr: null, diff: null, loading: false };
   private triageGroups: TriageGroupsView = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
   private triageDegraded: boolean = false;
+  private triageFilters: TriageFilters = loadTriageFilters();
+  private triagePageSize: TriagePageSize = loadTriagePageSize();
+  private triagePages: TriagePages = { backlog: 1, todo: 1, mine: 1 };
   private bugsResponse: BugsResponse | null = null;
   private cmuxConnected: boolean = false;
   private cmuxTabs: CmuxTabView[] = [];
   private cmuxPanelState: PanelState = { selectedSurface: null };
   private cmuxScreen: string = '';
   private cmuxScreenTimer: ReturnType<typeof setInterval> | null = null;
+  private cmuxScreenPending: boolean = false;
   private cmuxEventSource: EventSource | null = null;
   private cmuxCapturing: boolean = false;
   private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
   private themeId: string = loadThemeId();
   private jiraBaseUrl: string | null = null;
+  private slack: SlackState = unavailableSlack();
+  private slackOpen: boolean = false;
+  private slackError: string | null = null;
+  private slackSeq: number = 0;
+  private slackReads = new Set<string>();
 
   constructor(root: HTMLElement) {
     this.root = root;
     applyTheme(this.themeId);
-    this.root.addEventListener('click', (event: MouseEvent): void => this.handleClick(event));
-    this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event));
-    this.root.addEventListener('paste', (event: ClipboardEvent): void => void this.handlePasteImage(event));
+    this.root.addEventListener('click', (event: MouseEvent): void => this.handleClick(event), { signal: this.rootEvents.signal });
+    this.root.addEventListener('keydown', (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && this.slackOpen) {
+        this.slackOpen = false;
+        this.paintSlack();
+        this.root.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus();
+        return;
+      }
+      const tab = event.target;
+      if (tab instanceof HTMLAnchorElement && tab.matches('.page-tab')) {
+        const tabs = Array.from(this.root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
+        const index = tabs.indexOf(tab);
+        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+          : event.key === 'ArrowLeft' ? (index - 1 + tabs.length) % tabs.length
+          : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+        if (next !== null) {
+          event.preventDefault();
+          tabs.forEach((item, i) => { item.tabIndex = i === next ? 0 : -1; });
+          tabs[next]?.focus();
+        } else if (event.key === ' ') {
+          event.preventDefault();
+          tab.click();
+        }
+        return;
+      }
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.matches('.pr-list-row')) return;
+      event.preventDefault();
+      this.handlePrListClick(target);
+    }, { signal: this.rootEvents.signal });
+    this.root.addEventListener('change', (event: Event): void => {
+      const control = event.target;
+      if (this.view === 'triage' && control instanceof HTMLInputElement && control.matches('[data-triage-priority]')) {
+        const priority = TRIAGE_PRIORITIES.find(priority => priority === control.dataset.triagePriority);
+        if (!priority) return;
+        this.triageFilters.priorities = TRIAGE_PRIORITIES.filter(value => value === priority ? control.checked : this.triageFilters.priorities.includes(value));
+        saveTriageFilters(this.triageFilters);
+        this.triagePages = { backlog: 1, todo: 1, mine: 1 };
+        this.paintTriage();
+        this.root.querySelector<HTMLInputElement>(`[data-triage-priority="${priority}"]`)?.focus({ preventScroll: true });
+        return;
+      }
+      if (!(control instanceof HTMLSelectElement)) return;
+      if (this.view === 'triage' && control.matches('[data-triage-days]')) {
+        const days = TRIAGE_DATE_OPTIONS.find(days => String(days) === control.value);
+        if (days === undefined) return;
+        this.triageFilters.days = days;
+        saveTriageFilters(this.triageFilters);
+        this.triagePages = { backlog: 1, todo: 1, mine: 1 };
+        this.paintTriage();
+        this.root.querySelector<HTMLSelectElement>('[data-triage-days]')?.focus({ preventScroll: true });
+      } else if (this.view === 'triage' && control.matches('[data-triage-page-size]')) {
+        const size = TRIAGE_PAGE_SIZES.find(size => String(size) === control.value);
+        if (size === undefined) return;
+        this.triagePageSize = size;
+        saveTriagePageSize(size);
+        this.triagePages = { backlog: 1, todo: 1, mine: 1 };
+        this.paintTriage();
+        this.root.querySelector<HTMLSelectElement>('[data-triage-page-size]')?.focus({ preventScroll: true });
+      } else if (control.matches('.repo-select')) {
+        void this.navigate({ ...this.route, view: this.view, repo: control.value || null, pr: null, run: null });
+      } else if (control.matches('.theme-select')) {
+        this.themeId = control.value;
+        applyTheme(this.themeId);
+        saveThemeId(this.themeId);
+      }
+    }, { capture: true, signal: this.rootEvents.signal });
+    this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event), { signal: this.rootEvents.signal });
+    this.root.addEventListener('paste', (event: ClipboardEvent): void => void this.handlePasteImage(event), { signal: this.rootEvents.signal });
 
     const drawer: HTMLDivElement = document.createElement('div');
     drawer.className = 'run-drawer';
@@ -127,24 +266,376 @@ export class DashboardView {
     this.renderRunDrawer();
   }
 
-  async refresh(): Promise<void> {
-    const response: DashboardResponse | null = await loadDashboard(this.selectedRepo).catch(() => null);
+  async start(): Promise<void> {
+    window.addEventListener('popstate', this.onPopState);
+    window.addEventListener('resize', this.onResize);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    const route = parseRoute(new URL(window.location.href));
+    this.selectedRepo = route.repo;
+    this.view = route.view;
+    if (route.view !== 'dashboard' && route.view !== 'prs') {
+      const context = await getContext();
+      if (context) {
+        this.repos = context.repos;
+        this.jiraBaseUrl = context.jiraBaseUrl;
+        this.hasContext = true;
+      }
+    }
+    await this.refresh();
+    await this.navigate(route, 'replace');
+    this.refreshTimer = setInterval(() => void this.refresh(false), LOCAL_POLL_MS);
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.cancelRunLogFlush();
+    this.rootEvents.abort();
+    window.removeEventListener('resize', this.onResize);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    if (this.refreshTimer !== null) clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
+    ++this.routeSeq;
+    ++this.refreshSeq;
+    ++this.prViewSeq;
+    ++this.localGitSeq;
+    ++this.slackSeq;
+    window.removeEventListener('popstate', this.onPopState);
+    this.stopCmuxScreenPoll();
+    this.stopCapture();
+    this.cmuxEventSource?.close();
+    this.runTabs.forEach(tab => tab.unsub?.());
+  }
+
+  private updateAddress(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): void {
+    const href = routeHref(route);
+    this.route = parseRoute(new URL(href, window.location.origin));
+    if (history === 'replace') window.history.replaceState(null, '', href);
+    else if (history === 'push' && href !== window.location.pathname + window.location.search) window.history.pushState(null, '', href);
+    document.title = `${route.view === 'dashboard' ? 'Helm' : route.view === 'prs' ? 'PR' : route.view === 'cmux' ? 'cmux' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
+  }
+
+  private async navigate(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): Promise<void> {
+    const seq = ++this.routeSeq;
+    ++this.prViewSeq;
+    this.stopCmuxScreenPoll();
+    this.stopCapture();
+    this.cmuxCapturing = false;
+    const scope = route.repo && (route.view !== 'prs' && route.view !== 'runs' || this.repos.includes(route.repo)) ? route.repo : null;
+    const scopeChanged = this.selectedRepo !== scope;
+    if (scopeChanged) {
+      this.triagePages = { backlog: 1, todo: 1, mine: 1 };
+      ++this.repoPrsSeq;
+      ++this.localGitSeq;
+      this.localGitPending = null;
+      this.localGit = emptyLocalGit(scope);
+    }
+    this.selectedRepo = scope;
+    saveRepoScope(scope);
+    this.view = route.view;
+    if (route.view === 'cmux') {
+      this.cmuxPanelState = { selectedSurface: null };
+      this.cmuxScreen = '';
+    }
+    this.updateAddress(route, history);
+    if (route.pane && this.view === 'dashboard') {
+      this.rackLayout = setActivePanel(this.rackLayout, route.pane as PanelId);
+      this.rackLayout = this.rackLayout.map(col => col.map(slot => slot.active === route.pane ? { ...slot, collapsed: false } : slot));
+    }
+    if (route.pane) this.collapsed.delete(`${route.view}:${route.pane === 'tabs' ? 'list' : route.pane === 'screen' ? 'detail' : route.pane}`);
+    if (route.run || route.pane === 'tasks') this.collapsed.delete('runs:drawer');
+    if (route.view === 'prs' || route.view === 'runs') {
+      this.prView = { repo: route.pr ? route.repo : null, number: route.pr, pr: null, diff: null, loading: Boolean(route.pr) };
+    }
+    if (!route.run) this.activeTabId = null;
+    this.paint();
+    if (scopeChanged || route.view === 'dashboard' || route.view === 'prs') await this.refresh(false);
+    if (seq !== this.routeSeq) return;
+    if (route.view === 'triage') await this.loadTriage();
+    else if (route.view === 'bugs') await this.loadBugs();
+    else if (route.view === 'config') {
+      const config = await getConfig();
+      if (seq !== this.routeSeq) return;
+      this.uiConfig = config;
+      this.paint();
+      void this.loadLocalGit();
+    }
+    else if (route.view === 'cmux') {
+      await this.loadCmuxTabs();
+      if (seq !== this.routeSeq) return;
+      this.cmuxPanelState = { selectedSurface: this.cmuxTabs.some(tab => tab?.surfaceRef === route.surface) ? route.surface : null };
+      this.ensureCmuxEvents();
+      await this.pollCmuxScreen();
+      this.syncCmuxPolling();
+    } else if (route.view === 'prs') await this.loadReviewRequests(false);
+    else if (route.view === 'dashboard') await this.loadRepoPrs(false);
+    if (seq !== this.routeSeq) return;
+    if ((route.view === 'prs' || route.view === 'runs') && route.repo && route.pr) await this.loadPrView(route.repo, route.pr, false);
+    if (seq !== this.routeSeq) return;
+    if (route.view !== 'dashboard' && route.view !== 'prs' && route.view !== 'runs' && route.view !== 'config') this.paint();
+    if (route.run) {
+      const summary = this.runs.find(run => run?.id === route.run) ?? await getRun(route.run);
+      if (seq !== this.routeSeq) return;
+      if (summary) {
+        this.openRunTab(route.run, summary.ticketId || (summary.prNumber ? `PR #${summary.prNumber}` : route.run), false);
+        const tab = this.runTabs.find(item => item.runId === route.run);
+        if (tab) {
+          tab.footer = summary;
+          if (summary.prNumber) tab.pr = { repo: summary.repo, number: summary.prNumber };
+        }
+      } else this.openErrorTab('Voyage unavailable', 'This voyage was not found or the server is unavailable.');
+    }
+    this.renderRunDrawer();
+    this.rehomeRunDrawer();
+    this.focusRoute();
+  }
+
+  private focusRoute(): void {
+    const pane = this.route.pane;
+    const target = pane ? this.root.querySelector<HTMLElement>(`[data-pane="${pane}"]`) : null;
+    target?.scrollIntoView?.({ block: 'start' });
+    if (this.route.mode) this.root.querySelector<HTMLElement>(this.route.mode === 'review' ? '.pr-review-agent' : '.pr-rerun-feedback')?.focus({ preventScroll: true });
+    const ticket = this.root.querySelector<HTMLInputElement>('.newrun-ticket');
+    if (ticket && this.route.ticket) ticket.value = this.route.ticket;
+    const repo = this.root.querySelector<HTMLSelectElement>('.newrun-repo');
+    if (repo && this.route.repo) repo.value = this.route.repo;
+  }
+
+  private bindPaneLinks(): void {
+    const selectors: Record<string, string> = this.view === 'dashboard'
+      ? Object.fromEntries(['newrun', 'backlog', 'underway', 'running', 'recent', 'repoprs', 'shipped', 'activity'].map(id => [id, `.faceplate[data-panel="${id}"]`]))
+      : this.view === 'prs' ? { 'review-requests': '.pr-review-requests', authored: '.pr-authored', lookup: '.pr-lookup-panel', diff: '.pr-diff-panel' }
+      : this.view === 'triage' ? { backlog: '[data-collapse-id="triage:backlog"]', todo: '[data-collapse-id="triage:todo"]', mine: '[data-collapse-id="triage:mine"]' }
+      : this.view === 'cmux' ? { tabs: '[data-collapse-id="cmux:list"]', screen: '[data-collapse-id="cmux:detail"]' } : {};
+    for (const [pane, selector] of Object.entries(selectors)) {
+      const found = this.root.querySelector<HTMLElement>(selector);
+      const panel = found?.closest<HTMLElement>('.panel, .faceplate');
+      if (!panel) continue;
+      panel.dataset.pane = pane;
+      const head = panel.querySelector('.panel-head, .faceplate-head');
+      if (!head || head.querySelector('.pane-link')) continue;
+      const link = document.createElement('a');
+      link.className = 'pane-link app-link';
+      link.href = routeHref({ ...this.route, view: this.view, pane, repo: this.route.repo ?? this.selectedRepo });
+      link.textContent = '↗';
+      link.setAttribute('aria-label', `Link to ${panel.querySelector('.panel-title, .faceplate-title')?.textContent ?? pane}`);
+      head.append(link);
+    }
+  }
+
+  refresh(force: boolean = true): Promise<void> {
+    if (!force && document.hidden) return Promise.resolve();
+    if (this.refreshPending?.repo === this.selectedRepo) {
+      const pending = this.refreshPending;
+      if ((this.view === 'dashboard' || this.view === 'prs') && pending.view !== 'dashboard' && pending.view !== 'prs') {
+        return pending.promise.then(() => this.refresh(force));
+      }
+      return pending.promise;
+    }
+    const repo = this.selectedRepo;
+    const promise = this.performRefresh(force).finally(() => {
+      if (this.refreshPending?.promise === promise) this.refreshPending = null;
+    });
+    this.refreshPending = { repo, view: this.view, promise };
+    return promise;
+  }
+
+  private async performRefresh(force: boolean): Promise<void> {
+    const now = Date.now();
+    const localDue = force || now - this.lastLocalRefresh >= LOCAL_POLL_MS;
+    const dashboardDue = (!this.hasContext && this.dashboardRepo === undefined) || ((this.view === 'dashboard' || this.view === 'prs')
+      && (force || this.dashboardRepo !== this.selectedRepo || now - this.lastDashboardRefresh >= POLL_MS));
+    if (localDue) this.lastLocalRefresh = now;
+    if (dashboardDue) {
+      this.lastDashboardRefresh = now;
+      this.dashboardRepo = this.selectedRepo;
+    }
+    const seq: number = ++this.refreshSeq;
+    const slackSeq = ++this.slackSeq;
+    const repo: string | null = this.selectedRepo;
+    const [response, agents, config, slack] = await Promise.all([
+      dashboardDue ? loadDashboard(repo).catch((): DashboardResponse | null => null) : null,
+      localDue ? fetchAgents() : null,
+      force ? getConfig() : null,
+      localDue ? fetchSlack() : undefined,
+    ]);
+    if (seq !== this.refreshSeq || repo !== this.selectedRepo) return;
+    if (dashboardDue) this.dashboardUnavailable = !response;
     if (response) {
       this.snapshot = response.snapshot;
+      this.snapshotRepo = response.selectedRepo;
       this.degraded = response.degraded;
       this.repos = response.repos;
+      this.hasContext = true;
       this.selectedRepo = response.selectedRepo;
       this.jiraBaseUrl = response.jiraBaseUrl;
     }
-    const agents: { runs: RunSummary[]; autoClaim: string[]; caps: AgentCaps } = await fetchAgents();
-    this.runs = agents.runs;
-    this.autoClaimRepos = agents.autoClaim;
-    this.caps = agents.caps;
-    this.uiConfig = await getConfig();
-    if (this.view === 'dashboard') this.paint();
+    if (agents) {
+      this.runs = agents.runs;
+      this.autoClaimRepos = agents.autoClaim;
+      this.caps = agents.caps;
+    }
+    if (config) this.uiConfig = config;
+    this.syncShell();
+    if (localDue && slackSeq === this.slackSeq) {
+      this.slack = slack ?? {
+        ...this.slack,
+        health: { ...this.slack.health, status: 'unavailable', error: 'Notifications unavailable. Showing saved notifications.' },
+        ...(this.slack.githubHealth ? { githubHealth: { ...this.slack.githubHealth, status: 'unavailable' as const, error: 'Notifications unavailable.' } } : {}),
+      };
+      this.paintSlack();
+    }
+    if (this.view === 'dashboard') {
+      if (response || force) this.paint();
+      else if (localDue) this.paintLocalRuns();
+      await this.loadRepoPrs(force);
+    } else if (this.view === 'prs') {
+      this.paintPrInbox();
+      if (localDue) {
+        const recent = this.root.querySelector('.pr-recent-runs');
+        if (recent) {
+          const template = document.createElement('template');
+          template.innerHTML = renderRecentPrRuns(this.runs, this.selectedRepo);
+          const next = template.content.firstElementChild;
+          if (next) recent.replaceWith(next);
+        }
+      }
+      await this.loadReviewRequests(force);
+    } else if (this.view === 'config' && force) {
+      void this.loadLocalGit();
+    } else if (this.view === 'runs') {
+      const recent = this.root.querySelector('[data-pane=recent]');
+      if (recent) {
+        const template = document.createElement('template');
+        template.innerHTML = renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.runs });
+        const next = template.content.querySelector('[data-pane=recent]');
+        if (next) recent.replaceWith(next);
+      }
+    }
+  }
+
+  private paintLocalRuns(): void {
+    if (!this.snapshot || this.view !== 'dashboard') return;
+    const next = document.createElement('div');
+    renderDashboard(next, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo,
+      this.runs, this.autoClaimRepos, this.caps, this.themeId, this.rackLayout, this.jiraBaseUrl, this.repoPrs);
+    const selectors = [...['running', 'recent'].flatMap(panel =>
+      ['.faceplate-body', '.faceplate-count', '.faceplate-lamp'].map(part => `[data-panel="${panel}"] ${part}`))];
+    for (const selector of selectors) {
+      const current = this.root.querySelector(selector);
+      const replacement = next.querySelector(selector);
+      if (current && replacement) current.replaceWith(replacement);
+    }
+  }
+
+  private prInbox(): PrInboxState {
+    const unavailable = this.dashboardUnavailable || this.degraded.includes('github');
+    return {
+      reviewRequests: this.reviewRequests,
+      authored: {
+        prs: this.degraded.includes('github') ? [] : this.snapshot?.myOpenPrs ?? [],
+        loading: !this.snapshot && !unavailable,
+        degraded: unavailable,
+        truncated: false,
+      },
+    };
+  }
+
+  private paintPrInbox(): void {
+    if (this.view !== 'prs') return;
+    const inbox: HTMLElement | null = this.root.querySelector('.pr-inbox');
+    if (inbox) inbox.innerHTML = renderPrLists(this.prInbox());
+    this.bindPaneLinks();
+  }
+
+  private loadReviewRequests(force: boolean = true): Promise<void> {
+    if (!force && document.hidden) return Promise.resolve();
+    if (this.reviewRequestsPending) return this.reviewRequestsPending;
+    if (!force && Date.now() - this.lastReviewRequestsRefresh < POLL_MS) return Promise.resolve();
+    this.lastReviewRequestsRefresh = Date.now();
+    const pending: Promise<void> = this.fetchReviewRequests().finally(() => {
+      if (this.reviewRequestsPending === pending) this.reviewRequestsPending = null;
+    });
+    this.reviewRequestsPending = pending;
+    return pending;
+  }
+
+  private async fetchReviewRequests(): Promise<void> {
+    const seq: number = ++this.reviewRequestsSeq;
+    this.reviewRequests = { ...this.reviewRequests, loading: true };
+    this.paintPrInbox();
+    const result = await fetchReviewRequests();
+    if (seq !== this.reviewRequestsSeq) return;
+    this.reviewRequests = { ...result, loading: false };
+    this.paintPrInbox();
+  }
+
+  private paintRepoPrs(): void {
+    if (this.view !== 'dashboard') return;
+    const panel: HTMLElement | null = this.root.querySelector('.faceplate[data-panel="repoprs"]');
+    const body: HTMLElement | null = panel?.querySelector('.faceplate-body') ?? null;
+    if (!body) return;
+    body.innerHTML = renderRepoPrs(this.selectedRepo, this.repoPrs);
+    const count: number = this.repoPrs.prs.filter((pr) => pr.repo === this.selectedRepo).length;
+    const countEl: HTMLElement | null = panel?.querySelector('.faceplate-count') ?? null;
+    if (countEl) countEl.textContent = String(count);
+    const lamp: HTMLElement | null = panel?.querySelector('.faceplate-lamp') ?? null;
+    lamp?.classList.toggle('lamp-queued', count > 0);
+    lamp?.classList.toggle('lamp-idle', count === 0);
+  }
+
+  private loadRepoPrs(force: boolean = true): Promise<void> {
+    if (!force && document.hidden) return Promise.resolve();
+    if (this.repoPrsPending?.repo === this.selectedRepo && this.repoPrsPending.seq === this.repoPrsSeq) {
+      return this.repoPrsPending.promise;
+    }
+    const repo: string | null = this.selectedRepo;
+    if (!force && this.repoPrsRepo === repo && Date.now() - this.lastRepoPrsRefresh < POLL_MS) return Promise.resolve();
+    this.repoPrsRepo = repo;
+    this.lastRepoPrsRefresh = Date.now();
+    const pending: Promise<void> = this.fetchRepoPrs().finally(() => {
+      if (this.repoPrsPending?.promise === pending) this.repoPrsPending = null;
+    });
+    this.repoPrsPending = { repo, seq: this.repoPrsSeq, promise: pending };
+    return pending;
+  }
+
+  private async fetchRepoPrs(): Promise<void> {
+    const seq: number = ++this.repoPrsSeq;
+    const repo: string | null = this.selectedRepo;
+    if (!repo) {
+      this.repoPrs = { prs: [], loading: false, degraded: false, truncated: false };
+      this.paintRepoPrs();
+      return;
+    }
+    this.repoPrs = { prs: this.repoPrs.prs.filter((pr) => pr.repo === repo), loading: true, degraded: false, truncated: false };
+    this.paintRepoPrs();
+    const result = await fetchRepoOpenPrs(repo);
+    if (seq !== this.repoPrsSeq || repo !== this.selectedRepo) return;
+    this.repoPrs = { ...result, loading: false };
+    this.paintRepoPrs();
   }
 
   private paint(): void {
+    const focused = document.activeElement;
+    const focusedTab = focused instanceof HTMLAnchorElement && this.root.contains(focused) && focused.matches('.page-tab')
+      ? focused.dataset.view : null;
+    const sameView = this.root.querySelector<HTMLElement>('.helm')?.dataset.page === this.view;
+    this.paintView();
+    if (focusedTab) {
+      const view = sameView ? focusedTab : this.view;
+      const tabs = Array.from(this.root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
+      tabs.forEach(tab => { tab.tabIndex = tab.dataset.view === view ? 0 : -1; });
+      tabs.find(tab => tab.dataset.view === view)?.focus({ preventScroll: true });
+    }
+  }
+
+  private paintView(): void {
+    if (this.view === 'runs') {
+      this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.runs }));
+      this.bindHeadControls();
+      this.rehomeRunDrawer();
+      return;
+    }
     if (this.view === 'cmux') {
       this.paintCmux();
       return;
@@ -165,12 +656,16 @@ export class DashboardView {
       this.paintPrView();
       return;
     }
-    if (!this.snapshot) return;
+    if (!this.snapshot) {
+      this.mountPage(renderAppShell(this.shellOptions(), '<div class="empty-note" role="status">Loading Helm…</div>'));
+      return;
+    }
     const preBody: HTMLElement | null =
       this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
     const savedScrollTop: number = preBody ? preBody.scrollTop : 0;
+    const page = document.createElement('div');
     renderDashboard(
-      this.root,
+      page,
       this.snapshot,
       new Date(),
       this.degraded,
@@ -182,13 +677,10 @@ export class DashboardView {
       this.themeId,
       this.rackLayout,
       this.jiraBaseUrl,
+      this.repoPrs,
     );
+    this.mountPage(page.innerHTML);
     this.bindHeadControls();
-    const autoClaimCheckbox: HTMLInputElement | null =
-      this.root.querySelector<HTMLInputElement>('.auto-claim-toggle');
-    if (autoClaimCheckbox) {
-      autoClaimCheckbox.addEventListener('change', () => void this.handleAutoClaimChange(autoClaimCheckbox));
-    }
     this.bindRackDnD();
     this.rehomeRunDrawer();
     const postBody: HTMLElement | null =
@@ -198,25 +690,139 @@ export class DashboardView {
     }
   }
 
+  private revealActiveTab(): void {
+    const tabs = this.root.querySelector<HTMLElement>('.page-tabs');
+    const activeTab = tabs?.querySelector<HTMLElement>('.page-tab.is-active');
+    if (tabs && activeTab) {
+      const right = activeTab.offsetLeft + activeTab.offsetWidth;
+      if (right > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = right - tabs.clientWidth;
+      else if (activeTab.offsetLeft < tabs.scrollLeft) tabs.scrollLeft = activeTab.offsetLeft;
+    }
+  }
+
+  private shellOptions(): HelmHeadOpts {
+    const snapshot = this.snapshotRepo === this.selectedRepo ? this.snapshot : null;
+    return {
+      active: this.view, repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId,
+      readout: {
+        running: this.runs.filter(run => run?.status === 'running' && (!this.selectedRepo || run.repo === this.selectedRepo)).length,
+        queued: snapshot && !this.degraded.includes('jira') ? snapshot.queue?.length ?? null : null,
+        review: snapshot && !this.degraded.includes('jira') ? snapshot.stats?.awaitingReview ?? null : null,
+      },
+    };
+  }
+
+  private mountPage(markup: string): void {
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    const next = template.content.querySelector('#page-content');
+    if (!next) return;
+    if (!this.root.querySelector('.helm-head')) {
+      this.root.innerHTML = renderAppShell(this.shellOptions(), '');
+      this.paintSlack();
+    }
+    const content = this.root.querySelector<HTMLElement>('#page-content');
+    content?.replaceChildren(...next.childNodes);
+    if (content && this.contentView !== this.view) content.scrollTop = 0;
+    this.contentView = this.view;
+    this.syncShell();
+  }
+
+  private syncShell(): void {
+    const shell = this.root.querySelector<HTMLElement>('.helm');
+    if (!shell) return;
+    const opts = this.shellOptions();
+    shell.dataset.page = this.view;
+    shell.className = `helm${this.view === 'dashboard' ? '' : ` ${this.view}-view`}`;
+    this.root.querySelector('#page-content')?.setAttribute('aria-labelledby', `page-tab-${this.view}`);
+    const template = document.createElement('template');
+    template.innerHTML = renderHelmHead(opts);
+    const repo = shell.querySelector<HTMLSelectElement>('.repo-select');
+    const nextRepo = template.content.querySelector<HTMLSelectElement>('.repo-select');
+    if (repo && nextRepo) {
+      if (repo.innerHTML !== nextRepo.innerHTML) repo.innerHTML = nextRepo.innerHTML;
+      repo.value = this.selectedRepo ?? '';
+    }
+    for (const next of template.content.querySelectorAll<HTMLAnchorElement>('.page-tab')) {
+      const tab = shell.querySelector<HTMLAnchorElement>(`#${next.id}`);
+      if (!tab) continue;
+      tab.className = next.className;
+      for (const name of ['href', 'aria-selected', 'aria-current']) {
+        const value = next.getAttribute(name);
+        if (value === null) tab.removeAttribute(name);
+        else tab.setAttribute(name, value);
+      }
+      if (!shell.querySelector('.page-tabs')?.contains(document.activeElement)) tab.tabIndex = next.tabIndex;
+    }
+    for (const next of template.content.querySelectorAll<HTMLElement>('[data-fleet-count]')) {
+      const count = shell.querySelector<HTMLElement>(`[data-fleet-count="${next.dataset.fleetCount}"]`);
+      if (!count) continue;
+      count.textContent = next.textContent;
+      if (next.hasAttribute('title')) count.setAttribute('title', next.title);
+      else count.removeAttribute('title');
+    }
+    const repos = shell.querySelector('[data-footer-repos]');
+    if (repos) repos.textContent = `${this.repos.length} repo${this.repos.length === 1 ? '' : 's'} tracked`;
+    const running = shell.querySelector('[data-footer-running]');
+    if (running) running.textContent = `${opts.readout?.running ?? '—'} underway`;
+  }
+
   private bindHeadControls(): void {
-    const repo: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.repo-select');
-    if (repo) {
-      repo.addEventListener('change', () => {
-        this.selectedRepo = repo.value || null;
-        saveRepoScope(this.selectedRepo);
-        if (this.view === 'triage') void this.loadTriage().then(() => this.paint());
-        else if (this.view === 'bugs') void this.loadBugs().then(() => this.paint());
-        else void this.refresh();
-      });
+    this.revealActiveTab();
+    this.bindPaneLinks();
+  }
+
+  private paintSlack(): void {
+    const controls = this.root.querySelector('.helm-controls');
+    if (!controls) return;
+    let center = controls.querySelector<HTMLElement>('.slack-center');
+    if (!center) {
+      center = document.createElement('div');
+      center.className = 'slack-center';
+      controls.append(center);
     }
-    const themeSelect: HTMLSelectElement | null = this.root.querySelector<HTMLSelectElement>('.theme-select');
-    if (themeSelect) {
-      themeSelect.addEventListener('change', () => {
-        this.themeId = themeSelect.value;
-        applyTheme(this.themeId);
-        saveThemeId(this.themeId);
-      });
+    const focused = document.activeElement;
+    const focusReadId = focused instanceof HTMLElement && center.contains(focused) ? focused.dataset.slackRead : undefined;
+    const focusToggle = focused instanceof HTMLElement && center.contains(focused) && focused.hasAttribute('data-slack-toggle');
+    const scrollTop = center.querySelector('.slack-popover')?.scrollTop ?? 0;
+    const template = document.createElement('template');
+    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.slackError);
+    const nextToggle = template.content.querySelector<HTMLButtonElement>('[data-slack-toggle]');
+    const nextPopover = template.content.querySelector<HTMLElement>('.slack-popover');
+    const toggle = center.querySelector<HTMLButtonElement>('[data-slack-toggle]');
+    const currentPopover = center.querySelector<HTMLElement>('.slack-popover');
+    if (!toggle || !currentPopover || !nextToggle || !nextPopover) center.replaceChildren(...template.content.childNodes);
+    else {
+      toggle.className = nextToggle.className;
+      toggle.setAttribute('aria-expanded', nextToggle.getAttribute('aria-expanded') ?? 'false');
+      toggle.setAttribute('aria-label', nextToggle.getAttribute('aria-label') ?? 'Notifications');
+      if (toggle.innerHTML !== nextToggle.innerHTML) toggle.innerHTML = nextToggle.innerHTML;
+      currentPopover.hidden = nextPopover.hidden;
+      if (currentPopover.innerHTML !== nextPopover.innerHTML) currentPopover.innerHTML = nextPopover.innerHTML;
     }
+    const popover = center.querySelector('.slack-popover');
+    if (popover) popover.scrollTop = scrollTop;
+    for (const button of center.querySelectorAll<HTMLButtonElement>('[data-slack-read]')) {
+      button.disabled = this.slackReads.has(button.dataset.slackRead ?? '');
+    }
+    if (focusReadId !== undefined) {
+      const button = Array.from(center.querySelectorAll<HTMLButtonElement>('[data-slack-read]')).find(item => item.dataset.slackRead === focusReadId);
+      (button ?? center.querySelector<HTMLButtonElement>('[data-slack-toggle]'))?.focus({ preventScroll: true });
+    } else if (focusToggle) center.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus({ preventScroll: true });
+  }
+
+  private async readSlackNotification(id: string): Promise<void> {
+    if (this.slackReads.has(id)) return;
+    this.slackReads.add(id);
+    this.slackError = null;
+    this.paintSlack();
+    const ok = await markSlackNotificationRead(id);
+    this.slackReads.delete(id);
+    if (ok) {
+      ++this.slackSeq;
+      this.slack = { ...this.slack, notifications: this.slack.notifications.map(item => item.id === id ? { ...item, readAt: new Date().toISOString() } : item) };
+    } else this.slackError = 'Could not mark notification read. Try again.';
+    this.paintSlack();
   }
 
   private bindRackDnD(): void {
@@ -224,7 +830,7 @@ export class DashboardView {
       handle.addEventListener('dragstart', (event: DragEvent): void => {
         const panel: string | undefined = handle.dataset.panel;
         if (!panel || !event.dataTransfer) return;
-        event.dataTransfer.setData('text/gm-panel', panel);
+        event.dataTransfer.setData('text/helmsman-panel', panel);
         event.dataTransfer.effectAllowed = 'move';
         handle.closest('.faceplate')?.classList.add('is-dragging');
       });
@@ -248,7 +854,7 @@ export class DashboardView {
   }
 
   private handleRackDrop(target: HTMLElement, event: DragEvent): void {
-    const panel = (event.dataTransfer?.getData('text/gm-panel') ?? '') as PanelId | '';
+    const panel = (event.dataTransfer?.getData('text/helmsman-panel') ?? '') as PanelId | '';
     if (!panel) return;
     const kind: string | undefined = target.dataset.drop;
     let next: RackLayout;
@@ -265,7 +871,7 @@ export class DashboardView {
   }
 
   private paintCmux(): void {
-    this.root.innerHTML = renderCmuxView({
+    this.mountPage(renderCmuxView({
       connected: this.cmuxConnected,
       tabs: this.cmuxTabs,
       selectedSurface: this.cmuxPanelState.selectedSurface,
@@ -275,95 +881,145 @@ export class DashboardView {
       selectedRepo: this.selectedRepo,
       themeId: this.themeId,
       collapsed: this.collapsed,
-    });
+    }));
     this.bindHeadControls();
   }
 
   private paintTriage(): void {
-    this.root.innerHTML = renderTriageView(this.triageGroups, {
+    const now = Date.now();
+    for (const [column, group] of [['backlog', 'unassignedBacklog'], ['todo', 'unassignedTodo'], ['mine', 'mineOpen']] as const) {
+      this.triagePages[column] = paginateTriageTickets(filterTriageTickets(this.triageGroups?.[group], this.triageFilters, now), this.triagePageSize, this.triagePages[column]).page;
+    }
+    this.mountPage(renderTriageView(this.triageGroups, {
       repos: this.repos,
       selectedRepo: this.selectedRepo,
       jiraBaseUrl: this.jiraBaseUrl,
       degraded: this.triageDegraded,
+      filters: this.triageFilters,
+      pageSize: this.triagePageSize,
+      pages: this.triagePages,
       themeId: this.themeId,
       collapsed: this.collapsed,
-    });
+    }));
     this.bindHeadControls();
+    this.rehomeRunDrawer();
   }
 
   private async loadTriage(): Promise<void> {
-    const res = await fetchTriage(this.selectedRepo);
+    const seq = ++this.triageSeq;
+    const repo = this.selectedRepo;
+    const res = await fetchTriage(repo);
+    if (seq !== this.triageSeq || repo !== this.selectedRepo) return;
     this.triageGroups = res.groups;
     this.triageDegraded = res.degraded;
     if (res.jiraBaseUrl) this.jiraBaseUrl = res.jiraBaseUrl;
   }
 
-  private async enterTriageView(): Promise<void> {
-    this.view = 'triage';
-    await this.loadTriage();
-    this.paint();
-  }
-
   private paintBugs(): void {
-    this.root.innerHTML = renderBugsView(
+    this.mountPage(renderBugsView(
       this.bugsResponse ?? { cards: [], degraded: true, generatedAt: '', latestWindow: '', previousWindow: '' },
       { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId },
-    );
+    ));
     this.bindHeadControls();
   }
 
   private async loadBugs(): Promise<void> {
-    this.bugsResponse = await fetchBugs(this.selectedRepo);
+    const seq = ++this.bugsSeq;
+    const repo = this.selectedRepo;
+    const result = await fetchBugs(repo);
+    if (seq !== this.bugsSeq || repo !== this.selectedRepo) return;
+    this.bugsResponse = result;
   }
 
-  private async enterBugsView(): Promise<void> {
-    this.view = 'bugs';
-    await this.loadBugs();
-    this.paint();
+  private paintLocalGit(): void {
+    if (this.view !== 'config') return;
+    const card = this.root.querySelector('.local-git-panel');
+    if (card) card.outerHTML = renderLocalGit(this.localGit);
+  }
+
+  private loadLocalGit(): Promise<void> {
+    const repo = this.selectedRepo;
+    if (!repo) {
+      this.localGit = emptyLocalGit(null);
+      this.paintLocalGit();
+      return Promise.resolve();
+    }
+    const operation = this.localGitOperations.get(repo);
+    if (operation) {
+      const seq = this.localGitSeq;
+      this.localGit = { ...this.localGit, loading: true, pendingAction: 'Waiting for the local Git operation…' };
+      this.paintLocalGit();
+      return operation.then(() => {
+        if (seq === this.localGitSeq && repo === this.selectedRepo) return this.loadLocalGit();
+      });
+    }
+    if (this.localGitPending?.repo === repo) return this.localGitPending.promise;
+    const seq = ++this.localGitSeq;
+    this.localGit = { ...(this.localGit.repo === repo ? this.localGit : emptyLocalGit(repo)), loading: true, confirmation: undefined, pendingAction: undefined };
+    this.paintLocalGit();
+    const promise = fetchLocalGit(repo).then(result => {
+      if (seq !== this.localGitSeq || repo !== this.selectedRepo) return;
+      this.localGit = result;
+      this.paintLocalGit();
+    }).finally(() => {
+      if (this.localGitPending?.promise === promise) this.localGitPending = null;
+    });
+    this.localGitPending = { repo, promise };
+    return promise;
+  }
+
+  private confirmLocalGitDeletion(button: HTMLButtonElement): void {
+    if (button.disabled || this.localGit.loading || this.localGit.pendingAction || this.localGit.repo !== this.selectedRepo) return;
+    const branchName = button.dataset.localBranch;
+    const worktreePath = button.dataset.localWorktree;
+    const branch = this.localGit.branches.find(item => item?.name === branchName);
+    const tree = this.localGit.worktrees.find(item => item?.path === worktreePath);
+    if (branch && !branch.current && !branch.deletionBlockedReason) {
+      this.localGit = { ...this.localGit, confirmation: { action: 'delete-branch', branch: branch.name, expectedCommit: branch.commit } };
+    } else if (tree && !tree.locked && !tree.bare && tree.path !== this.localGit.path && !tree.deletionBlockedReason) {
+      this.localGit = { ...this.localGit, confirmation: { action: 'delete-worktree', path: tree.path, expectedCommit: tree.commit } };
+    } else return;
+    this.paintLocalGit();
+    this.root.querySelector<HTMLButtonElement>('.local-git-cancel')?.focus();
+  }
+
+  private mutateLocalGit(action: LocalGitAction): Promise<void> {
+    const repo = this.selectedRepo;
+    if (!repo || this.localGit.repo !== repo || this.localGit.loading || this.localGit.pendingAction || this.localGitOperations.has(repo)) return Promise.resolve();
+    const seq = ++this.localGitSeq;
+    this.localGit = { ...this.localGit, confirmation: undefined, error: null, pendingAction: action.action === 'refresh-remotes' ? 'Checking remotes…' : 'Deleting…' };
+    this.paintLocalGit();
+    const promise = updateLocalGit(repo, action).then(result => {
+      if (seq !== this.localGitSeq || repo !== this.selectedRepo) return;
+      this.localGit = result;
+      this.paintLocalGit();
+    }).finally(() => {
+      if (this.localGitOperations.get(repo) === promise) this.localGitOperations.delete(repo);
+    });
+    this.localGitOperations.set(repo, promise);
+    return promise;
   }
 
   private paintConfig(): void {
-    this.root.innerHTML = renderConfigView(this.uiConfig, {
+    this.mountPage(renderConfigView(this.uiConfig, {
       repos: this.repos,
       selectedRepo: this.selectedRepo,
       themeId: this.themeId,
-    });
+      localGit: this.localGit,
+    }));
     this.bindHeadControls();
   }
 
   private paintPrView(): void {
-    this.root.innerHTML = renderPrView(this.prView, {
+    this.mountPage(renderPrView(this.prView, {
       repos: this.repos,
       selectedRepo: this.selectedRepo,
       themeId: this.themeId,
-    });
+      lists: this.prInbox(),
+      runs: this.runs,
+    }));
     this.bindHeadControls();
     this.rehomeRunDrawer();
-  }
-
-  private async enterConfigView(): Promise<void> {
-    this.view = 'config';
-    this.uiConfig = await getConfig();
-    this.paint();
-  }
-
-  private async enterCmuxView(): Promise<void> {
-    this.view = 'cmux';
-    await this.loadCmuxTabs();
-    this.ensureCmuxEvents();
-    this.paint();
-    if (isPolling(this.cmuxPanelState)) {
-      await this.pollCmuxScreen();
-      this.syncCmuxPolling();
-    }
-  }
-
-  private leaveCmuxView(): void {
-    this.stopCmuxScreenPoll();
-    this.stopCapture();
-    this.cmuxCapturing = false;
-    this.view = 'dashboard';
-    this.paint();
   }
 
   private async loadCmuxTabs(): Promise<void> {
@@ -407,6 +1063,7 @@ export class DashboardView {
   }
 
   private async handleCmuxTabsChanged(): Promise<void> {
+    if (document.hidden || this.view !== 'cmux') return;
     const prevSignature: string = this.cmuxSnapshotSignature();
     await this.loadCmuxTabs();
     if (this.view !== 'cmux') return;
@@ -438,7 +1095,7 @@ export class DashboardView {
   }
 
   private syncCmuxPolling(): void {
-    if (this.view === 'cmux' && this.cmuxConnected && isPolling(this.cmuxPanelState)) {
+    if (!document.hidden && this.view === 'cmux' && this.cmuxConnected && isPolling(this.cmuxPanelState)) {
       this.restartCmuxScreenPoll();
     } else {
       this.stopCmuxScreenPoll();
@@ -459,7 +1116,8 @@ export class DashboardView {
 
   private async pollCmuxScreen(): Promise<void> {
     const surface: string | null = this.cmuxPanelState.selectedSurface;
-    if (!surface || this.view !== 'cmux') return;
+    if (!surface || this.view !== 'cmux' || document.hidden || this.cmuxScreenPending) return;
+    this.cmuxScreenPending = true;
     try {
       const res: Response = await fetch(`/api/cmux/screen?surface=${encodeURIComponent(surface)}&lines=40`);
       if (this.view !== 'cmux' || this.cmuxPanelState.selectedSurface !== surface) return;
@@ -476,6 +1134,8 @@ export class DashboardView {
       this.setCmuxScreenText(this.cmuxScreen);
     } catch {
       return;
+    } finally {
+      this.cmuxScreenPending = false;
     }
   }
 
@@ -488,6 +1148,7 @@ export class DashboardView {
     const surface: string | undefined = btn.dataset.surface;
     if (!surface) return;
     this.cmuxPanelState = selectSurface(this.cmuxPanelState, surface);
+    this.updateAddress({ ...this.route, view: 'cmux', surface: this.cmuxPanelState.selectedSurface, pane: 'screen' });
     this.cmuxScreen = '';
     this.paint();
     await this.pollCmuxScreen();
@@ -699,27 +1360,46 @@ export class DashboardView {
     void this.handleCmuxSend(target);
   }
 
-  private async handleAutoClaimChange(checkbox: HTMLInputElement): Promise<void> {
-    const repo: string | null = this.selectedRepo;
-    if (!repo) return;
-    await setAutoClaim(repo, checkbox.checked);
-    await this.refresh();
-  }
-
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
 
-    const viewToggle: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.view-toggle');
-    if (viewToggle) {
-      const targetView: string | undefined = viewToggle.dataset.view;
-      if (targetView === this.view) return;
-      if (targetView === 'cmux') void this.enterCmuxView();
-      else if (targetView === 'triage') void this.enterTriageView();
-      else if (targetView === 'bugs') void this.enterBugsView();
-      else if (targetView === 'prs') void this.enterPrView();
-      else if (targetView === 'config') void this.enterConfigView();
-      else this.leaveCmuxView();
+    const triagePage = target.closest<HTMLButtonElement>('button[data-triage-column][data-triage-page]');
+    if (this.view === 'triage' && triagePage && !triagePage.disabled) {
+      const column = triagePage.dataset.triageColumn;
+      const page = Number(triagePage.dataset.triagePage);
+      if ((column !== 'backlog' && column !== 'todo' && column !== 'mine') || !Number.isSafeInteger(page) || page < 1) return;
+      const direction = page > this.triagePages[column] ? 'next' : 'previous';
+      this.triagePages[column] = page;
+      this.paintTriage();
+      const pager = this.root.querySelector<HTMLElement>(`.triage-pagination[data-triage-column="${column}"]`);
+      const buttons = pager?.querySelectorAll<HTMLButtonElement>('button');
+      const button = direction === 'next' ? buttons?.[1] : buttons?.[0];
+      (button && !button.disabled ? button : pager)?.focus({ preventScroll: true });
+      return;
+    }
+
+    if (target.closest('[data-slack-toggle], [data-slack-close]')) {
+      this.slackOpen = target.closest('[data-slack-close]') ? false : !this.slackOpen;
+      this.paintSlack();
+      this.root.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus({ preventScroll: true });
+      return;
+    }
+    const slackRead = target.closest<HTMLButtonElement>('[data-slack-read]');
+    if (slackRead?.dataset.slackRead) {
+      void this.readSlackNotification(slackRead.dataset.slackRead);
+      return;
+    }
+    if (this.slackOpen && !target.closest('.slack-center')) {
+      this.slackOpen = false;
+      this.paintSlack();
+    }
+
+    const link = target.closest<HTMLAnchorElement>('a.view-toggle, a.app-link');
+    if (link) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void this.navigate(parseRoute(new URL(link.href)));
       return;
     }
 
@@ -747,6 +1427,7 @@ export class DashboardView {
     const slotTab: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.slot-tab');
     if (slotTab) {
       this.rackLayout = setActivePanel(this.rackLayout, slotTab.dataset.panelTab as PanelId);
+      this.updateAddress({ ...this.route, view: 'dashboard', pane: slotTab.dataset.panelTab ?? null });
       saveRackLayoutRaw(serializeRack(this.rackLayout));
       this.paint();
       return;
@@ -791,6 +1472,23 @@ export class DashboardView {
     const newRunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.newrun-launch');
     if (newRunBtn) {
       void this.handleNewRun(newRunBtn);
+      return;
+    }
+
+    const localGitButton = target.closest<HTMLButtonElement>('.local-git-panel button');
+    if (localGitButton) {
+      if (localGitButton.disabled) return;
+      if (localGitButton.matches('.local-git-check-remotes')) void this.mutateLocalGit({ action: 'refresh-remotes' });
+      else if (localGitButton.matches('.local-git-cancel')) {
+        this.localGit = { ...this.localGit, confirmation: undefined };
+        this.paintLocalGit();
+      } else if (localGitButton.matches('.local-git-confirm-delete')) {
+        const action = this.localGit.confirmation;
+        if (action) void this.mutateLocalGit(action.action === 'delete-branch'
+          ? { ...action, force: this.root.querySelector<HTMLInputElement>('.local-git-force')?.checked === true }
+          : action);
+      } else if (localGitButton.matches('.local-git-delete')) this.confirmLocalGitDeletion(localGitButton);
+      else if (localGitButton.matches('.local-git-refresh')) void this.loadLocalGit();
       return;
     }
 
@@ -850,9 +1548,9 @@ export class DashboardView {
       return;
     }
 
-    const myPrRow: HTMLElement | null = target.closest<HTMLElement>('.myprs-row');
-    if (myPrRow) {
-      this.handleMyPrClick(myPrRow);
+    const prListRow: HTMLElement | null = target.closest<HTMLElement>('.pr-list-row');
+    if (prListRow) {
+      this.handlePrListClick(prListRow);
       return;
     }
 
@@ -870,6 +1568,7 @@ export class DashboardView {
       return;
     }
 
+    if (target.closest('a')) return;
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
   }
@@ -886,7 +1585,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Re-run failed';
+      const message: string = err instanceof Error ? err.message : 'Voyage relaunch failed';
       this.openErrorTab(ticketId, message);
     } finally {
       btn.disabled = false;
@@ -905,6 +1604,8 @@ export class DashboardView {
   private async handleReview(btn: HTMLElement, event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'): Promise<void> {
     const t: { panel: HTMLElement; repo: string; number: number } | null = this.prTarget(btn);
     if (!t) return;
+    const prViewSeq = this.prViewSeq;
+    const showOpenInTab = Boolean(t.panel.querySelector('.pr-open-in-tab'));
     const bodyEl: HTMLTextAreaElement | null = t.panel.querySelector<HTMLTextAreaElement>('.pr-review-body');
     const body: string = bodyEl?.value ?? '';
     if ((event === 'REQUEST_CHANGES' || event === 'COMMENT') && body.trim() === '') return;
@@ -918,7 +1619,17 @@ export class DashboardView {
       return;
     }
     const refreshed: PrStatusView | null = await getPrStatus(t.repo, t.number);
-    t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo));
+    for (const tab of this.runTabs) {
+      if (tab.pr?.repo !== t.repo || tab.pr.number !== t.number) continue;
+      tab.prVersion = (tab.prVersion ?? 0) + 1;
+      tab.prStatus = refreshed;
+      tab.prLoadedAt = refreshed ? Date.now() : undefined;
+    }
+    if (refreshed && prViewSeq === this.prViewSeq && this.prView.repo === t.repo && this.prView.number === t.number) {
+      this.prView = { ...this.prView, pr: refreshed };
+    }
+    if (t.panel.isConnected) t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab);
+    void this.loadReviewRequests();
   }
 
   private async handleRerun(btn: HTMLElement): Promise<void> {
@@ -931,11 +1642,11 @@ export class DashboardView {
     try {
       const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback, ...this.readTuning(t.panel, 'pr') });
       if (seq !== this.launchSeq) return;
-      this.openRunTab(result.runId, `rerun #${t.number}`);
+      this.openRunTab(result.runId, `feedback #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Re-run failed';
-      this.openErrorTab(`rerun #${t.number}`, message);
+      const message: string = err instanceof Error ? err.message : 'Voyage relaunch failed';
+      this.openErrorTab(`feedback #${t.number}`, message);
     }
   }
 
@@ -966,28 +1677,30 @@ export class DashboardView {
     await this.loadPrView(parsed.repo, parsed.number);
   }
 
-  private async loadPrView(repo: string, number: number): Promise<void> {
+  private async loadPrView(repo: string, number: number, updateRoute: boolean = true): Promise<void> {
+    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, repo, pr: number, pane: this.view === 'runs' ? 'newrun' : 'lookup' });
+    const seq: number = ++this.prViewSeq;
     this.prView = { repo, number, pr: null, diff: null, loading: true };
-    if (this.view === 'prs') this.paint();
+    if (this.view === 'prs' || this.view === 'runs') this.paint();
     const [pr, diff] = await Promise.all([getPrStatus(repo, number), getPrDiff(repo, number)]);
+    if (seq !== this.prViewSeq) return;
     this.prView = { repo, number, pr, diff, loading: false };
-    if (this.view === 'prs') this.paint();
+    if (this.view === 'prs' || this.view === 'runs') this.paint();
   }
 
   private async enterPrView(repo?: string, number?: number): Promise<void> {
-    this.view = 'prs';
-    if (repo && Number.isFinite(number)) {
-      await this.loadPrView(repo, number as number);
-    } else {
-      this.paint();
-    }
+    await this.navigate(parseRoute(new URL(routeHref({ view: 'prs', repo: repo ?? this.selectedRepo, pr: number ?? null, pane: number ? 'lookup' : null }), window.location.origin)));
   }
 
-  private handleMyPrClick(row: HTMLElement): void {
+  private handlePrListClick(row: HTMLElement): void {
     const repo: string | undefined = row.dataset.repo;
     const number: number = Number(row.dataset.number);
-    if (!repo || !Number.isFinite(number)) return;
-    void this.enterPrView(repo, number);
+    if (!repo || !Number.isSafeInteger(number) || number <= 0) return;
+    void this.enterPrView(repo, number).then(() => {
+      if (this.view !== 'prs' || this.prView.repo !== repo || this.prView.number !== number) return;
+      this.root.querySelector<HTMLElement>('.pr-lookup-panel')?.scrollIntoView?.({ block: 'start' });
+      this.root.querySelector<HTMLInputElement>('.pr-lookup-input')?.focus({ preventScroll: true });
+    });
   }
 
   private async handleStopClick(btn: HTMLButtonElement): Promise<void> {
@@ -1000,15 +1713,14 @@ export class DashboardView {
   private handleRunRowClick(row: HTMLElement): void {
     const runId: string | undefined = row.dataset.runid;
     if (!runId) return;
-    const ticketEl: HTMLElement | null = row.querySelector<HTMLElement>('.ticket-id');
-    const ticketId: string = ticketEl?.textContent ?? runId;
-    this.openRunTab(runId, ticketId);
+    void this.navigate({ ...this.route, view: 'runs', pane: 'tasks', run: runId });
   }
 
-  private openRunTab(runId: string, label: string): void {
+  private openRunTab(runId: string, label: string, updateRoute: boolean = true): void {
+    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, run: runId });
     const existing: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
     if (existing) {
-      this.setActiveTab(runId);
+      this.setActiveTab(runId, false);
       return;
     }
     const run: RunSummary | undefined = this.runs.find((r: RunSummary): boolean => r.id === runId);
@@ -1021,12 +1733,11 @@ export class DashboardView {
       unsub: null,
       complete: false,
     };
-    tab.unsub = openRunStream(runId, (event: RunEvent): void => this.onTabEvent(runId, event));
     this.runTabs.push(tab);
+    tab.unsub = openRunStream(runId, (event: RunEvent): void => this.onTabEvent(runId, event));
     this.activeTabId = runId;
     this.renderRunDrawer();
     this.rehomeRunDrawer();
-    if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number);
   }
 
   private openErrorTab(label: string, message: string): void {
@@ -1046,9 +1757,10 @@ export class DashboardView {
     this.rehomeRunDrawer();
   }
 
-  private setActiveTab(runId: string): void {
+  private setActiveTab(runId: string, updateRoute: boolean = true): void {
     if (!this.runTabs.some((t: RunTab): boolean => t.runId === runId)) return;
     this.activeTabId = runId;
+    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, run: runId });
     this.renderRunDrawer();
     this.rehomeRunDrawer();
   }
@@ -1062,25 +1774,25 @@ export class DashboardView {
       const next: RunTab | undefined = this.runTabs[idx] ?? this.runTabs[idx - 1];
       this.activeTabId = next ? next.runId : null;
     }
+    this.updateAddress({ ...this.route, view: this.view, run: this.activeTabId?.startsWith('err-') ? null : this.activeTabId });
     this.renderRunDrawer();
     this.rehomeRunDrawer();
   }
 
   private onTabEvent(runId: string, event: RunEvent): void {
-    const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
+    if (this.destroyed) return;
+    const tab = this.runTabs.find(item => item.runId === runId);
     if (!tab) return;
     tab.lines.push(event);
+    if (tab.lines.length > RUN_LOG_PREVIEW_LIMIT) tab.lines.splice(0, tab.lines.length - RUN_LOG_PREVIEW_LIMIT);
     if (event.kind === 'run-complete') {
       tab.complete = true;
+      tab.unsub?.();
       tab.unsub = null;
-    }
-    if (runId === this.activeTabId) {
-      if (event.kind === 'run-complete') this.renderRunDrawer();
-      else this.appendLineDom(event);
-    } else if (event.kind === 'run-complete') {
       this.markTabComplete(runId);
+      void this.finalizeTab(runId);
     }
-    if (event.kind === 'run-complete') void this.finalizeTab(runId);
+    if (runId === this.activeTabId) this.scheduleRunLogFlush();
   }
 
   private markTabComplete(runId: string): void {
@@ -1093,30 +1805,47 @@ export class DashboardView {
   private async finalizeTab(runId: string): Promise<void> {
     const summary: RunStatusSummary | null = await getRun(runId);
     const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
-    if (!tab) return;
+    if (!tab || this.destroyed) return;
     tab.footer = summary;
     if (summary && summary.prNumber != null && !tab.pr) {
       tab.pr = { repo: summary.repo, number: summary.prNumber };
     }
     if (runId === this.activeTabId) {
       this.renderFooterDom(tab);
-      if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number);
+      if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number, true);
     }
   }
 
-  private async loadTabPr(runId: string, repo: string, prNumber: number): Promise<void> {
-    const pr: PrStatusView | null = await getPrStatus(repo, prNumber);
-    if (runId !== this.activeTabId) return;
-    const prEl: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
-    if (prEl) prEl.innerHTML = renderPrPanel(pr, this.repos.includes(repo), true);
+  private async loadTabPr(runId: string, repo: string, prNumber: number, refresh = false): Promise<void> {
+    const tab = this.runTabs.find(item => item.runId === runId);
+    if (!tab || this.destroyed) return;
+    if (refresh && tab.prPending) await tab.prPending;
+    if (this.destroyed || !this.runTabs.includes(tab)) return;
+    if (refresh) tab.prLoadedAt = undefined;
+    if ((tab.prLoadedAt === undefined || Date.now() - tab.prLoadedAt >= POLL_MS) && !tab.prPending) {
+      const version = tab.prVersion ?? 0;
+      tab.prPending = getPrStatus(repo, prNumber).then(pr => {
+        if (version !== (tab.prVersion ?? 0)) return;
+        tab.prStatus = pr;
+        tab.prLoadedAt = pr ? Date.now() : undefined;
+      }).finally(() => { tab.prPending = undefined; });
+    }
+    await tab.prPending;
+    if (this.destroyed || !this.runTabs.includes(tab) || runId !== this.activeTabId) return;
+    const prEl = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
+    if (prEl) prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true);
   }
 
   private rehomeRunDrawer(): void {
-    const slot: HTMLElement | null = this.root.querySelector<HTMLElement>('.runs-drawer-slot');
+    const slot = this.root.querySelector<HTMLElement>('.runs-drawer-slot');
     if (slot && this.runDrawerEl.parentElement !== slot) slot.appendChild(this.runDrawerEl);
+    if (this.canRenderRunLog()) this.scheduleRunLogFlush();
+    else this.cancelRunLogFlush();
   }
 
   private renderRunDrawer(): void {
+    this.cancelRunLogFlush();
+    this.renderedRunLines = [];
     const tabsView: RunTabView[] = this.runTabs.map((t: RunTab): RunTabView => ({
       id: t.runId,
       label: t.label,
@@ -1130,9 +1859,8 @@ export class DashboardView {
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
     if (body) {
       body.addEventListener('scroll', () => this.updateStick(body));
-      for (const event of active.lines) body.appendChild(this.lineEl(event));
       this.stickToBottom = true;
-      body.scrollTop = body.scrollHeight;
+      this.scheduleRunLogFlush();
     }
     this.renderFooterDom(active);
     if (active.pr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
@@ -1145,11 +1873,43 @@ export class DashboardView {
     return line;
   }
 
-  private appendLineDom(event: RunEvent): void {
-    const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
-    if (!body) return;
-    body.appendChild(this.lineEl(event));
+  private canRenderRunLog(): boolean {
+    return !this.destroyed && !document.hidden && this.runDrawerEl.isConnected
+      && !this.collapsed.has('runs:drawer');
+  }
+
+  private cancelRunLogFlush(): void {
+    if (this.runLogTimer !== null) clearTimeout(this.runLogTimer);
+    this.runLogTimer = null;
+  }
+
+  private scheduleRunLogFlush(): void {
+    if (this.runLogTimer !== null || !this.canRenderRunLog()) return;
+    this.runLogTimer = setTimeout(() => {
+      this.runLogTimer = null;
+      this.flushRunLog();
+    }, RUN_LOG_BATCH_MS);
+  }
+
+  private flushRunLog(): void {
+    if (!this.canRenderRunLog()) return;
+    const tab = this.runTabs.find(item => item.runId === this.activeTabId);
+    const body = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
+    if (!tab || !body) return;
+    const retained = this.renderedRunLines.filter(line => tab.lines.includes(line));
+    const removed = this.renderedRunLines.length - retained.length;
+    const previousHeight = !this.stickToBottom && removed > 0 ? body.scrollHeight : 0;
+    const previousTop = body.scrollTop;
+    for (let index = 0; index < removed; index++) body.firstElementChild?.remove();
+    const removedHeight = previousHeight ? previousHeight - body.scrollHeight : 0;
+    const fragment = document.createDocumentFragment();
+    for (let index = retained.length; index < tab.lines.length; index++) {
+      fragment.appendChild(this.lineEl(tab.lines[index]!));
+    }
+    body.appendChild(fragment);
+    this.renderedRunLines = [...tab.lines];
     if (this.stickToBottom) body.scrollTop = body.scrollHeight;
+    else if (removed > 0) body.scrollTop = Math.max(0, previousTop - removedHeight);
   }
 
   private updateStick(body: HTMLElement): void {
@@ -1198,7 +1958,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Launch failed';
+      const message: string = err instanceof Error ? err.message : 'Voyage launch failed';
       this.openErrorTab(ticketId, message);
     } finally {
       btn.disabled = false;
@@ -1251,7 +2011,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId || title);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Launch failed';
+      const message: string = err instanceof Error ? err.message : 'Voyage launch failed';
       this.openErrorTab(ticketId || title, message);
     } finally {
       btn.disabled = false;
@@ -1285,8 +2045,7 @@ export class DashboardView {
 }
 
 function armBootScreen(boot: HTMLElement): () => void {
-  const reduce: boolean = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const MIN_MS: number = reduce ? 350 : 2000;
+  const MIN_MS: number = 2000;
   const CAP_MS: number = 4200;
   const start: number = performance.now();
   const pctEl: HTMLElement | null = boot.querySelector<HTMLElement>('.boot-pct');
@@ -1312,7 +2071,7 @@ function armBootScreen(boot: HTMLElement): () => void {
     window.setTimeout(() => boot.remove(), 520);
   };
   function skip(): void {
-    if (performance.now() - start > 400) dismiss();
+    if (performance.now() - start >= MIN_MS) dismiss();
   }
   boot.addEventListener('click', skip);
   window.addEventListener('keydown', skip);
@@ -1330,8 +2089,7 @@ export function bootstrap(): void {
   const view: DashboardView = new DashboardView(root);
   const boot: HTMLElement | null = document.getElementById('boot');
   const finishBoot: () => void = boot ? armBootScreen(boot) : (): void => {};
-  void view.refresh().then(finishBoot, finishBoot);
-  setInterval(() => void view.refresh(), POLL_MS);
+  void view.start().then(finishBoot, finishBoot);
 }
 
 if (import.meta.env.MODE !== 'test') bootstrap();

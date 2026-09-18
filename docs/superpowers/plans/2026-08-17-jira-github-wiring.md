@@ -969,7 +969,7 @@ git commit -m "feat: Jira search and GitHub PR fetch wrappers"
 ### Task 8: Vite endpoint plugin with degraded fallback
 
 **Files:**
-- Create: `server/dashboard-endpoint.ts` (orchestrator: config → fetch → assemble, with per-source fallback)
+- Create: `server/dashboard-endpoint.ts` (Helmsman: config → fetch → assemble, with per-source fallback)
 - Create: `vite-plugin-dashboard.ts`
 - Modify: `vite.config.ts` (create if absent) to register the plugin
 - Test: `server/dashboard-endpoint.test.ts`

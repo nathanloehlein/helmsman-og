@@ -19,7 +19,7 @@ Transform Backlog Runner from a read-only dashboard into a **one-stop control pl
 
 ### Runtime shift
 
-Today a Vite dev-server plugin serves read-only `/api/dashboard`. That is dev-only and cannot spawn or supervise processes. The target is a **persistent Node orchestrator process**:
+Today a Vite dev-server plugin serves read-only `/api/dashboard`. That is dev-only and cannot spawn or supervise processes. The target is a **persistent Helmsman Node process**:
 
 - Serves the dashboard API **and** the new control/stream API over `node:http`.
 - Spawns and supervises agent processes (`node:child_process`).
@@ -27,15 +27,15 @@ Today a Vite dev-server plugin serves read-only `/api/dashboard`. That is dev-on
 - Manages git worktrees (shell-out to `git`).
 - In **dev**: runs alongside Vite; Vite proxies `/api/*` to it (`server.proxy`). In **prod/normal use**: serves the built `dist/` UI itself.
 
-The existing pure/fetch modules (`config.ts`, `jira.ts`, `github.ts`, `snapshot.ts`, `dashboard-endpoint.ts`) move under the orchestrator and are reused unchanged for the read/dashboard path. `vite-plugin-dashboard.ts` is removed; a Vite proxy replaces it.
+The existing pure/fetch modules (`config.ts`, `jira.ts`, `github.ts`, `snapshot.ts`, `dashboard-endpoint.ts`) move under Helmsman and are reused unchanged for the read/dashboard path. `vite-plugin-dashboard.ts` is removed; a Vite proxy replaces it.
 
 ### Dependencies
 
 - New runtime dep: **better-sqlite3** (synchronous, simple embedded SQLite).
 - Everything else uses Node built-ins: `node:http` (REST + SSE), `node:child_process` (spawn agents + git), `node:fs`, `URL`.
-- Dev orchestration: a `concurrently`-style script or a tiny custom runner to start Vite + orchestrator together (prefer a plain npm script over a dep if feasible).
+- Dev orchestration: a `concurrently`-style script or a tiny custom runner to start Vite + Helmsman together (prefer a plain npm script over a dep if feasible).
 
-### Modules (`server/orchestrator/`)
+### Modules (`server/helmsman/`)
 
 | Module | Responsibility |
 | --- | --- |
@@ -86,7 +86,7 @@ run_events(
 )
 ```
 
-Timestamps are ISO strings supplied by the orchestrator at write time.
+Timestamps are ISO strings supplied by Helmsman at write time.
 
 ### Agent adapter contract
 
@@ -108,11 +108,11 @@ The Claude Code adapter parses `stream-json` events into `AgentEvent`s (tool use
 2. `jira-actions.assign(ticket, bot)` + `transition(ticket, In Progress)`; write `runs` row (`running`).
 3. `worktree.create(repo, runId)` → fresh branch off the repo's default.
 4. `runner` spawns the adapter in the worktree; every `AgentEvent` is written to `run_events` and pushed to any SSE subscribers.
-5. Agent opens a PR (the only write it performs beyond its branch). Orchestrator captures `prNumber`, `transition(ticket, In Review)`.
+5. Agent opens a PR (the only write it performs beyond its branch). Helmsman captures `prNumber`, `transition(ticket, In Review)`.
 6. Mark `runs` `succeeded`, `ended_at`, `cost_usd`; `worktree.remove`.
 7. On non-zero exit / no PR: mark `failed`; re-run up to the attempts cap; then stop and leave the ticket In Progress for a human.
 
-The agent **never merges to main**; the orchestrator only transitions status — merge is always a human action.
+The agent **never merges to main**; Helmsman only transitions status — merge is always a human action.
 
 ### UI
 
@@ -125,7 +125,7 @@ The agent **never merges to main**; the orchestrator only transitions status —
 
 ### Config additions (`.env`)
 
-- `AGENTS_ROOT` — local directory holding the per-repo checkouts the orchestrator worktrees from.
+- `AGENTS_ROOT` — local directory holding the per-repo checkouts Helmsman worktrees from.
 - `AGENT_ADAPTER` — `claude-code` (default) | `command`.
 - `AGENT_CMD` — command template for the generic adapter (`{ticket} {repo} {title}` placeholders).
 - `AGENT_MAX_CONCURRENCY` — global cap on simultaneous runs.
@@ -135,7 +135,7 @@ The agent **never merges to main**; the orchestrator only transitions status —
 
 ## Security & guardrails
 
-- The agent's only writes are its own branch + opening a PR; the orchestrator's only Jira writes are status transitions + assignee. **No merge is ever automated.**
+- The agent's only writes are its own branch + opening a PR; Helmsman's only Jira writes are status transitions + assignee. **No merge is ever automated.**
 - Single-flight per repo prevents two agents colliding on one codebase.
 - `AGENT_MAX_CONCURRENCY` bounds resource use; `AGENT_MAX_ATTEMPTS` bounds cost on failing tickets.
 - Worktrees are created under `AGENTS_ROOT` and removed on completion; a startup sweep prunes orphaned worktrees from crashed runs.
@@ -145,7 +145,7 @@ The agent **never merges to main**; the orchestrator only transitions status —
 
 Each phase is independently shippable and testable and gets its own implementation plan.
 
-- **P0 — Backend foundation.** Stand up the orchestrator `node:http` server; move the dashboard API into it; add the Vite dev proxy; scaffold SQLite (`db.ts` + migrations). No user-visible behavior change; the dashboard renders through the new server.
+- **P0 — Backend foundation.** Stand up the Helmsman `node:http` server; move the dashboard API into it; add the Vite dev proxy; scaffold SQLite (`db.ts` + migrations). No user-visible behavior change; the dashboard renders through the new server.
 - **P1 — Single run.** `AgentAdapter` + Claude Code adapter; `worktree.ts`; `runner` for one manual run; SSE log stream + a log drawer in the UI; persist the run in SQLite. **No Jira writes yet** — the agent works, you watch the stream.
 - **P2 — Lifecycle + gate.** `jira-actions` writes (assign, In Progress, In Review); PR detection; single-flight per repo; failure re-run cap. The full one-session→gate loop.
 - **P3 — Multi-agent UI.** Replace "Working on" with the running-agents view; Stop controls; per-agent live logs; metrics (elapsed/cost/attempts) from SQLite.
@@ -155,10 +155,10 @@ Each phase is independently shippable and testable and gets its own implementati
 ## Out of scope
 
 - Automating merge or any post-review action.
-- Remote/multi-machine execution (single local orchestrator only).
+- Remote/multi-machine execution (single local Helmsman only).
 - Auth on the control API (assumes a trusted local operator, same as today's local dashboard).
 - Replacing Jira/GitHub as the sources of truth.
 
 ## First implementation plan
 
-Following this spec, the writing-plans step produces the **Phase 0 + Phase 1** implementation plan (backend foundation through a first live single run), since those establish the orchestrator and adapter the later phases build on.
+Following this spec, the writing-plans step produces the **Phase 0 + Phase 1** implementation plan (backend foundation through a first live single run), since those establish Helmsman and adapter the later phases build on.

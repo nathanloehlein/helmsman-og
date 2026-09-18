@@ -20,7 +20,7 @@
 
 ### Task 1: `run-complete` terminal event (fixes the footer race + multi-attempt SSE)
 
-**Files:** Modify `server/orchestrator/agents/adapter.ts`, `server/orchestrator/runner.ts` (+ `runner.test.ts`), `server/orchestrator/main.ts` (SSE close), `src/data/agents.ts` (client close), `src/main.ts` (footer trigger + `src/main.test.ts`).
+**Files:** Modify `server/helmsman/agents/adapter.ts`, `server/helmsman/runner.ts` (+ `runner.test.ts`), `server/helmsman/main.ts` (SSE close), `src/data/agents.ts` (client close), `src/main.ts` (footer trigger + `src/main.test.ts`).
 
 **Interfaces:**
 - `AgentEventKind` gains `'run-complete'`.
@@ -45,7 +45,7 @@
 
 - [ ] **Step 5: Client closes + footer settles on `run-complete`** — in `src/data/agents.ts` `openRunStream`, close the `EventSource` when `event.kind === 'run-complete'` (not on result/error). In `src/main.ts`, trigger the footer `getRun` render on `run-complete` (the row is finalized then, so status + prNumber are correct — fixes the P2 footer race). Update the existing `src/main.test.ts` footer test to drive a `run-complete` event.
 
-- [ ] **Step 6: Verify** — `npx vitest run server/orchestrator src/main.test.ts` + `npx tsc --noEmit` + `npm test` green. Commit `feat(orchestrator): emit a run-complete terminal event; SSE/footer key off it`.
+- [ ] **Step 6: Verify** — `npx vitest run server/helmsman src/main.test.ts` + `npx tsc --noEmit` + `npm test` green. Commit `feat(helmsman): emit a run-complete terminal event; SSE/footer key off it`.
 
 ---
 
@@ -60,7 +60,7 @@
 
 - [ ] **Step 1: Add `listRuns` + `stopAgent`** to `src/data/agents.ts` (typed, fail-soft, no throw).
 - [ ] **Step 2: Fetch runs in the poll** — in `DashboardView.refresh`, after `loadDashboard`, also `const runs = await listRuns()`; store `this.runs = runs`. Pass `this.runs` into `renderDashboard` (new param, Task 3). Keep the 30s cadence.
-- [ ] **Step 3: Verify** — `npx tsc --noEmit` + `npm test` green (no behavior change yet if render ignores the param until Task 3; wire the param in Task 3). Commit `feat(ui): fetch orchestrator runs alongside the dashboard`.
+- [ ] **Step 3: Verify** — `npx tsc --noEmit` + `npm test` green (no behavior change yet if render ignores the param until Task 3; wire the param in Task 3). Commit `feat(ui): fetch helmsman runs alongside the dashboard`.
 
 ---
 

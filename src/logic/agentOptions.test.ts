@@ -28,4 +28,11 @@ describe('agentOptions', () => {
     expect(MODEL_OPTIONS.some((o) => o.value === 'gpt-6-astra')).toBe(true);
     expect(validModel('gpt-6-astra')).toBe('gpt-6-astra');
   });
+
+  it('offers the lower-cost Codex review models', () => {
+    for (const model of ['gpt-5.6-terra', 'gpt-5.6-sol']) {
+      expect(MODEL_OPTIONS.some(option => option.value === model)).toBe(true);
+      expect(validModel(model)).toBe(model);
+    }
+  });
 });

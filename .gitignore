@@ -24,10 +24,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.helmsman-runs/
+.helmsman.sqlite
+.helmsman.sqlite-shm
+.helmsman.sqlite-wal
 .gomaestro.sqlite
 .gomaestro.sqlite-shm
 .gomaestro.sqlite-wal
-orchestrator.log
+helmsman.log
 dev.log
 
 # Playwright MCP session artifacts

@@ -1,0 +1,249 @@
+import { execFile } from 'node:child_process';
+import { access, realpath } from 'node:fs/promises';
+import { isAbsolute, join, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+import type { LocalGitResponse } from '../src/data/localGit';
+import { isGithubRepo } from './pr-lists';
+import { repoBasename } from './helmsman/worktree';
+
+const run = promisify(execFile);
+const mutationLocks = new Map<string, Promise<unknown>>();
+
+type Branch = LocalGitResponse['branches'][number] & {
+  upstreamStatus: 'present' | 'gone' | 'none' | 'unknown';
+  deletionBlockedReason: string | null;
+};
+type Worktree = LocalGitResponse['worktrees'][number] & { deletionBlockedReason: string | null };
+export interface LocalGitOptions { activeWorktreePaths?: () => string[] }
+export type LocalGitAction =
+  | { action: 'delete-branch'; branch: string; expectedCommit: string; force?: boolean }
+  | { action: 'delete-worktree'; path: string; expectedCommit: string }
+  | { action: 'refresh-remotes' };
+
+async function git(path: string, args: string[], timeout = 10_000): Promise<string> {
+  const result = await run('git', ['-C', path, ...args], {
+    encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+  });
+  return result.stdout;
+}
+
+function parseBranches(output: string, config: string): Branch[] {
+  const configuredUpstreams = new Set(config.split('\0').map(entry => entry.split('\n')[0]));
+  return output.split('\n').filter(Boolean).flatMap((line) => {
+    const [name, head, upstream, commit, tracking, upstreamRef, symbolicRef] = line.split('\0');
+    if (!name || !commit) return [];
+    const upstreamStatus = upstreamRef ? (tracking === '[gone]' ? 'gone' : 'present')
+      : configuredUpstreams.has(`branch.${name}.merge`) ? 'unknown' : 'none';
+    return [{ name, current: head === '*', upstream: upstream || null, commit, upstreamStatus, deletionBlockedReason: symbolicRef ? 'Symbolic branch references are protected.' : null }];
+  });
+}
+
+function parseWorktrees(output: string): Worktree[] {
+  return output.split('\0\0').filter(Boolean).flatMap((record) => {
+    const fields = record.split('\0');
+    const path = fields.find((field) => field.startsWith('worktree '))?.slice(9);
+    if (!path) return [];
+    const branch = fields.find((field) => field.startsWith('branch '))?.slice(7);
+    return [{
+      path,
+      branch: branch?.replace(/^refs\/heads\//, '') ?? null,
+      commit: fields.find((field) => field.startsWith('HEAD '))?.slice(5) ?? '',
+      bare: fields.includes('bare'),
+      detached: fields.includes('detached'),
+      locked: fields.some((field) => field === 'locked' || field.startsWith('locked ')),
+      prunable: fields.some((field) => field === 'prunable' || field.startsWith('prunable ')),
+      deletionBlockedReason: null,
+    }];
+  });
+}
+
+async function activePaths(options: LocalGitOptions): Promise<Set<string>> {
+  const paths = options.activeWorktreePaths?.() ?? [];
+  if (!Array.isArray(paths) || paths.some(path => typeof path !== 'string' || !isAbsolute(path))) {
+    throw new Error('Active worktree state is unavailable.');
+  }
+  return new Set((await Promise.all(paths.map(async path => [resolve(path), await realpath(path).catch(() => resolve(path))]))).flat());
+}
+
+function githubOriginRepo(origin: string): string | null {
+  const scp = /^git@github\.com:([^\s]+)$/i.exec(origin);
+  if (scp?.[1]) return scp[1].replace(/\.git\/?$/, '').replace(/\/$/, '');
+  try {
+    const url = new URL(origin);
+    if (!['https:', 'ssh:'].includes(url.protocol) || url.hostname.toLowerCase() !== 'github.com' || url.port || url.search || url.hash) return null;
+    return url.pathname.replace(/^\//, '').replace(/\.git\/?$/, '').replace(/\/$/, '');
+  } catch { return null; }
+}
+
+async function mutationCheckoutError(agentsRoot: string, repo: string, path: string): Promise<string | null> {
+  const canonical = await realpath(path);
+  if (canonical !== join(await realpath(agentsRoot), repoBasename(repo))) return 'Configured checkout resolves outside its expected location.';
+  const common = await realpath((await git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
+  if (common !== canonical && !common.startsWith(`${canonical}${sep}`)) return 'Configured checkout uses Git metadata outside its expected location.';
+  const origins = (await git(path, ['config', '--get-all', 'remote.origin.url']).catch(() => '')).trim().split('\n').filter(Boolean);
+  if (origins.length !== 1 || githubOriginRepo(origins[0] ?? '')?.toLowerCase() !== repo.toLowerCase()) return 'Configured checkout origin does not match this GitHub repository.';
+  return null;
+}
+
+export async function getLocalGit(
+  agentsRoot: string,
+  repo: string,
+  configuredRepos: string[],
+  options: LocalGitOptions = {},
+): Promise<{ status: number; json: LocalGitResponse }> {
+  const empty: LocalGitResponse = { repo, path: null, branches: [], worktrees: [], error: null };
+  if (typeof repo !== 'string' || !isGithubRepo(repo)) return { status: 400, json: { ...empty, error: 'Repo must be owner/name.' } };
+  if (!configuredRepos.includes(repo)) return { status: 404, json: { ...empty, error: 'Repository is not configured.' } };
+  if (configuredRepos.some(other => other !== repo && repoBasename(other) === repoBasename(repo))) {
+    return { status: 409, json: { ...empty, error: 'Configured repositories share the same local checkout name.' } };
+  }
+  const path = resolve(agentsRoot, repoBasename(repo));
+  empty.path = path;
+  try {
+    await access(path);
+  } catch {
+    return { status: 200, json: { ...empty, error: 'Local checkout is missing or inaccessible.' } };
+  }
+  try {
+    const gitDir = (await git(path, ['rev-parse', '--absolute-git-dir'])).trim();
+    const hasGitEntry = await access(join(path, '.git')).then(() => true, () => false);
+    if (!hasGitEntry && await realpath(path) !== await realpath(gitDir)) {
+      return { status: 200, json: { ...empty, error: 'Configured checkout is not a Git repository.' } };
+    }
+    const [branchOutput, treeOutput, defaultsOutput, config, active, canonicalPath] = await Promise.all([
+      git(path, ['for-each-ref', '--sort=refname', '--format=%(refname:strip=2)%00%(HEAD)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream)%00%(symref)%00', 'refs/heads/']),
+      git(path, ['worktree', 'list', '--porcelain', '-z']),
+      git(path, ['for-each-ref', '--format=%(refname)%00%(symref)%00', 'refs/remotes/']),
+      git(path, ['config', '--null', '--list']),
+      activePaths(options),
+      realpath(path),
+    ]);
+    const defaults = new Set(['main', 'master']);
+    for (const line of defaultsOutput.split('\n')) {
+      const [ref, target] = line.split('\0');
+      if (ref?.endsWith('/HEAD') && target?.startsWith('refs/remotes/')) {
+        const branch = target.replace(/^refs\/remotes\/[^/]+\//, '');
+        defaults.add(branch);
+      }
+    }
+    const branches = parseBranches(branchOutput, config);
+    const worktrees = parseWorktrees(treeOutput);
+    for (const [index, tree] of worktrees.entries()) {
+      tree.deletionBlockedReason = tree.bare ? 'Bare repositories cannot be removed.'
+        : index === 0 || resolve(tree.path) === canonicalPath ? 'The primary or configured checkout cannot be removed.'
+        : tree.locked ? 'Worktree is locked.'
+        : tree.prunable ? 'Worktree is missing or inaccessible.'
+        : active.has(resolve(tree.path)) ? 'Worktree belongs to an active run.'
+        : tree.branch && defaults.has(tree.branch) ? 'Worktree contains a protected default branch.' : null;
+    }
+    for (const branch of branches) {
+      branch.deletionBlockedReason ??= defaults.has(branch.name) ? 'Default branches are protected.'
+        : branch.current || worktrees.some(tree => tree.branch === branch.name) ? 'Branch is checked out in a worktree.' : null;
+    }
+    return { status: 200, json: { ...empty, branches, worktrees } };
+  } catch {
+    return { status: 200, json: { ...empty, error: 'Unable to read the configured Git checkout.' } };
+  }
+}
+
+function parseAction(input: unknown): LocalGitAction | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  if (value.action === 'refresh-remotes') return { action: value.action };
+  if (typeof value.expectedCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value.expectedCommit)) return null;
+  if (value.action === 'delete-branch' && typeof value.branch === 'string' && value.branch.length > 0 && !value.branch.startsWith('-')
+    && (value.force === undefined || typeof value.force === 'boolean')) {
+    return { action: value.action, branch: value.branch, expectedCommit: value.expectedCommit, force: value.force };
+  }
+  if (value.action === 'delete-worktree' && typeof value.path === 'string' && isAbsolute(value.path) && !value.path.includes('\0') && value.force === undefined) {
+    return { action: value.action, path: value.path, expectedCommit: value.expectedCommit };
+  }
+  return null;
+}
+
+export async function mutateLocalGit(
+  agentsRoot: string,
+  repo: string,
+  configuredRepos: string[],
+  input: unknown,
+  options: LocalGitOptions = {},
+): Promise<{ status: number; json: LocalGitResponse }> {
+  const action = parseAction(input);
+  if (!action) return { status: 400, json: { repo, path: null, branches: [], worktrees: [], error: 'Invalid local Git action.' } };
+  const lockKey = resolve(agentsRoot, typeof repo === 'string' ? repoBasename(repo) : '');
+  const previous = mutationLocks.get(lockKey) ?? Promise.resolve();
+  const mutation = previous.catch(() => undefined).then(async () => {
+    const state = await getLocalGit(agentsRoot, repo, configuredRepos, options);
+    const fail = (status: number, error: string) => ({ status, json: { ...state.json, error } });
+    if (state.status !== 200 || state.json.error || !state.json.path) return state.status === 200 ? fail(409, state.json.error ?? 'Checkout unavailable.') : state;
+    const path = state.json.path;
+    try {
+      const checkoutError = await mutationCheckoutError(agentsRoot, repo, path);
+      if (checkoutError) return fail(409, checkoutError);
+      if (action.action === 'refresh-remotes') {
+        const remotes = (await git(path, ['remote'])).split('\n').filter(Boolean);
+        for (const remote of remotes) {
+          await git(path, ['check-ref-format', `refs/remotes/${remote}/helmsman-validation`]);
+          await git(path, ['fetch', '--prune', '--no-tags', '--no-prune-tags', '--no-recurse-submodules', '--refmap=', '--', remote, `+refs/heads/*:refs/remotes/${remote}/*`], 120_000);
+        }
+      } else if (action.action === 'delete-branch') {
+        const branch = state.json.branches.find(item => item.name === action.branch) as Branch | undefined;
+        if (!branch) return fail(404, 'Local branch no longer exists.');
+        if (branch.deletionBlockedReason) return fail(409, branch.deletionBlockedReason);
+        if (branch.commit !== action.expectedCommit) return fail(409, 'Branch changed. Refresh before deleting.');
+        await git(path, ['check-ref-format', `refs/heads/${action.branch}`]);
+        const current = (await git(path, ['rev-parse', '--verify', `refs/heads/${action.branch}`])).trim();
+        if (current !== action.expectedCommit) return fail(409, 'Branch changed. Refresh before deleting.');
+        if (action.force !== true) {
+          const mergeTarget = branch.upstreamStatus === 'present'
+            ? (await git(path, ['rev-parse', '--verify', `refs/heads/${action.branch}@{upstream}`])).trim()
+            : (await git(path, ['rev-parse', '--verify', 'HEAD'])).trim();
+          try { await git(path, ['merge-base', '--is-ancestor', action.expectedCommit, mergeTarget]); }
+          catch { return fail(409, 'Branch is not fully merged. Force deletion requires explicit confirmation.'); }
+        }
+        const trees = parseWorktrees(await git(path, ['worktree', 'list', '--porcelain', '-z']));
+        await activePaths(options);
+        if (trees.some(tree => tree.branch === action.branch)) return fail(409, 'Branch is checked out in a worktree.');
+        await git(path, ['update-ref', '--no-deref', '-d', `refs/heads/${action.branch}`, action.expectedCommit]);
+        const config = await git(path, ['config', '--null', '--list']);
+        if (config.split('\0').some(entry => entry.split('\n')[0]?.startsWith(`branch.${action.branch}.`))) {
+          await git(path, ['config', '--remove-section', `branch.${action.branch}`]);
+        }
+      } else {
+        const tree = state.json.worktrees.find(item => item.path === action.path) as Worktree | undefined;
+        if (!tree) return fail(404, 'Worktree is not registered with this repository.');
+        if (tree.deletionBlockedReason) return fail(409, tree.deletionBlockedReason);
+        if (tree.commit !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before deleting.');
+        const [common, treeCommon, head, canonicalTree] = await Promise.all([
+          git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
+          git(tree.path, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
+          git(tree.path, ['rev-parse', '--verify', 'HEAD']),
+          realpath(tree.path),
+        ]);
+        if (await realpath(common.trim()) !== await realpath(treeCommon.trim()) || canonicalTree !== resolve(tree.path)) {
+          return fail(409, 'Worktree identity changed. Refresh before deleting.');
+        }
+        if (head.trim() !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before deleting.');
+        const latest = parseWorktrees(await git(path, ['worktree', 'list', '--porcelain', '-z'])).find(item => item.path === tree.path);
+        if (!latest || latest.branch !== tree.branch || latest.commit !== action.expectedCommit || latest.locked || latest.bare || latest.prunable) {
+          return fail(409, 'Worktree changed. Refresh before deleting.');
+        }
+        if ((await git(tree.path, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])).length > 0) {
+          return fail(409, 'Worktree contains ignored files. Move or remove them before deleting the worktree.');
+        }
+        if ((await activePaths(options)).has(canonicalTree)) return fail(409, 'Worktree belongs to an active run.');
+        await git(path, ['worktree', 'remove', '--', tree.path]);
+      }
+      return await getLocalGit(agentsRoot, repo, configuredRepos, options);
+    } catch (error) {
+      const refreshed = await getLocalGit(agentsRoot, repo, configuredRepos, options);
+      if (action.action === 'refresh-remotes') return { status: 409, json: { ...refreshed.json, error: 'Unable to refresh remotes. Check network access and Git authentication.' } };
+      const details = error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string' ? error.stderr.trim().slice(0, 1500) : '';
+      return { status: 409, json: { ...refreshed.json, error: details || 'Local Git action failed. Refresh and try again.' } };
+    }
+  });
+  mutationLocks.set(lockKey, mutation);
+  try { return await mutation; }
+  finally { if (mutationLocks.get(lockKey) === mutation) mutationLocks.delete(lockKey); }
+}

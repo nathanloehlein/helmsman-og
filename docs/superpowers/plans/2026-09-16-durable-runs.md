@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make agent runs survive an orchestrator restart — the agent keeps running in a cmux workspace (or detached process), and on reconnect the orchestrator reattaches, resumes the live log stream, and finalizes normally.
+**Goal:** Make agent runs survive a Helmsman restart — the agent keeps running in a cmux workspace (or detached process), and on reconnect Helmsman reattaches, resumes the live log stream, and finalizes normally.
 
-**Architecture:** Truth moves to disk: a standalone wrapper writes each run's output to `<id>.log` and its exit code to `<id>.exit`; the orchestrator tails the log and awaits the sentinel instead of owning a child pipe. A `RunHost` (cmux primary, detached fallback) launches the wrapper. Adapters shrink from owning a process to `buildCommand()` + `parseLine()`. Recovery reattaches running rows instead of failing them.
+**Architecture:** Truth moves to disk: a standalone wrapper writes each run's output to `<id>.log` and its exit code to `<id>.exit`; Helmsman tails the log and awaits the sentinel instead of owning a child pipe. A `RunHost` (cmux primary, detached fallback) launches the wrapper. Adapters shrink from owning a process to `buildCommand()` + `parseLine()`. Recovery reattaches running rows instead of failing them.
 
 **Tech Stack:** TypeScript strict + `--erasableSyntaxOnly` (no ctor param props), Node `node:child_process`/`node:fs` under `tsx`, better-sqlite3, Vitest. `cmux` 0.64.x on PATH.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Per-run files live under `RUNS_DIR` (default `<AGENTS_ROOT>/.gomaestro-runs/`), NOT inside any worktree.
+- Per-run files live under `RUNS_DIR` (default `<AGENTS_ROOT>/.helmsman-runs/`), NOT inside any worktree.
 - Untrusted data (ticket title) reaches the agent only via the spec JSON file / argv arrays — never a shell command string.
 - Wrapper strips no env itself; the detached host spawns it with `JIRA_API_TOKEN`/`JIRA_EMAIL` removed. cmux-hosted agents run under cmux's env (documented tradeoff).
 - `--erasableSyntaxOnly`: explicit field + assignment, no constructor parameter properties.
@@ -24,7 +24,7 @@
 
 ### Task 1: DB columns + reattachable reader
 
-**Files:** Modify `server/orchestrator/db.ts`; Test `server/orchestrator/db.test.ts`.
+**Files:** Modify `server/helmsman/db.ts`; Test `server/helmsman/db.test.ts`.
 
 **Interfaces produced:** `RunRow` gains `hostKind: string | null; hostRef: string | null; logPath: string | null; exitPath: string | null; specPath: string | null; logOffset: number | null; taskJson: string | null;`. New `Db.reattachableRuns(): RunRow[]`.
 
@@ -32,7 +32,7 @@
 
 ```ts
 it('migrates: adds durable-run columns to a pre-existing runs table and round-trips them', () => {
-  const path = join(tmpdir(), `gm-mig-${Math.random().toString(36).slice(2)}.sqlite`);
+  const path = join(tmpdir(), `helmsman-mig-${Math.random().toString(36).slice(2)}.sqlite`);
   const legacy = new Database(path);
   legacy.exec(`CREATE TABLE runs (id TEXT PRIMARY KEY, ticketId TEXT, repo TEXT, adapter TEXT, status TEXT, attempt INTEGER, prNumber INTEGER, startedAt TEXT, endedAt TEXT, costUsd REAL, worktreePath TEXT);`);
   legacy.prepare(`INSERT INTO runs (id,ticketId,repo,adapter,status,attempt,prNumber,startedAt,endedAt,costUsd,worktreePath) VALUES ('old','T-1','o/r','codex','running',1,null,'t',null,null,null)`).run();
@@ -50,7 +50,7 @@ it('migrates: adds durable-run columns to a pre-existing runs table and round-tr
 
 Add imports at top of the test file if missing: `import Database from 'better-sqlite3'; import { join } from 'node:path'; import { tmpdir } from 'node:os';`.
 
-- [ ] **Step 2: Run → fails** (`npx vitest run server/orchestrator/db.test.ts`) — columns missing.
+- [ ] **Step 2: Run → fails** (`npx vitest run server/helmsman/db.test.ts`) — columns missing.
 
 - [ ] **Step 3: Implement.** In `db.ts`:
   - Extend `RunRow` with the 7 fields above (types as stated).
@@ -71,15 +71,15 @@ for (const [name, type] of addCols) {
   (Keep the base `CREATE TABLE` as the pre-migration 11-column shape so a fresh DB + a legacy DB converge through the same ALTER path. Simplest: leave the existing CREATE TABLE unchanged and rely on ALTER for the new columns.)
   - Add reader: `reattachableRuns(): RunRow[] { return sql.prepare("SELECT * FROM runs WHERE status = 'running' ORDER BY startedAt DESC").all() as RunRow[]; }` and add it to the `Db` interface.
 
-- [ ] **Step 4: Run → passes.** Also `npx vitest run server/orchestrator/db.test.ts`.
+- [ ] **Step 4: Run → passes.** Also `npx vitest run server/helmsman/db.test.ts`.
 
-- [ ] **Step 5: Commit** — `git add server/orchestrator/db.ts server/orchestrator/db.test.ts && git commit -m "Add durable-run columns and reattachableRuns to the run store"`
+- [ ] **Step 5: Commit** — `git add server/helmsman/db.ts server/helmsman/db.test.ts && git commit -m "Add durable-run columns and reattachableRuns to the run store"`
 
 ---
 
 ### Task 2: run-wrapper.mjs
 
-**Files:** Create `server/orchestrator/run-wrapper.mjs`; Test `server/orchestrator/run-wrapper.test.ts`.
+**Files:** Create `server/helmsman/run-wrapper.mjs`; Test `server/helmsman/run-wrapper.test.ts`.
 
 **Interfaces produced:** an executable Node script; `node run-wrapper.mjs <specPath>` reads `{cmd,args,cwd,logPath,exitPath}`, runs the agent, writes the exit code.
 
@@ -161,7 +161,7 @@ child.on('error', (err) => {
 
 ### Task 3: log-tail.ts
 
-**Files:** Create `server/orchestrator/log-tail.ts`; Test `server/orchestrator/log-tail.test.ts`.
+**Files:** Create `server/helmsman/log-tail.ts`; Test `server/helmsman/log-tail.test.ts`.
 
 **Interfaces produced:** `tailLog(logPath, startOffset, onLine, onOffset): { stop(): void }`.
 
@@ -269,7 +269,7 @@ Note: `onOffset` reports bytes consumed up to the last complete line (offset min
 
 ### Task 4: run-host.ts (detached + cmux + pickHost)
 
-**Files:** Create `server/orchestrator/run-host.ts`; Test `server/orchestrator/run-host.test.ts`.
+**Files:** Create `server/helmsman/run-host.ts`; Test `server/helmsman/run-host.test.ts`.
 
 **Interfaces produced:** `HostRef`, `LaunchSpec`, `RunHost`, `detachedHost(wrapperPath)`, `cmuxHost(wrapperPath, run)`, `pickHost(deps)`. (`run` = an argv runner injected for testability, default a real `spawnSync`-based exec.)
 
@@ -350,7 +350,7 @@ describe('pickHost', () => {
 
 ### Task 5: Adapter contract → buildCommand + parseLine
 
-**Files:** Modify `server/orchestrator/agents/adapter.ts`, `claude-code.ts`, `codex.ts`, `command.ts`; Tests `claude-code.test.ts`, `codex.test.ts`, `command.test.ts`.
+**Files:** Modify `server/helmsman/agents/adapter.ts`, `claude-code.ts`, `codex.ts`, `command.ts`; Tests `claude-code.test.ts`, `codex.test.ts`, `command.test.ts`.
 
 **Interfaces produced:** `AgentAdapter = { id; buildCommand(task): {cmd,args}; parseLine(line): AgentEvent|null }`. Remove `AgentHandle` and `start` from the interface (keep `AgentEvent`/`AgentResult`/`AgentTask`).
 
@@ -419,7 +419,7 @@ export function commandAdapter(template: string): AgentAdapter {
 
 Keep `buildArgv` + its tests; replace the `start`/spawn test with `buildCommand`/`parseLine` tests. An empty template → `cmd === ''` (runner treats an empty cmd as a failed run — assert in the runner task, not here).
 
-- [ ] **Step 5: Run adapter tests + tsc** — `npx vitest run server/orchestrator/agents/ && npx tsc --noEmit`. Expected: FAILURES in `runner.ts`/`main.ts`/`runner.test.ts` because they still call `adapter.start` — those are fixed in Tasks 6 & 8. Adapter-file tests + tsc-of-adapters pass. If tsc blocks on runner/main, that's expected mid-refactor; proceed to Task 6 (do not "fix" runner here).
+- [ ] **Step 5: Run adapter tests + tsc** — `npx vitest run server/helmsman/agents/ && npx tsc --noEmit`. Expected: FAILURES in `runner.ts`/`main.ts`/`runner.test.ts` because they still call `adapter.start` — those are fixed in Tasks 6 & 8. Adapter-file tests + tsc-of-adapters pass. If tsc blocks on runner/main, that's expected mid-refactor; proceed to Task 6 (do not "fix" runner here).
 
 - [ ] **Step 6: Commit** — `git commit -m "Adapter contract: buildCommand + parseLine (drop process ownership)"`
 
@@ -427,7 +427,7 @@ Keep `buildArgv` + its tests; replace the `start`/spawn test with `buildCommand`
 
 ### Task 6: Runner rewrite (launch via host + tail + reattach)
 
-**Files:** Modify `server/orchestrator/runner.ts`; Test `server/orchestrator/runner.test.ts`.
+**Files:** Modify `server/helmsman/runner.ts`; Test `server/helmsman/runner.test.ts`.
 
 **Interfaces:**
 - Consumes: Task 1 db, Task 3 `tailLog`, Task 4 `RunHost`/`HostRef`, Task 5 adapters.
@@ -452,7 +452,7 @@ Design notes for the implementer:
 
 - [ ] **Step 3: Implement** per the design notes.
 
-- [ ] **Step 4: Run → passes** (`npx vitest run server/orchestrator/runner.test.ts`).
+- [ ] **Step 4: Run → passes** (`npx vitest run server/helmsman/runner.test.ts`).
 
 - [ ] **Step 5: Commit** — `git commit -m "Runner: launch via RunHost, stream from the log file, add reattachRun"`
 
@@ -460,7 +460,7 @@ Design notes for the implementer:
 
 ### Task 7: Recovery rewrite (reattach, not fail)
 
-**Files:** Modify `server/orchestrator/recovery.ts`; Test `server/orchestrator/recovery.test.ts`.
+**Files:** Modify `server/helmsman/recovery.ts`; Test `server/helmsman/recovery.test.ts`.
 
 **Interfaces:** `recoverRuns(db, deps): Promise<{ reattached: string[]; failed: string[] }>` where `deps` carries what `reattachRun` needs plus `reattach: (row) => Promise<void>` (inject `reattachRun` for testability). Old `recoverOrphanedRuns(db, now)` is replaced; update its `main.ts` caller (Task 8).
 
@@ -505,10 +505,10 @@ export async function recoverRuns(db: Db, deps: RecoverDeps): Promise<{ reattach
 
 ### Task 8: main.ts wiring + worktree-sweep spare
 
-**Files:** Modify `server/orchestrator/main.ts`; (worktree.ts unchanged — the spare set is passed at the call site).
+**Files:** Modify `server/helmsman/main.ts`; (worktree.ts unchanged — the spare set is passed at the call site).
 
 - [ ] **Step 1: Wire.**
-  - `const RUNS_DIR = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.gomaestro-runs'); mkdirSync(RUNS_DIR, { recursive: true });`
+  - `const RUNS_DIR = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-runs'); mkdirSync(RUNS_DIR, { recursive: true });`
   - `const WRAPPER = join(import.meta.dirname, 'run-wrapper.mjs');` (or `fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url))`).
   - `const host = await pickHost({ hasCmux, wrapperPath: WRAPPER });` and log `host.kind`.
   - Build a `runnerDeps(task)` factory carrying `host`, `runsDir: RUNS_DIR`, and the existing jira/github/worktree/config deps; `launch()` uses it and persists `taskJson`.
@@ -518,7 +518,7 @@ export async function recoverRuns(db: Db, deps: RecoverDeps): Promise<{ reattach
 
 - [ ] **Step 2: Typecheck + full suite + build** — `npx tsc --noEmit && npx vitest run && npm run build`. Fix any remaining `start`/`AgentHandle` references. Expected: green.
 
-- [ ] **Step 3: Commit** — `git commit -m "Wire durable runs into the orchestrator: host, RUNS_DIR, reattach on startup, sweep spares live runs"`
+- [ ] **Step 3: Commit** — `git commit -m "Wire durable runs into the helmsman: host, RUNS_DIR, reattach on startup, sweep spares live runs"`
 
 ---
 

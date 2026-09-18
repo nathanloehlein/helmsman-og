@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 
 const procs = [
-  spawn('npm', ['run', 'orchestrator'], { stdio: 'inherit' }),
+  spawn('npm', ['run', 'helmsman'], { stdio: 'inherit' }),
   spawn('npx', ['vite'], { stdio: 'inherit' }),
 ];
 

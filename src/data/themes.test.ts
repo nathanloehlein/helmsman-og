@@ -31,14 +31,23 @@ const REQUIRED_VAR_KEYS: readonly string[] = [
   '--queued',
 ];
 
+function luminance(hex: string): number {
+  const channels: number[] = (hex.match(/[a-f\d]{2}/gi) ?? []).map((channel) => {
+    const value: number = parseInt(channel, 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  const [r = 0, g = 0, b = 0] = channels;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
 describe('THEMES data', () => {
   it('has unique ids', () => {
     const ids: string[] = THEMES.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('lists amber first as the default theme', () => {
-    expect(THEMES[0]?.id).toBe('amber');
+  it('lists Quarterdeck first as the default theme', () => {
+    expect(THEMES[0]?.id).toBe('quarterdeck');
     expect(THEMES[0]?.id).toBe(DEFAULT_THEME_ID);
   });
 
@@ -94,6 +103,28 @@ describe('THEMES data', () => {
     expect(modes.has('dark')).toBe(true);
     expect(modes.has('light')).toBe(true);
   });
+
+  it.each(['quarterdeck', 'abyss', 'forest', 'ember', 'aubergine', 'graphite', 'phosphor'])(
+    '%s keeps text, accents, and status colors readable across its dark surfaces',
+    (id) => {
+      const theme: Theme | undefined = getTheme(id);
+      expect(theme?.mode).toBe('dark');
+      if (!theme) throw new Error(`Missing theme: ${id}`);
+      const foregrounds: string[] = ['--text', '--text-dim', '--text-faint', '--accent', '--bad', '--good', '--review', '--queued'];
+      const backgrounds: string[] = ['--bg', '--gutter', '--panel', '--panel-2', '--panel-hi'];
+      for (const foreground of foregrounds) {
+        for (const background of backgrounds) {
+          const foregroundHex: string = theme.vars[foreground] ?? '';
+          const backgroundHex: string = theme.vars[background] ?? '';
+          expect(foregroundHex).toMatch(/^#[a-f\d]{6}$/i);
+          expect(backgroundHex).toMatch(/^#[a-f\d]{6}$/i);
+          const lighter: number = luminance(foregroundHex);
+          const darker: number = luminance(backgroundHex);
+          expect((lighter + 0.05) / (darker + 0.05), `${id}: ${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    },
+  );
 });
 
 describe('loadThemeId / saveThemeId', () => {
@@ -180,7 +211,7 @@ describe('applyTheme (DOM)', () => {
   it('falls back to the default theme for an unknown id', () => {
     applyTheme('dracula');
     applyTheme('nonsense-theme-id');
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('');
-    expect(document.documentElement.dataset.theme).toBe('amber');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(getTheme(DEFAULT_THEME_ID)?.vars['--accent']);
+    expect(document.documentElement.dataset.theme).toBe(DEFAULT_THEME_ID);
   });
 });
