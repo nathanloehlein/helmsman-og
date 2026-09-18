@@ -353,7 +353,7 @@ html, body {
   position: relative;
 }
 .lane:last-child { border-bottom: none; }
-.lane:hover { background: rgba(245, 166, 35, 0.05); }
+.lane:hover, .voyage-history-row:hover { background: rgba(245, 166, 35, 0.05); }
 .lane-no { color: var(--accent); font-size: 13px; width: 2ch; flex: 0 0 auto; }
 .ticket-id { font-family: var(--mono); font-size: 12.5px; color: var(--text); white-space: nowrap; }
 .ticket-link { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--accent-dim, var(--line)); }
@@ -388,6 +388,7 @@ html, body {
 .voyage-copy-feedback:empty { display: none; }
 .voyage-history-row { display: flex; align-items: center; gap: 8px; padding-right: 14px; }
 .voyage-history-row > .runs-voyage-link { flex: 1; min-width: 0; }
+.voyage-history-row > .runs-voyage-link:hover { background: transparent; }
 .voyage-history-row > .voyage-id { flex: 0 0 auto; max-width: 40%; }
 
 /* the amber link rail: grows to fill, ends in a ring; state by stroke pattern */
