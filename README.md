@@ -228,6 +228,11 @@ preview. **Download full log** retrieves all persisted output, including earlier
 entries and full-length lines. For an active run, the download is a snapshot at
 the time it is requested. Completed voyages close their log streams.
 
+Output uses the selected theme's background, text, and syntax colors. Commands,
+JSON, code snippets, and diffs receive lightweight highlighting; errors keep a
+distinct colored edge. The log has no grid or text glow. Highlighting changes
+presentation only; full log downloads retain the original output.
+
 The **Recent voyages** panel lists completed/failed/stopped runs. Click any to re-open its
 stored log (replayed from SQLite), final status, cost, and PR link — the same drawer used
 for live runs.

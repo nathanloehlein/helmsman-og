@@ -7,8 +7,8 @@ class RunStream {
   close = vi.fn();
   readonly url: string;
   constructor(url: string) { this.url = url; RunStream.instances.push(this); }
-  emit(id: number, kind = 'stdout'): void {
-    this.onmessage?.({ data: JSON.stringify({ id, runId: this.url.split('/').at(-2), ts: '2026-09-17T00:00:00Z', kind, text: `line ${id}` }) } as MessageEvent<string>);
+  emit(id: number, kind = 'stdout', text = `line ${id}`): void {
+    this.onmessage?.({ data: JSON.stringify({ id, runId: this.url.split('/').at(-2), ts: '2026-09-17T00:00:00Z', kind, text }) } as MessageEvent<string>);
   }
 }
 
@@ -55,6 +55,22 @@ const body = () => document.querySelector<HTMLElement>('.run-drawer-body')!;
 const flush = () => vi.advanceTimersByTimeAsync(40);
 
 describe('bounded voyage log rendering', () => {
+  it('highlights batched output safely and preserves existing rows on append', async () => {
+    const text = '{"html": "<img src=x onerror=alert(1)>", "code": 42}';
+    RunStream.instances[0]!.emit(1, 'log', text);
+    expect(body().children).toHaveLength(0);
+    await flush();
+    const row = body().firstElementChild;
+    expect(row?.textContent).toBe(text);
+    expect(row?.querySelector('.log-token-key')?.textContent).toBe('"html"');
+    expect(row?.querySelector('img')).toBeNull();
+    RunStream.instances[0]!.emit(2, 'error', 'const message = "failed"');
+    await flush();
+    expect(body().firstElementChild).toBe(row);
+    expect(body().lastElementChild?.classList.contains('run-line-error')).toBe(true);
+    expect(body().lastElementChild?.children).toHaveLength(0);
+  });
+
   it('batches thousands of events, retains the latest 300, and completes without replacing the drawer', async () => {
     const log = body();
     const height = vi.spyOn(log, 'scrollHeight', 'get');

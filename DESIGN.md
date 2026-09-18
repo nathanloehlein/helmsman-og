@@ -19,9 +19,6 @@ colors:
   review-blue: "#58c7ff"
   queued-amber: "#ffb02e"
   live-green: "#57e39a"
-  scope-ground: "#05100b"
-  phosphor-green: "#4df2a1"
-  phosphor-bright: "#daffee"
   lamp-idle: "#2a2d34"
   hairline: "rgba(245, 166, 35, 0.15)"
   hairline-strong: "rgba(245, 166, 35, 0.32)"
@@ -140,7 +137,7 @@ components:
 
 Helmsman is a ship's navigation bridge for an autonomous coding fleet. The **Helm** page puts launch controls, fleet state, review decisions, and the **Ship’s log** within reach. Brushed-graphite faceplates sit on dark mounting rails; the operator can drag panels to reorder, stack them into tabs, and collapse them. The arrangement persists across sessions.
 
-The bridge keeps a near-black ground, brushed metal, and one signal amber for legends, hairlines, and highlights. Phosphor-green run logs and amber seven-segment fleet counts remain readable in the dark. State is told by **shape** first: filled, hollow, and crossed indicator lamps plus distinct lane-rail strokes carry meaning alongside color. The nameplate pairs the ship’s-wheel emblem with **Helmsman**, without a subtitle.
+The bridge defaults to Quarterdeck's sea-blue ground, wood-brown surfaces, and brass accents for legends, hairlines, and highlights. Run logs and seven-segment fleet counts follow the selected theme. State is told by **shape** first: filled, hollow, and crossed indicator lamps plus distinct lane-rail strokes carry meaning alongside color. The nameplate pairs the ship’s-wheel emblem with **Helmsman**, without a subtitle.
 
 The startup sequence establishes the nautical identity: a ship's wheel sits inside a compass bearing ring while a route trace plots a course. Navigation, heading, course, crew, and fleet-readiness messages accompany loading. Once the dashboard is ready, motion settles to the LIVE lamp and brief control feedback so the operator can focus on the fleet.
 
@@ -167,16 +164,16 @@ A near-monochrome instrument palette: graphite grounds, one saturated signal amb
 - **Hairlines**: amber-tinted `hairline` (`rgba(245,166,35,0.15)`), `hairline-strong` (`0.32`), and white-tinted `hairline-faint` (`rgba(255,255,255,0.06)`) for interior panel divisions.
 
 ### Fixed Instrument Signals (not expressive, not fully themed)
-- **Phosphor Green** (`#4df2a1`) on **Scope Ground** (`#05100b`): reserved for the navigation run-log drawer only — graticule grid, glowing text, CRT shadow. Never a UI accent.
+- **Log output** uses theme variables for its plain background, readable text, syntax tokens, and event markers. No grid, glow, or fixed terminal palette.
 - **Live Green** (`#57e39a`): the LIVE lamp and the running lane-ring. Fixed across every theme.
 - **Succeeded Green** (`#46e2a0`), **Review Blue** (`#58c7ff`), **Queued Amber** (`#ffb02e`), **Fault Red** (`#ff6b57`): state signals for chips and lane rails. Fault Red is reserved for the failed-run crossed ring, the request-changes action, the fault lamp, and P1 priority — it never marks routine state.
 
 ### Named Rules
 **The Signal-Amber-Only Rule.** Exactly one accent carries the interface; all other hues are fixed instrument signals attached to a specific state, never used expressively or decoratively.
 
-**The Dark-Ground Rule.** The `.helm` scope re-asserts the near-black ground, graphite faceplates, and warm text on top of any theme. A theme recolors the signal amber (and the state hues) — it can never wash the helm toward light. Auditing test: switch to GitHub Light; the faceplates and their text must stay dark and legible.
+**The Theme-Surface Rule.** The `.helm` scope inherits the selected theme's surfaces and text. Dark and light themes apply to the entire app, including open voyage output.
 
-**The Phosphor Reserve Rule.** Phosphor green and the scope ground belong to the navigation log drawer alone. The only other emissive green on the helm is the fixed LIVE lamp / running lane-ring.
+**The Readable-Log Rule.** Logs use plain backgrounds and theme text. Syntax color adds structure; errors retain their severity color and a visible edge. Preserve output whitespace and bounded, batched rendering.
 
 ## Typography
 
@@ -216,17 +213,16 @@ Responsive: below **1080px** the rack and triage grids collapse to a single colu
 
 Depth is **material, not ambient** — every surface is built to read as a physical rack-mounted metal panel, not as a floating card. The faceplate combines three cues at once: a top-bevel highlight (`inset 0 1px 0 rgba(255,255,255,0.08)`), an inset dark seating ring (`inset 0 0 0 1px rgba(0,0,0,0.35)`), and a real drop shadow (`0 3px 10px rgba(0,0,0,0.35)`), over a brushed-metal gradient (a 1px repeating vertical striping plus a top-lit graphite gradient). The helm header and run drawer carry the same inset-highlight + drop-shadow pair.
 
-Glow is treated as **light emission, never elevation**: LED lamps cast a colored `box-shadow` halo (e.g. `0 0 7px var(--live-green)`), the phosphor scope text carries a green `text-shadow`, and the brand plate uses inset shadows to look domed and pressed.
+Glow is treated as **light emission, never elevation**: LED lamps cast a colored `box-shadow` halo, while the brand plate uses inset shadows to look domed and pressed. Log text has no glow.
 
 ### Shadow Vocabulary
 - **Machined faceplate** (`box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(0,0,0,0.35), 0 3px 10px rgba(0,0,0,0.35)`): every rack unit and the run drawer.
 - **Header/helm strip** (`inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 8px rgba(0,0,0,0.4)`): the nameplate header.
 - **Helm medallion**: a dark radial metal ground, inset highlight, and amber wheel rim; the central compass needle carries a small light-facing edge.
 - **LED halo** (`0 0 5–7px <signal>`): live and queued lamps; a light, not a lift.
-- **Phosphor bloom** (`text-shadow: 0 0 4px rgba(77,242,161,0.3)`): navigation log text.
 
 ### Named Rules
-**The Machined-Faceplate Rule.** Every rack unit carries the top-bevel highlight + inset dark ring + drop shadow so it reads as a seated metal panel. Colored shadow is reserved for light-emitting elements (lamps, phosphor); it is never used to lift a surface.
+**The Machined-Faceplate Rule.** Every rack unit carries the top-bevel highlight + inset dark ring + drop shadow so it reads as a seated metal panel. Colored shadow is reserved for lamps; it is never used to lift a surface.
 
 ## Shapes
 
@@ -290,7 +286,7 @@ Each row (`.lane`) is `NN` · id · label · **`.lane-rail`** (a flex amber hair
 - **Active:** amber text on faceplate ground with a 2px amber bottom-border. Slot tabs (within a stacked faceplate) use the same pattern at a smaller size.
 
 ### Navigation Run Drawer (signature)
-The live run log is a navigation-console display: phosphor-green mono text on scope ground, over a graticule built from two crossed repeating-linear-gradients (22px rows × 26px columns), with a green text-shadow bloom. Tabs across the top let the operator keep several runs open; a small dot marks a completed run. Tool lines are dimmer green, errors go Fault Red (no bloom), results brighten toward white.
+The live run log uses a plain `--bg` surface with `--text` mono output. Tabs use `--panel-2` and show each voyage's short ID; the toolbar uses `--panel`. Commands, JSON, code snippets, headings, and diffs receive bounded syntax highlighting using theme colors. Tool events have a subtle edge; errors use `--bad` with a visible border; results and review verdicts use accent edges. No grid or text shadow. Tabs keep several voyages open, and a small dot marks a completed run.
 
 ### Startup / Course Plotting
 The shared wheel-and-compass emblem (`public/helm-emblem.svg`) appears in both the header and loading screen. A compass bearing ring surrounds it during loading; there is no separate letter badge. A route trace supplies the course-plotting motion; the Helmsman wordmark, progress readout, and navigation log preserve the graphite-and-amber bridge styling. Loading messages refer to navigation, heading, course, crew, and fleet readiness. The sequence yields to the Helm dashboard when loading completes; reduced-motion preferences suppress continuous animation.
@@ -310,8 +306,8 @@ The header fleet readout renders run / queue / review counts in DSEG7 amber digi
 
 ### Don't:
 - **Don't** add a second expressive accent, or use a state hue (green/red/blue) for anything but its assigned instrument signal. Fault Red never marks routine state.
-- **Don't** let phosphor green or the scope ground leave the navigation drawer.
+- **Don't** hardcode terminal colors or add decorative grids behind log output.
 - **Don't** introduce a merge control anywhere on the helm — the agent never merges; merge is a human action on GitHub. (Hard product invariant.)
-- **Don't** ship a light-washed surface: `.helm` must re-assert the dark ground under every theme.
+- **Don't** override a selected theme's surfaces with a fixed palette.
 - **Don't** add a second corner radius or a condensed/system display face; one radius (3px) and two self-hosted voices only.
 - **Don't** blank a slice on missing data — degrade to sample data behind the banner, keeping the panel rendered.

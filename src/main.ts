@@ -1,4 +1,5 @@
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
+import { appendHighlightedLog } from './logic/logHighlight';
 import { getContext } from './data/context';
 import { emptyLocalGit, fetchLocalGit, updateLocalGit, type LocalGitAction, type LocalGitState } from './data/localGit';
 import { renderLocalGit } from './renderLocalGit';
@@ -1869,7 +1870,7 @@ export class DashboardView {
   private lineEl(event: RunEvent): HTMLDivElement {
     const line: HTMLDivElement = document.createElement('div');
     line.className = `run-line run-line-${event.kind}`;
-    line.textContent = event.text;
+    appendHighlightedLog(line, event.text, event.kind);
     return line;
   }
 
