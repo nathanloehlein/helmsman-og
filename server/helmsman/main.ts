@@ -20,6 +20,7 @@ import { hasCmux, pickHost, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
+import { isPrePrAdapter, prePrAdapter } from './agents/pre-pr';
 import { createWorktree, createWorktreeFromBranch, createReviewWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, fetchPrDiff, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
@@ -76,6 +77,7 @@ const host: RunHost = await pickHost({ hasCmux, wrapperPath: WRAPPER, preferCmux
 process.stdout.write(`run host: ${host.kind}\n`);
 
 function adapterFor(id: string, cfg: AppConfig): AgentAdapter {
+  if (isPrePrAdapter(id)) return prePrAdapter(id === 'pre-pr:claude-code' ? claudeCodeAdapter : codexAdapter, RUNS_DIR);
   if (id === 'command') return commandAdapter(cfg.agentCmd ?? '');
   if (id === 'claude-code') return claudeCodeAdapter;
   return codexAdapter;
@@ -162,6 +164,7 @@ function dispatchReattach(row: RunRow): Promise<void> {
   const deps: RunnerDeps = {
     ...baseRunnerDeps(cfg, jira),
     adapter: adapterFor(row.adapter, cfg),
+    preserveWorktreeOnFailure: isPrePrAdapter(row.adapter),
     genId: () => row.id,
     onLaunch: (_runId: string, stop: () => Promise<void>) => {
       control.stop = stop;
@@ -186,7 +189,11 @@ try {
     const removed: string[] = await sweepOrphanedWorktrees({
       listAgentWorktrees,
       remove: removeWorktreeAt,
-      isActiveRunId: (id: string) => pm.hasRun(id) || reattachIds.includes(id),
+      isActiveRunId: (id: string) => {
+        if (pm.hasRun(id) || reattachIds.includes(id)) return true;
+        const row = db.getRun(id);
+        return Boolean(row && isPrePrAdapter(row.adapter) && row.status !== 'succeeded');
+      },
       repoDirs,
     });
     if (removed.length > 0) process.stdout.write(`swept ${removed.length} orphaned worktree(s)\n`);
@@ -287,9 +294,11 @@ function launch(body: { ticketId?: string; title?: string; repo: string; task?: 
       }
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;
+      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR) : adapter;
       await startRun(taskObj, {
         ...baseRunnerDeps(cfg, jira),
-        adapter,
+        adapter: runAdapter,
+        ...(isPrePrAdapter(runAdapter.id) ? { maxAttempts: 1, preserveWorktreeOnFailure: true } : {}),
         genId: () => runId,
         onLaunch: (_runId: string, stop: () => Promise<void>) => {
           control.stop = stop;

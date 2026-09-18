@@ -105,6 +105,32 @@ function deps(db: Db, adapter: AgentAdapter, host: RunHost, runsDir: string): Ru
 }
 
 describe('startRun', () => {
+  it('preserves a failed pre-PR worktree and reports its location without queuing publication side effects', async () => {
+    const db = openDb(':memory:');
+    try {
+      const enqueueCreatedPrReview = vi.fn();
+      const d = { ...deps(db, jsonAdapter('pre-pr:codex'), singleAttemptHost([{ kind: 'error', text: 'Unresolved findings' }], false), freshRunsDir()),
+        preserveWorktreeOnFailure: true, enqueueCreatedPrReview };
+      const id = await startRun(task, d);
+      expect(db.getRun(id)?.status).toBe('failed');
+      expect(d.removeWorktree).not.toHaveBeenCalled();
+      expect(enqueueCreatedPrReview).not.toHaveBeenCalled();
+      expect(db.listEvents(id).some(event => event.text === 'Worktree retained for inspection: /tmp/wt')).toBe(true);
+    } finally { db.close(); }
+  });
+
+  it('cleans up a published pre-PR worktree and queues the existing post-publication review', async () => {
+    const db = openDb(':memory:');
+    try {
+      const enqueueCreatedPrReview = vi.fn();
+      const d = { ...deps(db, jsonAdapter('pre-pr:codex'), singleAttemptHost([], true, 42), freshRunsDir()),
+        preserveWorktreeOnFailure: true, enqueueCreatedPrReview };
+      await startRun(task, d);
+      expect(d.removeWorktree).toHaveBeenCalledWith('o/r', '/tmp/wt');
+      expect(enqueueCreatedPrReview).toHaveBeenCalledWith({ parentRunId: 'run-1', repo: 'o/r', prNumber: 42 });
+    } finally { db.close(); }
+  });
+
   it('pins review worktrees and persists model selection in task metadata and phase events', async () => {
     const db = openDb(':memory:');
     try {
@@ -881,6 +907,25 @@ describe('reattachRun', () => {
       hostKind: 'detached', hostRef: JSON.stringify({ kind: 'detached', pid: 1 }),
     };
   }
+
+  it('retains failed gated work after recovery without relaunching the author', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = { ...baseRow(runsDir), adapter: 'pre-pr:codex' };
+      writeFileSync(row.logPath!, JSON.stringify({ kind: 'error', text: 'Review did not complete' }) + '\n');
+      writeFileSync(row.exitPath!, '1');
+      db.insertRun(row);
+      const host = fakeHost(() => ({ events: [], ok: true }));
+      const launch = vi.spyOn(host, 'launch');
+      const d = { ...deps(db, jsonAdapter('pre-pr:codex'), host, runsDir), preserveWorktreeOnFailure: true };
+      await reattachRun(row, d);
+      expect(db.getRun(row.id)?.status).toBe('failed');
+      expect(d.removeWorktree).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+      expect(db.listEvents(row.id).some(event => event.text.includes('Worktree retained'))).toBe(true);
+    } finally { db.close(); }
+  });
 
   it('finalizes to the stored exit code status when the exit file is already present', async () => {
     const db: Db = openDb(':memory:');

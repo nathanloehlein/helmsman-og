@@ -12,6 +12,14 @@ export interface AgentTask {
   prHeadSha?: string;
   reviewComplexity?: 'low' | 'medium' | 'high';
   reviewReason?: string;
+  prePr?: {
+    stage: 'implement' | 'review' | 'fix';
+    baseSha: string;
+    headSha?: string;
+    reportPath: string;
+    feedback?: string;
+    round?: number;
+  };
 }
 
 export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'error' | 'review-verdict' | 'run-complete';

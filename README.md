@@ -220,6 +220,39 @@ Jira key + pick a repo (Helmsman fetches the summary for the title, fail-soft); 
 **Free-form** mode, give a task prompt + repo and no Jira ticket is touched (no claim, no
 transition — the run row is labelled `freeform`). Both stream into the same live drawer.
 
+### Review before PR creation
+
+Every new coding voyage implements and commits locally, then passes an adversarial
+review before Helmsman pushes the branch or opens a PR. A fresh reviewer session
+uses the writer's CLI; if the other supported CLI is installed, a second session
+uses it too. Currently supported CLIs are Codex and Claude Code. Authenticate both
+if both are installed: a broken alternate reviewer blocks publication rather than
+silently reducing the review gate.
+
+Reviewers inspect the same pinned commit in separate detached worktrees and focus
+on material logic, structure, acceptance criteria, UX, and external effects. Codex
+reviewers require the installed `$review-agent` skill; each CLI delegates relevant
+areas to focused leaf agents. Reviews default to low effort and use medium for
+larger changes across areas. The author fixes verified findings, then **all**
+reviewers review the new commit again. There are at most three review rounds
+(two remediation rounds). Every reviewer must approve with no findings; incomplete
+reviews, missing tools, changed revisions, and exhausted rounds block publication.
+
+Helmsman publishes the reviewed commit itself, targeting the repository's default
+branch. It selects a remote whose fetch and push URLs match the voyage repository
+(prefer `origin`, otherwise require one matching remote), then verifies the pushed
+SHA. The voyage log shows each stage. Failed or stopped voyages retain the author
+worktree for inspection and repair; review reports and PR metadata live under the
+run directory in a `.pre-pr` artifact folder. These worktrees survive restart sweeps
+and can be removed from the local branches/worktrees page when no longer needed.
+The workflow runs in the existing durable run host and survives server restarts.
+
+This gate applies to new coding voyages, not existing-PR feedback reruns. The generic
+`command` adapter cannot launch a new coding voyage because it cannot provide this
+review contract. `AGENT_MAX_ATTEMPTS` does not multiply the three review rounds.
+Each author or reviewer session has a 45-minute timeout. The existing post-PR review
+and Copilot request still run after successful publication.
+
 ### Recent voyages
 
 After a successful coding voyage opens a PR, Helmsman requests Copilot and queues
@@ -369,16 +402,19 @@ Three adapters implement the same `AgentAdapter` contract, selected by `AGENT_AD
 
 ### Caps
 
-`AGENT_MAX_ATTEMPTS` bounds retries; `AGENT_MAX_COST_USD` (opt-in) stops the retry loop
-once accumulated cost across attempts reaches the cap. Both, and the live attempt/cost of
+`AGENT_MAX_ATTEMPTS` bounds retries for existing-PR voyages; new coding voyages use
+one gated workflow with the bounded review loop above. `AGENT_MAX_COST_USD` (opt-in)
+stops work once reported cost reaches the cap. Pre-PR voyages aggregate reported
+cost across author and reviewer sessions; Codex sessions currently provide no cost
+data, so the cap cannot bound their spend. Both, and the live attempt/cost of
 each run, show on the running-agent rows (`×attempt/max`, `$cost/$cap`).
 
 ### Resilience
 
-On startup Helmsman reconciles any run left `running` by a crash to `failed`
-(its child process is gone) and sweeps orphaned agent worktrees — those under a repo's
-`.worktrees/` that no live run owns. Both are fail-soft: a failure is logged and never
-blocks the server from listening.
+On startup Helmsman reattaches to surviving run hosts and marks interrupted runs
+failed when their host is gone. It sweeps orphaned agent worktrees under each repo's
+`.worktrees/`, except failed or stopped pre-PR voyages retained for recovery. These
+checks are fail-soft: a failure is logged and never blocks the server from listening.
 
 ## Configuration
 
@@ -451,7 +487,7 @@ Slack text fields are blank by default and the watcher is off. See
 | --- | --- | --- | --- |
 | `AGENT_ADAPTER` | `codex` | `codex`, `claude-code`, or `command`; install/sign in to that CLI on the server machine. Unknown values fall back to Codex. | Live |
 | `AGENT_CMD` | Empty | Executable and argument template for the command adapter; see [Agent backends](#agent-backends). Does not invoke a shell. | Live |
-| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts per voyage, including the initial attempt; `1` means no retry. | Live |
+| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts for existing-PR voyages, including the initial attempt; `1` means no retry. New coding voyages always use one workflow with up to three pre-PR review rounds. | Live |
 | `AGENT_MAX_COST_USD` | Empty (no cap) | Cost limit in USD across attempts, enforced when the adapter reports cost. It cannot bound spend for adapters that do not report cost, including the current Codex and command adapters. | Live |
 | `AGENT_MAX_CONCURRENCY` | `3` | Maximum simultaneous runs across repositories. The separate one-run-per-repository limit still applies. | Restart |
 | `AUTO_CLAIM_INTERVAL_MS` | `60000` | Interval in milliseconds for the optional ticket auto-claim scheduler. Does not enable auto-claim or control either PR watcher. | Config-editable; restart timer |

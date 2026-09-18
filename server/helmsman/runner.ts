@@ -30,6 +30,7 @@ export interface RunnerDeps {
   findPrNumber?: (repo: string, branch: string) => Promise<number | null>;
   maxAttempts?: number;
   maxCostUsd?: number | null;
+  preserveWorktreeOnFailure?: boolean;
   isStopped?: () => boolean;
   readReview?: (worktreePath: string) => Promise<string | null>;
   readReviewComments?: (worktreePath: string) => Promise<string | null>;
@@ -271,9 +272,15 @@ async function resolvePrNumber(
 }
 
 async function completeRun(runId: string, repo: string, worktreePath: string | null, deps: RunnerDeps): Promise<void> {
-  if (worktreePath) await deps.removeWorktree(repo, worktreePath);
   const finalRow: RunRow | null = deps.db.getRun(runId);
   const finalStatus: string = finalRow?.status ?? 'failed';
+  if (worktreePath) {
+    if (deps.preserveWorktreeOnFailure && finalStatus !== 'succeeded') {
+      const text = `Worktree retained for inspection: ${worktreePath}`;
+      deps.db.appendEvent(runId, 'phase', text, deps.now());
+      deps.bus.publish(runId, { kind: 'phase', text });
+    } else await deps.removeWorktree(repo, worktreePath);
+  }
   deps.db.appendEvent(runId, 'run-complete', finalStatus, deps.now());
   deps.bus.publish(runId, { kind: 'run-complete', text: finalStatus });
 }

@@ -1,8 +1,10 @@
 import type { AgentTask } from './adapter';
+import { buildPrePrPrompt } from './pre-pr-prompt';
 
 const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: no human to ask — never pause for confirmation, do every step yourself.';
 
 export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 'claude-code'): string {
+  if (task.prePr) return buildPrePrPrompt(task, runtime);
   if (task.review && task.prNumber && (task.prBranch || task.prHeadSha)) {
     return [
       `# Code-review PR #${task.prNumber} (${task.prBranch ? `branch ${task.prBranch}` : `revision ${task.prHeadSha}`})`,
