@@ -25,6 +25,7 @@ import { createWorktree, createWorktreeFromBranch, createReviewWorktree, discove
 import { makeLiveJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, fetchPrDiff, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
 import { fetchRepoOpenPrs, fetchReviewRequestedPrs } from '../pr-lists';
+import { fetchGithubProfile } from '../github-profile';
 import { getLocalGit, mutateLocalGit } from '../local-git';
 import type { PrFileDiff } from '../../src/types';
 import { openTodoStore, TodoConflictError } from './todos';
@@ -500,6 +501,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const body: unknown = hasBody ? await readBody(req) : null;
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
       outboundUsage: () => outboundMeter.snapshot(),
+      githubProfile: () => fetchGithubProfile(configStore.current().github),
       context: () => {
         const cfg = configStore.current();
         return {

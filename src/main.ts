@@ -1,3 +1,5 @@
+import { term, setPirateMode, isPirateMode } from './logic/terminology';
+import { loadProfile } from './data/profile';
 import { copyText } from './logic/clipboard';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
 import { appendHighlightedLog } from './logic/logHighlight';
@@ -102,9 +104,9 @@ interface RunTab {
 }
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
-  if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
-  if (summary.status === 'succeeded') return 'Succeeded';
-  if (summary.status === 'failed') return 'Failed';
+  if (summary.status === 'succeeded' && summary.prNumber != null) return term('inReview');
+  if (summary.status === 'succeeded') return term('success');
+  if (summary.status === 'failed') return term('failed');
   if (summary.status === 'stopped') return 'Stopped';
   return summary.status;
 }
@@ -192,6 +194,8 @@ export class DashboardView {
   private cmuxCapturing: boolean = false;
   private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
   private themeId: string = loadThemeId();
+  private greetingName: string | null = null;
+  private configSaves: number = 0;
   private jiraBaseUrl: string | null = null;
   private jiraEnabled: boolean = true;
   private todos: TodosViewState = { items: [], loading: false, error: null, search: '', stateFilter: 'all' };
@@ -253,6 +257,10 @@ export class DashboardView {
     }, { signal: this.rootEvents.signal });
     this.root.addEventListener('change', (event: Event): void => {
       const control = event.target;
+      if (control instanceof HTMLInputElement && control.matches('[data-pirate-mode]')) {
+        this.changePirateMode(control.checked);
+        return;
+      }
       if (control instanceof HTMLInputElement && control.matches('.local-git-cleanup-force')) {
         if (control.disabled || this.localGit.loading || this.localGit.pendingAction) return;
         this.localGit = { ...this.localGit, cleanup: undefined, cleanupForce: control.checked };
@@ -325,6 +333,7 @@ export class DashboardView {
   }
 
   async start(): Promise<void> {
+    void this.loadGreeting();
     window.addEventListener('popstate', this.onPopState);
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -343,6 +352,49 @@ export class DashboardView {
     await this.refresh();
     await this.navigate(route, 'replace');
     this.refreshTimer = setInterval(() => void this.refresh(false), LOCAL_POLL_MS);
+  }
+
+  private async loadGreeting(): Promise<void> {
+    const profile = await loadProfile();
+    if (this.destroyed) return;
+    this.greetingName = profile.displayName ?? profile.login;
+    this.syncShell();
+  }
+
+  private syncPirateToggle(): void {
+    const toggle = this.root.querySelector<HTMLInputElement>('[data-pirate-mode]');
+    if (toggle) {
+      toggle.disabled = this.configSaves > 0;
+      toggle.checked = isPirateMode();
+    }
+  }
+
+  private changePirateMode(enabled: boolean): void {
+    if (this.configSaves > 0) {
+      this.syncPirateToggle();
+      return;
+    }
+    const controls = this.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#page-content input, #page-content select, #page-content textarea');
+    const values = new Map<string, string>();
+    const keyFor = (control: Element): string | undefined => control.id || control.closest<HTMLElement>('.config-row')?.dataset.key;
+    for (const control of controls) {
+      const key = keyFor(control);
+      if (key && !control.matches('[data-pirate-mode]')) values.set(key, control.value);
+    }
+    setPirateMode(enabled);
+    this.paint();
+    this.paintSlack();
+    this.renderRunDrawer();
+    this.updateAddress(this.route, 'replace');
+    const template = document.createElement('template');
+    template.innerHTML = renderAppShell(this.shellOptions(), '');
+    const footer = template.content.querySelector('.app-footer');
+    if (footer) this.root.querySelector('.app-footer')?.replaceWith(footer);
+    for (const control of this.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#page-content input, #page-content select, #page-content textarea')) {
+      const key = keyFor(control);
+      if (key && values.has(key)) control.value = values.get(key)!;
+    }
+    this.root.querySelector<HTMLInputElement>('[data-pirate-mode]')?.focus({ preventScroll: true });
   }
 
   destroy(): void {
@@ -375,7 +427,7 @@ export class DashboardView {
     this.route = parseRoute(new URL(href, window.location.origin));
     if (history === 'replace') window.history.replaceState(null, '', href);
     else if (history === 'push' && href !== window.location.pathname + window.location.search) window.history.pushState(null, '', href);
-    document.title = `${route.view === 'dashboard' ? 'Helm' : route.view === 'prs' ? 'PR' : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
+    document.title = `${route.view === 'dashboard' ? term('dashboard') : route.view === 'prs' ? term('prs') : route.view === 'runs' ? term('runs') : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
   }
 
   private async navigate(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): Promise<void> {
@@ -467,7 +519,7 @@ export class DashboardView {
       const summary = this.runs.find(run => run?.id === route.run) ?? await getRun(route.run);
       if (seq !== this.routeSeq) return;
       if (summary) {
-        this.openRunTab(route.run, summary.ticketId || (summary.prNumber ? `PR #${summary.prNumber}` : route.run), false);
+        this.openRunTab(route.run, summary.ticketId || (summary.prNumber ? `${term('pr')} #${summary.prNumber}` : route.run), false);
         const tab = this.runTabs.find(item => item.runId === route.run);
         if (tab) {
           tab.footer = summary;
@@ -475,7 +527,7 @@ export class DashboardView {
           tab.complete = this.isTerminalRunStatus(summary.status);
           if (summary.prNumber) tab.pr = { repo: summary.repo, number: summary.prNumber };
         }
-      } else this.openErrorTab('Voyage unavailable', 'This voyage was not found or the server is unavailable.');
+      } else this.openErrorTab(term('unavailableRunTitle'), term('unavailableRunMessage'));
     }
     this.renderRunDrawer();
     this.rehomeRunDrawer();
@@ -750,6 +802,7 @@ export class DashboardView {
     const sameView = this.root.querySelector<HTMLElement>('.helm')?.dataset.page === this.view;
     this.paintView();
     this.paintRunRetries();
+    this.syncPirateToggle();
     if (focusedTab) {
       const view = sameView ? focusedTab : this.view;
       const tabs = Array.from(this.root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
@@ -792,7 +845,7 @@ export class DashboardView {
       return;
     }
     if (!this.snapshot || this.snapshotRepo !== this.selectedRepo) {
-      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? 'Helm unavailable for this galleon. Try refreshing.' : 'Loading Helm…'}</div>`));
+      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? term('unavailableDashboard') : `Loading ${term('dashboard')}…`}</div>`));
       return;
     }
     const preBody: HTMLElement | null =
@@ -841,6 +894,7 @@ export class DashboardView {
     return {
       active: this.view, repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId,
       jiraEnabled: this.jiraEnabled,
+      greetingName: this.greetingName,
       readout: {
         running: this.runs.filter(run => run?.status === 'running' && (!this.selectedRepo || run.repo === this.selectedRepo)).length,
         queued: snapshot && !this.degraded.includes('jira') ? snapshot.queue?.length ?? null : null,
@@ -880,6 +934,7 @@ export class DashboardView {
     if (repo && nextRepo) {
       if (repo.innerHTML !== nextRepo.innerHTML) repo.innerHTML = nextRepo.innerHTML;
       repo.value = this.selectedRepo ?? '';
+      repo.setAttribute('aria-label', nextRepo.getAttribute('aria-label') ?? '');
     }
     const tabs = shell.querySelector('.page-tabs');
     const nextTabs = template.content.querySelector('.page-tabs');
@@ -889,6 +944,7 @@ export class DashboardView {
       const tab = shell.querySelector<HTMLAnchorElement>(`#${next.id}`);
       if (!tab) continue;
       tab.className = next.className;
+      tab.textContent = next.textContent;
       for (const name of ['href', 'aria-selected', 'aria-current']) {
         const value = next.getAttribute(name);
         if (value === null) tab.removeAttribute(name);
@@ -903,10 +959,18 @@ export class DashboardView {
       if (next.hasAttribute('title')) count.setAttribute('title', next.title);
       else count.removeAttribute('title');
     }
+    for (const label of template.content.querySelectorAll<HTMLElement>('[data-readout-label]')) {
+      const current = shell.querySelector(`[data-readout-label="${label.dataset.readoutLabel}"]`);
+      if (current) current.textContent = label.textContent;
+    }
     const repos = shell.querySelector('[data-footer-repos]');
-    if (repos) repos.textContent = `${this.repos.length} galleon${this.repos.length === 1 ? '' : 's'} tracked`;
+    if (repos) repos.textContent = `${this.repos.length} ${term(this.repos.length === 1 ? 'repository' : 'repositories').toLowerCase()} tracked`;
     const running = shell.querySelector('[data-footer-running]');
-    if (running) running.textContent = `${opts.readout?.running ?? '—'} underway`;
+    if (running) running.textContent = `${opts.readout?.running ?? '—'} ${term('running').toLowerCase()}`;
+    const nextGreeting = template.content.querySelector('[data-greeting]');
+    const greeting = shell.querySelector('[data-greeting]');
+    if (nextGreeting && greeting) greeting.replaceWith(nextGreeting);
+    else if (nextGreeting) shell.querySelector('.nameplate-scope')?.append(nextGreeting);
   }
 
   private bindHeadControls(): void {
@@ -963,7 +1027,7 @@ export class DashboardView {
       const status = control.querySelector<HTMLElement>('.slack-review-result');
       if (!button || !status) continue;
       button.disabled = Boolean(state?.pending || state?.result);
-      button.textContent = state?.pending ? 'Sending…' : state?.result ? 'Review requested' : 'Request review in Slack';
+      button.textContent = state?.pending ? 'Sending…' : state?.result ? term('reviewRequested') : term('requestSlackReview');
       status.classList.toggle('is-error', Boolean(state?.error));
       status.setAttribute('role', state?.error ? 'alert' : 'status');
       status.replaceChildren();
@@ -1331,7 +1395,7 @@ export class DashboardView {
     if (todoConfirmDelete && this.todos.deletingId !== todo.id) return;
     ++this.todosSeq;
     this.todos.loading = false;
-    this.todos.pendingAction = todoConfirmDelete ? 'Deleting todo…' : 'Launching voyage…';
+    this.todos.pendingAction = todoConfirmDelete ? 'Deleting todo…' : term('launchingRun');
     this.todos.error = null;
     this.paint();
     try {
@@ -1747,7 +1811,7 @@ export class DashboardView {
       void this.refresh();
     } catch (error: unknown) {
       if (this.destroyed) return;
-      this.runRetries.set(runId, { pending: false, error: error instanceof Error ? error.message : 'Voyage retry failed.' });
+      this.runRetries.set(runId, { pending: false, error: error instanceof Error ? error.message : term('retryFailed') });
     } finally {
       if (!this.destroyed) this.paintRunRetries();
     }
@@ -2040,7 +2104,7 @@ export class DashboardView {
       const reviewEl: HTMLElement | null = t.panel.querySelector<HTMLElement>('.pr-review');
       const errEl: HTMLDivElement = document.createElement('div');
       errEl.className = 'pr-review-error';
-      errEl.textContent = result.error ?? 'Review failed.';
+      errEl.textContent = result.error ?? term('reviewFailed');
       reviewEl?.appendChild(errEl);
       return;
     }
@@ -2074,7 +2138,7 @@ export class DashboardView {
       this.openRunTab(result.runId, `feedback #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage relaunch failed';
+      const message: string = err instanceof Error ? err.message : term('relaunchFailed');
       this.openErrorTab(`feedback #${t.number}`, message);
     }
   }
@@ -2086,11 +2150,11 @@ export class DashboardView {
     try {
       const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number, ...this.readTuning(t.panel, 'pr') });
       if (seq !== this.launchSeq) return;
-      this.openRunTab(result.runId, `review #${t.number}`);
+      this.openRunTab(result.runId, `${term('review')} #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Code review failed';
-      this.openErrorTab(`review #${t.number}`, message);
+      const message: string = err instanceof Error ? err.message : term('reviewFailed');
+      this.openErrorTab(`${term('review')} #${t.number}`, message);
     }
   }
 
@@ -2100,7 +2164,7 @@ export class DashboardView {
     const parsed: { repo: string; number: number } | null = parsePrUrl(input.value);
     const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
     if (!parsed) {
-      if (result) result.innerHTML = '<div class="pr-panel empty-note">Enter a PR URL or owner/repo#number.</div>';
+      if (result) result.innerHTML = `<div class="pr-panel empty-note">${term('prLookupInvalid')}</div>`;
       return;
     }
     await this.loadPrView(parsed.repo, parsed.number);
@@ -2388,7 +2452,7 @@ export class DashboardView {
 
     const statusLine: HTMLDivElement = document.createElement('div');
     statusLine.className = 'run-drawer-footer-status';
-    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
+    statusLine.textContent = `${term('ticketStatus')}: ${deriveTicketStatus(summary)}`;
     footer.appendChild(statusLine);
 
     if (summary.prNumber == null) return;
@@ -2400,10 +2464,10 @@ export class DashboardView {
       link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = `PR #${summary.prNumber}`;
+      link.textContent = `${term('pr')} #${summary.prNumber}`;
       prLine.appendChild(link);
     } else {
-      prLine.textContent = `PR #${summary.prNumber}`;
+      prLine.textContent = `${term('pr')} #${summary.prNumber}`;
     }
     footer.appendChild(prLine);
   }
@@ -2423,7 +2487,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage launch failed';
+      const message: string = err instanceof Error ? err.message : term('launchFailed');
       this.openErrorTab(ticketId, message);
     } finally {
       btn.disabled = false;
@@ -2476,7 +2540,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId || title);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage launch failed';
+      const message: string = err instanceof Error ? err.message : term('launchFailed');
       this.openErrorTab(ticketId || title, message);
     } finally {
       btn.disabled = false;
@@ -2484,6 +2548,7 @@ export class DashboardView {
   }
 
   private async handleConfigSave(btn: HTMLButtonElement): Promise<void> {
+    if (btn.disabled) return;
     const row: HTMLElement | null = btn.closest<HTMLElement>('.config-row');
     const key: string | undefined = row?.dataset.key;
     const input = row?.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input') ?? null;
@@ -2491,6 +2556,8 @@ export class DashboardView {
     const errorEl: HTMLElement | null = row?.querySelector<HTMLElement>('.config-error') ?? null;
     if (errorEl) errorEl.textContent = '';
     btn.disabled = true;
+    ++this.configSaves;
+    this.syncPirateToggle();
     try {
       const result: { ok: boolean; error?: string } = await setConfig(key, input.value);
       if (!result.ok) {
@@ -2520,6 +2587,8 @@ export class DashboardView {
       }
     } finally {
       btn.disabled = false;
+      --this.configSaves;
+      this.syncPirateToggle();
     }
   }
 

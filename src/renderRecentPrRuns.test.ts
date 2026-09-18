@@ -1,3 +1,4 @@
+import { term } from './logic/terminology';
 import { describe, expect, it } from 'vitest';
 import { renderPrView, renderRecentPrRuns } from './render';
 import { DEFAULT_THEME_ID } from './data/themes';
@@ -40,7 +41,7 @@ describe('recent PR voyages', () => {
     expect(element.querySelectorAll('.recent-run')).toHaveLength(4);
     for (const [id, label] of [['review-a', 'Approve'], ['review-b', 'Request changes'], ['review-c', 'Comment only']]) {
       const row = element.querySelector(`[data-runid="${id}"]`);
-      expect(row?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`Review recommendation: ${label}`);
+      expect(row?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`${term('review')} recommendation: ${label}`);
       expect(row?.querySelector('.app-link')?.getAttribute('href')).toBe(`/runs?run=${id}`);
     }
     expect(element.querySelector('[data-runid="underway"] .voyage-result')?.getAttribute('aria-label')).toBe('Voyage underway');
@@ -49,8 +50,8 @@ describe('recent PR voyages', () => {
 
   it('renders an empty state for a repository without PR voyages', () => {
     const element = mount(renderRecentPrRuns([run('review-a')], 'org/b'));
-    expect(element.querySelector('.panel-title')?.textContent).toBe('Recent PR voyages');
-    expect(element.querySelector('.empty-note')?.textContent).toContain('No recent PR voyages');
+    expect(element.querySelector('.panel-title')?.textContent).toBe(term('recentPrRuns'));
+    expect(element.querySelector('.empty-note')?.textContent).toContain(term('noRecentPrRuns'));
     expect(element.querySelectorAll('.recent-run')).toHaveLength(0);
   });
 

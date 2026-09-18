@@ -129,16 +129,16 @@ describe('voyage drawer interactions', () => {
     expect(select(FIRST).getAttribute('aria-selected')).toBe('true');
   });
 
-  it.each(['failed', 'succeeded', 'stopped'])('updates a running tab to %s when its stream completes', async (status) => {
+  it.each([['failed', 'Marooned'], ['succeeded', 'Shipshape'], ['stopped', 'Stopped']])('updates a running tab to %s when its stream completes', async (status, label) => {
     const { details } = await setup();
     expect(tab(FIRST).dataset.runStatus).toBe('running');
-    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Running');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Underway');
     details.set(FIRST, run(FIRST, status));
     streams[0]!.complete(status);
     await flush();
     expect(tab(FIRST).dataset.runStatus).toBe(status);
-    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe(status[0]!.toUpperCase() + status.slice(1));
-    expect(document.querySelector('.run-drawer-footer')?.textContent).toContain(status[0]!.toUpperCase() + status.slice(1));
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe(label);
+    expect(document.querySelector('.run-drawer-footer')?.textContent).toContain(label);
     expect(streams[0]?.close).toHaveBeenCalled();
   });
 
@@ -148,13 +148,13 @@ describe('voyage drawer interactions', () => {
     streams[0]!.complete('finished');
     await flush();
     expect(tab(FIRST).dataset.runStatus).toBe('failed');
-    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Failed');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Marooned');
   });
 
-  it.each(['failed', 'succeeded', 'running'])('opens a directly linked historical voyage using its %s getRun status', async (status) => {
+  it.each([['failed', 'Marooned'], ['succeeded', 'Shipshape'], ['running', 'Underway']])('opens a directly linked historical voyage using its %s getRun status', async (status, label) => {
     await setup(`/runs?run=${FIRST}`, [], new Map([[FIRST, run(FIRST, status)]]));
     expect(tab(FIRST).dataset.runStatus).toBe(status);
-    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe(status[0]!.toUpperCase() + status.slice(1));
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe(label);
   });
 
   it('supports ArrowLeft/Right, Home, and End with selection, route, and focus kept together', async () => {

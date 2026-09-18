@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setPirateMode } from './logic/terminology';
 import type { Todo } from './data/todos';
 import { readTodoForm, renderTodos, type TodosViewState } from './renderTodos';
 
@@ -16,7 +17,25 @@ function render(overrides: Partial<TodosViewState> = {}, selectedRepo: string | 
   return root;
 }
 
+beforeEach(() => setPirateMode(true));
+afterEach(() => localStorage.removeItem('helmsman.pirateMode'));
+
 describe('todo rendering', () => {
+  it.each([true, false])('switches task terminology while preserving saved text and form state (%s)', pirate => {
+    setPirateMode(pirate);
+    const title = 'Review PR with crew on a voyage';
+    const root = render({ items: [item({ title, state: 'in_review', runId: 'run-123' })], draft: { title, state: 'in_review' } }, 'owner/repo');
+    expect(root.querySelector('[name=repo]')?.parentElement?.textContent).toBe(pirate ? 'Galleon' : 'Repository');
+    expect(root.querySelector('[data-todo-launch]')?.textContent).toBe(pirate ? 'Weigh anchor' : 'Start run');
+    expect(root.querySelector('.todo-state')?.textContent).toBe(pirate ? 'In inspection' : 'In review');
+    expect(root.querySelector('.todo-item h3')?.textContent).toBe(title);
+    expect(root.querySelector<HTMLInputElement>('[name=title]')?.value).toBe(title);
+    expect(root.querySelector<HTMLSelectElement>('[name=state]')?.value).toBe('in_review');
+    expect(root.querySelector('.todo-run-link')?.textContent).toBe(pirate ? 'View voyage ↗' : 'View run ↗');
+    expect(root.querySelector('.todo-run-link')?.getAttribute('href')).toContain('run=run-123');
+    if (!pirate) expect(root.querySelector('.todos-intro')?.textContent).not.toMatch(/voyage|galleon|crew/i);
+  });
+
   it('provides the voyage task drawer slot for launch logs', () => {
     expect(render().querySelector('.runs-drawer-slot[data-pane=tasks]')).not.toBeNull();
   });
@@ -40,7 +59,7 @@ describe('todo rendering', () => {
     expect(readTodoForm(form)).toEqual({ title: '', repo: 'owner/repo', description: '', acceptanceCriteria: '', priority: 'P2', state: 'todo' });
     expect(form.querySelector<HTMLInputElement>('[name=title]')?.required).toBe(true);
     expect(form.querySelector<HTMLInputElement>('[name=repo]')?.required).toBe(true);
-    expect(root.textContent).toContain('Required to launch a voyage');
+    expect(root.textContent).toContain('Required to start a voyage');
     expect(root.querySelector<HTMLOptionElement>('option[value=in_progress]')?.disabled).toBe(true);
   });
 

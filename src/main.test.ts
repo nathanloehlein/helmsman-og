@@ -123,9 +123,9 @@ describe('DashboardView drawer survives polling', () => {
     await vi.waitFor(() => expect(footer.querySelector('a')).not.toBeNull());
 
     const link: HTMLAnchorElement = footer.querySelector<HTMLAnchorElement>('a')!;
-    expect(link.textContent).toBe('PR #42');
+    expect(link.textContent).toBe('Bounty #42');
     expect(link.getAttribute('href')).toBe('https://github.com/acme/widgets/pull/42');
-    expect(footer.textContent).toContain('In Review');
+    expect(footer.textContent).toContain('In inspection');
   });
 
   it('stops a running agent without opening the drawer', async () => {
@@ -567,9 +567,9 @@ describe('DashboardView drawer survives polling', () => {
     const reviewCall = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === '/api/pr/review');
     const reviewBody: unknown = JSON.parse((reviewCall![1] as RequestInit).body as string);
     expect(reviewBody).toEqual({ repo: 'org/alpha', number: 42, event: 'APPROVE', body: '' });
-    await vi.waitFor(() => expect(root.querySelector('.pr-panel-head')?.textContent).toContain('Your review'));
+    await vi.waitFor(() => expect(root.querySelector('.pr-panel-head')?.textContent).toContain('Your inspection'));
     await view.refresh();
-    expect(root.querySelector('.pr-panel-head')?.textContent).toContain('Your review');
+    expect(root.querySelector('.pr-panel-head')?.textContent).toContain('Your inspection');
     view.destroy();
   });
 

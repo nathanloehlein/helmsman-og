@@ -108,7 +108,7 @@ describe('URL navigation', () => {
     for (const pathname of ['/api/pr', '/api/pr/diff']) {
       expect(requests.some(({ url }) => url.pathname === pathname && url.searchParams.get('repo') === 'org/a' && url.searchParams.get('number') === '11')).toBe(true);
     }
-    expect(document.title).toBe('PR · Helmsman');
+    expect(document.title).toBe('Bounties · Helmsman');
     expect(requests.every(({ method }) => method === 'GET')).toBe(true);
   });
 

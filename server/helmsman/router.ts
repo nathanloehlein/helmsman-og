@@ -8,6 +8,7 @@ import type { BugsResponse, PrFileDiff } from '../../src/types';
 import type { CmuxTab } from './cmux/model';
 import { isAllowedKey } from './cmux/keys';
 import type { SlackState } from '../../src/data/slack';
+import type { GithubProfile } from '../../src/data/profile';
 import { retryIntent, RetryError, type LaunchIntent } from './retry';
 
 export interface ApiResult {
@@ -48,6 +49,7 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  githubProfile?: () => Promise<GithubProfile>;
   slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
   todos?: TodoStore;
   jiraEnabled?: () => boolean;
@@ -133,6 +135,10 @@ export async function handleApi(
   }
   if (path === '/api/context' && method === 'GET') {
     return deps.context ? { status: 200, json: deps.context() } : { status: 503, json: { error: 'Context unavailable.' } };
+  }
+  if (path === '/api/github/profile' && method === 'GET') {
+    const profile = await deps.githubProfile?.();
+    return { status: 200, json: { displayName: profile?.displayName ?? null, login: profile?.login ?? null } };
   }
   if (path === '/api/usage/external' && method === 'GET') {
     return { status: 200, json: deps.outboundUsage?.() ?? null };

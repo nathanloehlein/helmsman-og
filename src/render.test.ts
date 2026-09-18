@@ -1,3 +1,4 @@
+import { term } from './logic/terminology';
 import type { PrInboxState } from './data/prLists';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { CONFIG_HELP, renderBugsView, renderCmuxView, renderConfigView, renderDashboard, renderPrPanel, renderPrView, renderRepoPrs, renderRunsDrawer, renderTriageView, renderVoyage, runTabStatus } from './render';
@@ -210,7 +211,7 @@ describe('renderDashboard', () => {
     renderDashboard(el, snapshot(), NOW, [], [], null, []);
     const emptyNote: Element | null = el.querySelector('.agent-list .empty-note');
     expect(emptyNote).not.toBeNull();
-    expect(emptyNote?.textContent).toContain('No crew tasks underway.');
+    expect(emptyNote?.textContent).toContain(term('noAgentTasks'));
   });
 
   it('scopes running and recent runs to the selected repo', () => {
@@ -399,7 +400,7 @@ describe('renderDashboard', () => {
     expect(rows.length).toBe(2);
     const recentRunsHtml: string = el.querySelector('.recent-runs-list')!.innerHTML;
     expect(recentRunsHtml).not.toContain('ABC-1');
-    expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-result')?.getAttribute('aria-label')).toBe('Review recommendation: Request changes');
+    expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-result')?.getAttribute('aria-label')).toBe(`${term('review')} recommendation: Request changes`);
     expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-id')?.textContent).toBe('run-2');
     expect(el.querySelector('.recent-run[data-runid="run-2"] .runs-voyage-link')?.getAttribute('href')).toBe('/runs?run=run-2');
     expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-identity')?.textContent).toContain('ABC-2');
@@ -454,7 +455,7 @@ describe('renderDashboard', () => {
     const el = root();
     el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
     const panel = el.querySelector('.pre-pr-config-panel');
-    expect(panel?.textContent).toContain('running voyages keep their settings');
+    expect(panel?.textContent).toContain(`active ${term('runs').toLowerCase()} keep their settings`);
     expect(panel?.textContent).toContain('With only one installed, one reviewer runs');
     for (const [key, value, min, max] of [
       ['PRE_PR_REVIEWER_COUNT', '2', '1', '2'],
@@ -663,7 +664,7 @@ describe('renderPrPanel', () => {
       viewerReviewedAt: '2026-09-17T10:00:00Z', updatedAt: '2026-09-17T12:00:00Z',
       headSha: 'new-commit', viewerReviewedCommitId: 'reviewed-commit',
     }), false));
-    expect(el.querySelector('.pr-last-reviewed')?.textContent).toContain('Last reviewed by you');
+    expect(el.querySelector('.pr-last-reviewed')?.textContent).toContain(term('lastReviewed'));
     expect(el.querySelector('.pr-last-reviewed time')?.getAttribute('datetime')).toBe('2026-09-17T10:00:00.000Z');
     expect(el.querySelector('.pr-last-updated time')?.getAttribute('datetime')).toBe('2026-09-17T12:00:00.000Z');
     expect(el.querySelector('.pr-last-reviewed time')?.getAttribute('title')).toBeTruthy();
@@ -680,7 +681,7 @@ describe('renderPrPanel', () => {
   });
 
   it.each([
-    { reviewsAvailable: true, viewerReview: null, expected: 'Not reviewed yet' },
+    { reviewsAvailable: true, viewerReview: null, expected: 'Not inspected yet' },
     { reviewsAvailable: false, viewerReview: null, expected: 'Unavailable' },
     { reviewsAvailable: true, viewerReview: 'COMMENTED', expected: 'Unavailable' },
     { reviewsAvailable: undefined, viewerReview: null, expected: 'Unavailable' },
@@ -740,7 +741,7 @@ describe('renderPrPanel', () => {
   it('includes the code-review-with-agent button when canRerun is true', () => {
     const html: string = renderPrPanel(prFixture(), true);
     expect(html).toContain('pr-review-agent');
-    expect(html).toContain('Code review with crew');
+    expect(html).toContain(term('codeReview'));
   });
 
   it('includes model + effort selectors on the review/rerun controls', () => {
@@ -793,10 +794,10 @@ describe('renderPrPanel', () => {
     ['COMMENTED', 'Commented'], ['DISMISSED', 'Dismissed'],
   ] as const)('shows the viewer review %s distinctly in the header', (viewerReview, label) => {
     const el = mount(renderPrPanel(prFixture({ viewerReview }), false));
-    expect(el.querySelector('.pr-panel-head .pr-viewer-review')?.textContent).toBe(`Your review: ${label}`);
+    expect(el.querySelector('.pr-panel-head .pr-viewer-review')?.textContent).toBe(`Your ${term('review').toLowerCase()}: ${label}`);
     expect(el.querySelector('.pr-approval-progress')?.textContent).toBe('0/2 approvals · 2 needed');
     const matching = mount(renderPrPanel(prFixture({ viewerReview, reviewDecision: viewerReview }), false));
-    expect(matching.querySelector('.pr-viewer-review')?.textContent).toBe(`Your review: ${label}`);
+    expect(matching.querySelector('.pr-viewer-review')?.textContent).toBe(`Your ${term('review').toLowerCase()}: ${label}`);
     expect(matching.querySelector('.pr-approval-progress')?.textContent).toBe('0/2 approvals · 2 needed');
   });
 
@@ -818,7 +819,7 @@ describe('renderPrPanel', () => {
   it('renders a not-found note when there is no PR', () => {
     const html: string = renderPrPanel(null, false);
     expect(html).toContain('empty-note');
-    expect(html.toLowerCase()).toContain('no pr');
+    expect(html.toLowerCase()).toContain(term('noPrFound').toLowerCase());
   });
 
   it('escapes a malicious headRefName and url', () => {
@@ -976,7 +977,7 @@ describe('renderRunsDrawer', () => {
   });
 
   it.each([
-    ['failed', 'Failed'], ['succeeded', 'Succeeded'], ['running', 'Running'], ['stopped', 'Stopped'], ['queued', 'Queued'],
+    ['failed', term('failed')], ['succeeded', term('success')], ['running', term('running')], ['stopped', 'Stopped'], ['queued', 'Queued'],
   ])('labels %s with its own status for theme colors', (status, label) => {
     const el = document.createElement('div');
     el.innerHTML = renderRunsDrawer([tab({ status, complete: true })], 'run-1');
@@ -1017,7 +1018,7 @@ describe('renderRunsDrawer', () => {
       expect(retry?.type).toBe('button');
       expect(retry?.querySelector('.sr-only')?.textContent).toBe('Retry');
       expect(retry?.querySelector('svg')).not.toBeNull();
-      expect(retry?.getAttribute('aria-label')).toBe(`Retry failed voyage ${id}`);
+      expect(retry?.getAttribute('aria-label')).toBe(`${term('retryRun')} ${id}`);
       expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('data-retry-feedback-for')).toBe(id);
       expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('aria-live')).toBe('polite');
     }
@@ -1112,7 +1113,7 @@ describe('renderDashboard helm rack', () => {
     expect(el.querySelector('.page-tab.is-active')?.getAttribute('data-view')).toBe('dashboard');
     expect(el.querySelector('.page-tab[data-view="dashboard"]')?.textContent).toBe('Helm');
     expect(el.querySelector('.faceplate[data-panel="activity"] .faceplate-title')?.textContent).toBe("Ship's log");
-    expect(el.querySelector('.faceplate[data-panel="running"] .faceplate-title')?.textContent).toBe('Active crew');
+    expect(el.querySelector('.faceplate[data-panel="running"] .faceplate-title')?.textContent).toBe(term('activeAgents'));
   });
 
   it('renders every panel as a draggable faceplate with a collapse control', () => {
@@ -1154,7 +1155,7 @@ describe('renderDashboard helm rack', () => {
     ], loading: false, degraded: false, truncated: false };
     renderDashboard(el, snapshot({ myOpenPrs: [personal] }), NOW, [], ['org/alpha'], 'org/alpha', [], [], undefined, DEFAULT_THEME_ID, undefined, null, repoPrs);
     const panel = el.querySelector('.faceplate[data-panel="repoprs"]');
-    expect(panel?.textContent).toContain('Open PRs');
+    expect(panel?.textContent).toContain(term('openPrs'));
     expect(panel?.textContent).not.toContain('Personal PR');
     expect(panel?.textContent).not.toContain('Other repo PR');
     expect(el.querySelector('[data-panel="myprs"]')).toBeNull();
@@ -1171,14 +1172,14 @@ describe('renderDashboard helm rack', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot({ myOpenPrs: [{ number: 99, title: 'Personal PR', repo: 'org/alpha', reviewDecision: '', draft: false, createdAt: NOW.toISOString() }] }), NOW);
     const panel = el.querySelector('.faceplate[data-panel="repoprs"]');
-    expect(panel?.textContent).toContain('Select a galleon to see its open PRs.');
+    expect(panel?.textContent).toContain(term('selectRepoPrs'));
     expect(panel?.querySelector('.pr-list-row')).toBeNull();
   });
 
   it('shows a repository-specific empty message after loading', () => {
     const el: HTMLDivElement = root();
     renderDashboard(el, snapshot(), NOW, [], ['org/alpha'], 'org/alpha', [], [], undefined, DEFAULT_THEME_ID, undefined, null, { prs: [], loading: false, degraded: false, truncated: false });
-    expect(el.querySelector('[data-panel="repoprs"]')?.textContent).toContain('No open pull requests in this galleon.');
+    expect(el.querySelector('[data-panel="repoprs"]')?.textContent).toContain(term('noRepoPrs'));
   });
 
   it('renders the same scoped repository body for background panel refreshes', () => {
@@ -1349,7 +1350,7 @@ describe('renderPrView + renderPrDiff', () => {
     }));
     expect(el.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(1);
     expect(el.querySelector('.pr-review-requests .pr-list-row')?.textContent).toContain('Untitled pull request');
-    expect(el.querySelector('.pr-authored')?.textContent).toContain('You have no open pull requests.');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain(term('noAuthoredPrs'));
   });
 
   it('keeps independent loading, unavailable, and truncated messages per list', () => {
@@ -1359,9 +1360,9 @@ describe('renderPrView + renderPrDiff', () => {
     }));
     expect(el.querySelector('.pr-review-requests')?.textContent).toContain('unavailable');
     expect(el.querySelector('.pr-review-requests')?.textContent).not.toContain('No PRs');
-    expect(el.querySelector('.pr-authored')?.textContent).toContain('Loading PRs');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain(term('loadingPrs'));
     expect(el.querySelector('.pr-authored .pr-list')?.getAttribute('aria-busy')).toBe('true');
-    expect(el.querySelector('.pr-authored')?.textContent).toContain('More PRs may be available');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain(term('morePrs'));
   });
 
   it('keeps usable PRs visible and explains incomplete results when another source fails', () => {
@@ -1371,7 +1372,7 @@ describe('renderPrView + renderPrDiff', () => {
     }));
     expect(el.querySelectorAll('.pr-review-requests .pr-list-row')).toHaveLength(1);
     expect(el.querySelector('.pr-review-requests')?.textContent).toContain('Some GitHub results are unavailable. This list may be incomplete.');
-    expect(el.querySelector('.pr-authored')?.textContent).toContain('GitHub PRs are unavailable. Retrying shortly.');
+    expect(el.querySelector('.pr-authored')?.textContent).toContain(term('unavailablePrs'));
   });
 
   it('does not claim there are no review requests when retrieved results are incomplete and links to GitHub', () => {
@@ -1380,8 +1381,8 @@ describe('renderPrView + renderPrDiff', () => {
       ...opts, lists: { reviewRequests: truncated, authored: truncated },
     }));
     const requests = el.querySelector('.pr-review-requests');
-    expect(requests?.textContent).toContain('No matching PRs in the retrieved results.');
-    expect(requests?.textContent).not.toContain('No PRs awaiting your review.');
+    expect(requests?.textContent).toContain(term('noMatchingPrs'));
+    expect(requests?.textContent).not.toContain(term('noReviewRequests'));
     const link = requests?.querySelector<HTMLAnchorElement>('.pr-list-github');
     expect(link?.href).toBe('https://github.com/pulls/review-requested');
     expect(link?.target).toBe('_blank');
@@ -1390,7 +1391,7 @@ describe('renderPrView + renderPrDiff', () => {
     expect(el.querySelector<HTMLAnchorElement>('.pr-authored .pr-list-github')?.href).toBe('https://github.com/pulls');
     const repo = mount(renderRepoPrs('org/alpha', truncated));
     expect(repo.querySelector<HTMLAnchorElement>('.pr-list-github')?.href).toBe('https://github.com/org/alpha/pulls');
-    expect(repo.textContent).not.toContain('No open pull requests in this galleon.');
+    expect(repo.textContent).not.toContain(term('noRepoPrs'));
   });
 
   it('distinguishes empty review requests from empty authored PRs', () => {
@@ -1398,8 +1399,8 @@ describe('renderPrView + renderPrDiff', () => {
     const el = mount(renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, {
       ...opts, lists: { reviewRequests: empty, authored: empty },
     }));
-    expect(el.querySelector('.pr-review-requests')?.textContent).toContain('No PRs awaiting your review.');
-    expect(el.querySelector('.pr-authored')?.textContent).toContain('You have no open pull requests.');
+    expect(el.querySelector('.pr-review-requests')?.textContent).toContain(term('noReviewRequests'));
+    expect(el.querySelector('.pr-authored')?.textContent).toContain(term('noAuthoredPrs'));
   });
 
   it('renders the PR panel and a per-file diff when loaded', () => {
@@ -1447,7 +1448,7 @@ describe('renderPrView + renderPrDiff', () => {
     const el = mount(renderPrPanel({ ...pr, reviews: { requested: 0, approved: 2, changesRequested: 1, commented: 0 }, viewerReview: 'APPROVED' }, false));
     expect(el.querySelector('.pr-approval-progress')?.classList.contains('chip-done')).toBe(false);
     expect(el.querySelector('.pr-decision-chip')?.textContent).toBe('Changes requested (1)');
-    expect(el.querySelector('.pr-viewer-review')?.textContent).toBe('Your review: Approved');
+    expect(el.querySelector('.pr-viewer-review')?.textContent).toBe(`Your ${term('review').toLowerCase()}: Approved`);
   });
 
   it.each([undefined, false])('distinguishes unavailable approval data from zero approvals (%s)', (reviewsAvailable) => {

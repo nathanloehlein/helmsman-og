@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setPirateMode } from './logic/terminology';
 import type { RunSummary } from './data/agents';
 import { DEFAULT_THEME_ID } from './data/themes';
 import type { PrViewState } from './render';
@@ -18,7 +19,21 @@ function run(overrides: Partial<RunSummary> = {}): RunSummary {
     prNumber: 42, startedAt: '2026-09-17T15:00:00.000Z', costUsd: null, ...overrides };
 }
 
+beforeEach(() => setPirateMode(true));
+afterEach(() => localStorage.removeItem('helmsman.pirateMode'));
+
 describe('renderRunsView', () => {
+  it.each([true, false])('uses the selected terminology for the run page controls (%s)', pirate => {
+    setPirateMode(pirate);
+    const el = mount(renderRunsView(state, opts));
+    expect(el.querySelector('[data-pane=newrun] .panel-title')?.textContent).toBe(pirate ? 'Sail for a bounty' : 'Run a PR');
+    expect(el.querySelector('[data-pane=recent] .panel-title')?.textContent).toBe(pirate ? 'Recent voyages' : 'Recent runs');
+    expect(el.querySelector('.pr-lookup-go')?.textContent).toBe(pirate ? 'Load Bounty' : 'Load PR');
+    expect(el.querySelector('.pr-lookup-input')?.getAttribute('aria-label')).toBe(pirate ? 'Bounty to run' : 'PR to run');
+    expect(el.querySelector('[data-pane=recent] .empty-note')?.textContent).toBe(pirate ? 'No past voyages.' : 'No past runs.');
+    expect(el.querySelector('[data-pane=newrun] .app-link')?.getAttribute('href')).toBe('/runs?pane=newrun');
+  });
+
   it.each([
     ['APPROVE', 'Approve', 'approved'],
     ['REQUEST_CHANGES', 'Request changes', 'changes'],
@@ -26,7 +41,7 @@ describe('renderRunsView', () => {
   ] as const)('shows the saved %s recommendation independently of voyage success', (reviewOutcome, label, tone) => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'succeeded', reviewOutcome })] }));
     const icon = el.querySelector('.voyage-result');
-    expect(icon?.getAttribute('aria-label')).toBe(`Review recommendation: ${label}`);
+    expect(icon?.getAttribute('aria-label')).toBe(`Inspection recommendation: ${label}`);
     expect(icon?.classList.contains(`voyage-result-${tone}`)).toBe(true);
     expect(icon?.querySelector('svg')).not.toBeNull();
     expect(icon?.getAttribute('title')).toContain('Published as a GitHub comment');
@@ -37,14 +52,14 @@ describe('renderRunsView', () => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status, reviewOutcome: 'APPROVE' })] }));
     expect(el.querySelector('.voyage-result-approved')).toBeNull();
     if (status === 'failed' || status === 'stopped') {
-      expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`Voyage ${status}`);
+      expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(status === 'failed' ? 'Voyage marooned' : 'Voyage stopped');
     } else expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(status === 'running' ? 'Voyage underway' : 'Voyage queued');
     expect(el.querySelector('.chip')).toBeNull();
   });
 
   it.each([undefined, 'constructor', '<img src=x onerror=alert(1)>'])('does not invent a review result when the saved outcome is %j', (reviewOutcome) => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'succeeded', reviewOutcome } as Partial<RunSummary>)] }));
-    expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('No review recommendation recorded');
+    expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('No inspection recommendation recorded');
     expect(el.querySelector('.voyage-result-approved, img')).toBeNull();
   });
 
@@ -55,16 +70,16 @@ describe('renderRunsView', () => {
     ] }));
     const changes = el.querySelector('[data-runid="changes"]');
     const failed = el.querySelector('[data-runid="failed"]');
-    expect(changes?.querySelector('.voyage-result-changes')?.getAttribute('aria-label')).toBe('Review recommendation: Request changes');
+    expect(changes?.querySelector('.voyage-result-changes')?.getAttribute('aria-label')).toBe('Inspection recommendation: Request changes');
     expect(changes?.querySelector('.voyage-result-failed, [data-retry-run-id]')).toBeNull();
-    expect(failed?.querySelector('.voyage-result-failed')?.getAttribute('aria-label')).toBe('Voyage failed');
+    expect(failed?.querySelector('.voyage-result-failed')?.getAttribute('aria-label')).toBe('Voyage marooned');
     expect(failed?.querySelector('.voyage-result-changes')).toBeNull();
   });
 
   it('places the task identity on the left and retry, timestamp, and ID copy in that order on the right', () => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'failed' })] }));
     const row = el.querySelector('.recent-run');
-    expect(row?.querySelector('.voyage-identity .ticket-id')?.textContent).toBe('PR #42');
+    expect(row?.querySelector('.voyage-identity .ticket-id')?.textContent).toBe('Bounty #42');
     expect(row?.querySelector('.runs-voyage-link .agent-repo')?.textContent).toBe('alpha');
     expect(row?.querySelector('.runs-voyage-link time, .runs-voyage-link button')).toBeNull();
     const meta = row?.querySelector('.voyage-row-meta');
@@ -79,10 +94,10 @@ describe('renderRunsView', () => {
   });
 
   it.each([
-    ['review', 42, 'PR #42'],
+    ['review', 42, 'Bounty #42'],
     ['review', null, 'review'],
     ['review', -1, 'review'],
-    ['ABC-123', 42, 'ABC-123 · PR #42'],
+    ['ABC-123', 42, 'ABC-123 · Bounty #42'],
   ])('uses a meaningful title for %s with PR %s', (ticketId, prNumber, title) => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ ticketId, prNumber })] }));
     expect(el.querySelector('.voyage-identity .ticket-id')?.textContent).toBe(title);
@@ -129,7 +144,7 @@ describe('renderRunsView', () => {
     const rows = [...el.querySelectorAll('.recent-run')];
     expect(rows.map((row) => row.getAttribute('data-runid'))).toEqual(['active', 'finished']);
     expect(rows[0]?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe('Voyage underway');
-    expect(rows[1]?.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('Completed');
+    expect(rows[1]?.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('Shipshape');
     expect(el.querySelector('.recent-run .chip')).toBeNull();
     expect(rows[0]?.querySelector('a')?.getAttribute('href')).toBe('/runs?run=active');
   });
