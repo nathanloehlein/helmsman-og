@@ -14,7 +14,7 @@ export interface AppRoute {
 const paths: Record<PageView, string> = {
   dashboard: '/helm',
   triage: '/triage',
-  cmux: '/cmux',
+  cmux: '/terminal',
   bugs: '/bugs',
   prs: '/prs',
   config: '/config',
@@ -48,6 +48,7 @@ function positiveInteger(value: string | null): number | null {
 export function parseRoute(url: URL): AppRoute {
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   const view = pathname === '/pr' ? 'prs'
+    : pathname === '/cmux' ? 'cmux'
     : (Object.keys(paths) as PageView[]).find((page) => paths[page] === pathname) ?? 'dashboard';
   const params = url.searchParams;
   const repo = validRepo(params.get('repo'));

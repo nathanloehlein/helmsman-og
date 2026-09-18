@@ -907,7 +907,7 @@ describe('renderCmuxView', () => {
 
   it('renders a no-tabs note when the tab list is empty', () => {
     const html: string = renderCmuxView(cmuxStateFixture({ tabs: [] }));
-    expect(html.toLowerCase()).toContain('no cmux tabs');
+    expect(html.toLowerCase()).toContain('no terminal tabs');
   });
 
   it('gives the list and detail panels collapse buttons with stable ids', () => {

@@ -312,7 +312,7 @@ export class DashboardView {
     this.route = parseRoute(new URL(href, window.location.origin));
     if (history === 'replace') window.history.replaceState(null, '', href);
     else if (history === 'push' && href !== window.location.pathname + window.location.search) window.history.pushState(null, '', href);
-    document.title = `${route.view === 'dashboard' ? 'Helm' : route.view === 'prs' ? 'PR' : route.view === 'cmux' ? 'cmux' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
+    document.title = `${route.view === 'dashboard' ? 'Helm' : route.view === 'prs' ? 'PR' : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
   }
 
   private async navigate(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): Promise<void> {

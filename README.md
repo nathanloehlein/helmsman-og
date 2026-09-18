@@ -330,7 +330,7 @@ merge stays a deliberate action on GitHub, and the agent never merges.
 
 ### Direct links
 
-Each tab has a page URL: `/helm`, `/triage`, `/cmux`, `/bugs`, `/prs`, `/config`, and
+Each tab has a page URL: `/helm`, `/triage`, `/terminal`, `/bugs`, `/prs`, `/config`, and
 `/runs`. `/` opens Helm, and `/pr` is an alias for `/prs`. Links can include a pane
 and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 
@@ -344,7 +344,7 @@ and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 | Existing voyage's log | `/runs?run=99723f3e-ff89-433a-8621-f30a48b96fd4` |
 | Prepare a ticket voyage | `/helm?repo=gdcorp-partners/airo-app-builder&ticket=AIRO-123&pane=newrun` |
 | Local branches and worktrees | `/config?repo=gdcorp-partners/airo-app-builder&pane=local-git` |
-| Selected terminal | `/cmux?surface=surface:15&pane=screen` |
+| Selected terminal | `/terminal?surface=surface:15&pane=screen` |
 
 Voyage links only prefill the form; opening a link never launches an agent or submits
 a review. A PR number requires its `repo=owner/name`. On Helm, `repo` selects a tracked
@@ -357,9 +357,9 @@ stay scoped to the selected repository; unavailable queue/review counts show an
 em dash until a Jira snapshot is loaded, without fetching solely for the header.
 
 Available panes are `newrun`, `backlog`, `underway`, `running`, `recent`, `repoprs`, `shipped`, and
-`activity` on Helm; `backlog`, `todo`, and `mine` on Triage; `tabs` and `screen` on Below Decks;
+`activity` on Helm; `backlog`, `todo`, and `mine` on Triage; `tabs` and `screen` on Terminal;
 `review-requests`, `authored`, `lookup`, and `diff` on PRs; and `recent`, `newrun`, and
-`tasks` on Voyages. Below Decks contains the cmux terminal controls. Bugs and Config link directly to their page.
+`tasks` on Voyages. Terminal contains the terminal controls, currently backed by cmux; existing `/cmux` links still work. Bugs and Config link directly to their page.
 
 ### Triage filters
 

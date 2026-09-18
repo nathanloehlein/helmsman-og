@@ -212,7 +212,7 @@ const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'dashboard', label: 'Helm' },
   { view: 'prs', label: 'PR' },
   { view: 'triage', label: 'Triage' },
-  { view: 'cmux', label: 'Below Decks' },
+  { view: 'cmux', label: 'Terminal' },
   { view: 'bugs', label: 'Bugs' },
   { view: 'runs', label: 'Voyages' },
   { view: 'config', label: 'Config' },
@@ -1227,7 +1227,7 @@ export function renderCmuxView(state: CmuxViewState): string {
     readout: null,
   };
   if (!state.connected) {
-    return renderAppShell(opts, '<div class="panel empty-note">cmux not connected. Is the cmux app running?</div>');
+    return renderAppShell(opts, '<div class="panel empty-note">Terminal not connected. Check that your terminal app is running.</div>');
   }
 
   const list: string = state.tabs.length
@@ -1240,7 +1240,7 @@ export function renderCmuxView(state: CmuxViewState): string {
       </button>`,
         )
         .join('')
-    : '<div class="empty-note">No cmux tabs.</div>';
+    : '<div class="empty-note">No terminal tabs.</div>';
 
   const selected: CmuxTabView | null = state.tabs.find((t) => t.surfaceRef === state.selectedSurface) ?? null;
 

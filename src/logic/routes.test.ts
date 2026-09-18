@@ -6,7 +6,7 @@ const parse = (href: string) => parseRoute(new URL(href, 'https://helmsman.examp
 describe('routes', () => {
   it.each([
     ['/', 'dashboard'], ['/helm', 'dashboard'], ['/triage', 'triage'],
-    ['/cmux', 'cmux'], ['/bugs', 'bugs'], ['/prs', 'prs'], ['/pr', 'prs'],
+    ['/terminal', 'cmux'], ['/terminal/', 'cmux'], ['/cmux', 'cmux'], ['/bugs', 'bugs'], ['/prs', 'prs'], ['/pr', 'prs'],
     ['/config', 'config'], ['/runs', 'runs'], ['/runs/', 'runs'], ['/unknown', 'dashboard'],
   ])('resolves %s to %s', (path, view) => {
     expect(parse(path).view).toBe(view);
@@ -73,19 +73,21 @@ describe('routes', () => {
     expect(parse('/runs?ticket=AIRO-0').ticket).toBeNull();
   });
 
-  it('accepts only positive cmux surface references on the cmux page', () => {
-    expect(parse('/cmux?surface=surface%3A15').surface).toBe('surface:15');
+  it('accepts only positive cmux surface references on the terminal page', () => {
+    expect(parse('/terminal?surface=surface%3A15').surface).toBe('surface:15');
     expect(parse('/runs?surface=surface%3A15').surface).toBeNull();
-    expect(parse('/cmux?surface=surface%3A0').surface).toBeNull();
-    expect(parse('/cmux?surface=workspace%3A15').surface).toBeNull();
-    expect(parse('/cmux?surface=surface%3A9007199254740992').surface).toBeNull();
+    expect(parse('/terminal?surface=surface%3A0').surface).toBeNull();
+    expect(parse('/terminal?surface=workspace%3A15').surface).toBeNull();
+    expect(parse('/terminal?surface=surface%3A9007199254740992').surface).toBeNull();
   });
 
   it('serializes canonical paths and encoded parameters', () => {
     expect(routeHref({ view: 'dashboard' })).toBe('/helm');
     expect(routeHref({ view: 'prs', repo: 'owner/my.repo', pane: 'diff', pr: 42 }))
       .toBe('/prs?repo=owner%2Fmy.repo&pane=diff&pr=42');
-    expect(routeHref({ view: 'cmux', surface: 'surface:15' })).toBe('/cmux?surface=surface%3A15');
+    expect(routeHref({ view: 'cmux', surface: 'surface:15' })).toBe('/terminal?surface=surface%3A15');
+    expect(routeHref(parse('/cmux?repo=owner/repo&pane=screen&surface=surface:15')))
+      .toBe('/terminal?repo=owner%2Frepo&pane=screen&surface=surface%3A15');
     expect(routeHref(parse('/pr?repo=owner/repo&pr=42'))).toBe('/prs?repo=owner%2Frepo&pr=42');
   });
 
