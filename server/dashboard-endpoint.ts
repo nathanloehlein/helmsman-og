@@ -52,27 +52,31 @@ export async function buildDashboardResponse(
   let underwayAvailable = false;
   let prs: GithubPr[] = [];
   let openPrs: OpenAuthoredPr[] = [];
+  const mappedProject = selectedRepo
+    ? Object.entries(config.repoProjectMap).find(([repo]) => repo.toLowerCase() === selectedRepo.toLowerCase())?.[1]
+    : undefined;
+  const selectedProject = selectedRepo ? mappedProject : config.jira?.project;
 
-  if (config.jira) {
-    const mappedProject: string | undefined = selectedRepo
-      ? config.repoProjectMap[selectedRepo]
-      : undefined;
-    const jira: JiraConfig = mappedProject
-      ? { ...config.jira, project: mappedProject }
-      : config.jira;
+  if (config.jira && selectedProject) {
+    const jira: JiraConfig = { ...config.jira, project: selectedProject };
+    const scopedIssues = (issues: JiraIssue[]) => selectedRepo
+      ? issues.filter(issue => typeof issue?.key === 'string' && issue.key.toLowerCase().startsWith(`${selectedProject.toLowerCase()}-`))
+      : issues;
     await Promise.all([
       Promise.all([
         deps.fetchQueueIssues(jira),
         deps.fetchActiveIssues(jira),
       ]).then(([queue, active]) => {
-        queueIssues = queue;
-        activeIssues = active;
+        queueIssues = scopedIssues(queue);
+        activeIssues = scopedIssues(active);
       }).catch(() => { degraded.push('jira'); }),
       deps.fetchMineOpenIssues?.(jira).then((issues) => {
-        underwayIssues = issues;
+        underwayIssues = scopedIssues(issues);
         underwayAvailable = true;
       }).catch(() => { degraded.push('jira-underway'); }),
     ]);
+  } else if (config.jira && selectedRepo) {
+    underwayAvailable = true;
   } else if (config.jiraEnabled) {
     degraded.push('jira');
   }
@@ -105,10 +109,10 @@ export async function buildDashboardResponse(
     ]),
   ).sort();
   const scopedPrs: GithubPr[] = selectedRepo
-    ? prs.filter((pr) => pr.repo === selectedRepo)
+    ? prs.filter((pr) => pr.repo?.toLowerCase() === selectedRepo.toLowerCase())
     : prs;
   const repoLabel: string = selectedRepo
-    ? (selectedRepo.split('/').pop() ?? selectedRepo)
+    ? selectedRepo
     : config.repoLabel;
 
   const snapshot: DashboardSnapshot = assembleSnapshot({
@@ -122,7 +126,7 @@ export async function buildDashboardResponse(
   snapshot.underway = underwayIssues.map((issue) => issueToTicket(issue, repoLabel));
   snapshot.underwayAvailable = underwayAvailable;
 
-  if (config.jiraEnabled && (jiraDegraded || githubDegraded)) {
+  if (config.jiraEnabled && !selectedRepo && (jiraDegraded || githubDegraded)) {
     const mock: DashboardSnapshot = await deps.loadMock();
     if (jiraDegraded) {
       snapshot.queue = mock.queue;

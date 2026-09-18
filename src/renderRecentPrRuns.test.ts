@@ -4,7 +4,7 @@ import { DEFAULT_THEME_ID } from './data/themes';
 import type { RunSummary } from './data/agents';
 
 const run = (id: string, overrides: Partial<RunSummary> = {}): RunSummary => ({
-  id, ticketId: 'PR review', repo: 'org/a', status: 'succeeded', attempt: 1,
+  id, ticketId: 'review', repo: 'org/a', status: 'succeeded', attempt: 1,
   prNumber: 42, startedAt: '2026-09-17T12:00:00Z', costUsd: null, ...overrides,
 });
 const mount = (html: string) => {
@@ -43,7 +43,8 @@ describe('recent PR voyages', () => {
       expect(row?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`Review recommendation: ${label}`);
       expect(row?.querySelector('.app-link')?.getAttribute('href')).toBe(`/runs?run=${id}`);
     }
-    expect(element.querySelector('[data-runid="underway"]')?.textContent).toContain('Underway');
+    expect(element.querySelector('[data-runid="underway"] .voyage-result')?.getAttribute('aria-label')).toBe('Voyage underway');
+    expect(element.querySelector('.recent-run .chip')).toBeNull();
   });
 
   it('renders an empty state for a repository without PR voyages', () => {

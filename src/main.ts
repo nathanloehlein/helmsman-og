@@ -384,6 +384,9 @@ export class DashboardView {
     const scope = route.repo && (route.view !== 'prs' && route.view !== 'runs' || this.repos.includes(route.repo)) ? route.repo : null;
     const scopeChanged = this.selectedRepo !== scope;
     if (scopeChanged) {
+      this.snapshot = null;
+      this.snapshotRepo = undefined;
+      this.dashboardUnavailable = false;
       this.triagePages = { backlog: 1, todo: 1, mine: 1 };
       ++this.repoPrsSeq;
       ++this.localGitSeq;
@@ -574,7 +577,7 @@ export class DashboardView {
       this.paintSlack();
     }
     if (this.view === 'dashboard') {
-      if (response || force) this.paint();
+      if (dashboardDue || force) this.paint();
       else if (localDue) this.paintLocalRuns();
       await this.loadRepoPrs(force);
     } else if (this.view === 'prs') {
@@ -606,7 +609,7 @@ export class DashboardView {
   }
 
   private paintLocalRuns(): void {
-    if (!this.snapshot || this.view !== 'dashboard') return;
+    if (!this.snapshot || this.snapshotRepo !== this.selectedRepo || this.view !== 'dashboard') return;
     const next = document.createElement('div');
     renderDashboard(next, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo,
       this.runs, this.autoClaimRepos, this.caps, this.themeId, this.rackLayout, this.jiraBaseUrl, this.repoPrs, this.jiraEnabled);
@@ -756,8 +759,8 @@ export class DashboardView {
       this.paintPrView();
       return;
     }
-    if (!this.snapshot) {
-      this.mountPage(renderAppShell(this.shellOptions(), '<div class="empty-note" role="status">Loading Helm…</div>'));
+    if (!this.snapshot || this.snapshotRepo !== this.selectedRepo) {
+      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? 'Helm unavailable for this repository. Try refreshing.' : 'Loading Helm…'}</div>`));
       return;
     }
     const preBody: HTMLElement | null =
@@ -1978,34 +1981,9 @@ export class DashboardView {
       return;
     }
 
-    const recentRerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.recent-rerun');
-    if (recentRerunBtn) {
-      void this.handleRecentRerun(recentRerunBtn);
-      return;
-    }
-
     if (target.closest('a')) return;
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
-  }
-
-  private async handleRecentRerun(btn: HTMLButtonElement): Promise<void> {
-    const ticketId: string | undefined = btn.dataset.ticket;
-    const repo: string | undefined = btn.dataset.repo;
-    if (!ticketId || !repo) return;
-    const seq: number = ++this.launchSeq;
-    btn.disabled = true;
-    try {
-      const result: LaunchResult = await launchRun({ ticketId, repo, mode: 'ticket' });
-      if (seq !== this.launchSeq) return;
-      this.openRunTab(result.runId, ticketId);
-    } catch (err: unknown) {
-      if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage relaunch failed';
-      this.openErrorTab(ticketId, message);
-    } finally {
-      btn.disabled = false;
-    }
   }
 
   private prTarget(btn: HTMLElement): { panel: HTMLElement; repo: string; number: number } | null {

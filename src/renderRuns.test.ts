@@ -14,7 +14,7 @@ function mount(html: string): HTMLElement {
 }
 
 function run(overrides: Partial<RunSummary> = {}): RunSummary {
-  return { id: 'run-1', ticketId: 'Review PR #42', repo: 'org/alpha', status: 'running', attempt: 1,
+  return { id: 'run-1', ticketId: 'review', repo: 'org/alpha', status: 'running', attempt: 1,
     prNumber: 42, startedAt: '2026-09-17T15:00:00.000Z', costUsd: null, ...overrides };
 }
 
@@ -30,7 +30,7 @@ describe('renderRunsView', () => {
     expect(icon?.classList.contains(`voyage-result-${tone}`)).toBe(true);
     expect(icon?.querySelector('svg')).not.toBeNull();
     expect(icon?.getAttribute('title')).toContain('Published as a GitHub comment');
-    expect(el.querySelector('.recent-run .chip')?.textContent).toBe('Succeeded');
+    expect(el.querySelector('.recent-run .chip')).toBeNull();
   });
 
   it.each(['running', 'queued', 'failed', 'stopped'])('does not show a final review recommendation on %s voyages', (status) => {
@@ -38,13 +38,54 @@ describe('renderRunsView', () => {
     expect(el.querySelector('.voyage-result-approved')).toBeNull();
     if (status === 'failed' || status === 'stopped') {
       expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`Voyage ${status}`);
-    } else expect(el.querySelector('.voyage-result')).toBeNull();
+    } else expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(status === 'running' ? 'Voyage underway' : 'Voyage queued');
+    expect(el.querySelector('.chip')).toBeNull();
   });
 
   it.each([undefined, 'constructor', '<img src=x onerror=alert(1)>'])('does not invent a review result when the saved outcome is %j', (reviewOutcome) => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'succeeded', reviewOutcome } as Partial<RunSummary>)] }));
     expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('No review recommendation recorded');
     expect(el.querySelector('.voyage-result-approved, img')).toBeNull();
+  });
+
+  it('distinguishes a request-changes recommendation from a failed voyage', () => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [
+      run({ id: 'changes', status: 'succeeded', reviewOutcome: 'REQUEST_CHANGES' }),
+      run({ id: 'failed', status: 'failed' }),
+    ] }));
+    const changes = el.querySelector('[data-runid="changes"]');
+    const failed = el.querySelector('[data-runid="failed"]');
+    expect(changes?.querySelector('.voyage-result-changes')?.getAttribute('aria-label')).toBe('Review recommendation: Request changes');
+    expect(changes?.querySelector('.voyage-result-failed, [data-retry-run-id]')).toBeNull();
+    expect(failed?.querySelector('.voyage-result-failed')?.getAttribute('aria-label')).toBe('Voyage failed');
+    expect(failed?.querySelector('.voyage-result-changes')).toBeNull();
+  });
+
+  it('places the task identity on the left and retry, timestamp, and ID copy in that order on the right', () => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'failed' })] }));
+    const row = el.querySelector('.recent-run');
+    expect(row?.querySelector('.voyage-identity .ticket-id')?.textContent).toBe('PR #42');
+    expect(row?.querySelector('.runs-voyage-link .agent-repo')?.textContent).toBe('alpha');
+    expect(row?.querySelector('.runs-voyage-link time, .runs-voyage-link button')).toBeNull();
+    const meta = row?.querySelector('.voyage-row-meta');
+    const controls = [...(meta?.querySelectorAll('[data-retry-run-id], time, [data-copy-run-id]') ?? [])];
+    expect(controls).toHaveLength(3);
+    expect(controls[0]?.getAttribute('data-retry-run-id')).toBe('run-1');
+    expect(controls[0]?.querySelector('.sr-only')?.textContent).toBe('Retry');
+    expect(controls[1]?.getAttribute('datetime')).toBe('2026-09-17T15:00:00.000Z');
+    expect(controls[1]?.getAttribute('title')).toBeTruthy();
+    expect(controls[2]?.getAttribute('data-copy-run-id')).toBe('run-1');
+    expect(meta?.lastElementChild).toBe(controls[2]);
+  });
+
+  it.each([
+    ['review', 42, 'PR #42'],
+    ['review', null, 'review'],
+    ['review', -1, 'review'],
+    ['ABC-123', 42, 'ABC-123 · PR #42'],
+  ])('uses a meaningful title for %s with PR %s', (ticketId, prNumber, title) => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ ticketId, prNumber })] }));
+    expect(el.querySelector('.voyage-identity .ticket-id')?.textContent).toBe(title);
   });
 
   it('escapes saved verdict text in tooltips', () => {
@@ -86,8 +127,9 @@ describe('renderRunsView', () => {
     ] }));
     const rows = [...el.querySelectorAll('.recent-run')];
     expect(rows.map((row) => row.getAttribute('data-runid'))).toEqual(['active', 'finished']);
-    expect(rows[0]?.textContent).toContain('Underway');
-    expect(rows[1]?.textContent).toContain('Succeeded');
+    expect(rows[0]?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe('Voyage underway');
+    expect(rows[1]?.querySelector('.voyage-result')?.getAttribute('aria-label')).toContain('Completed');
+    expect(el.querySelector('.recent-run .chip')).toBeNull();
     expect(rows[0]?.querySelector('a')?.getAttribute('href')).toBe('/runs?run=active');
   });
 
@@ -106,6 +148,6 @@ describe('renderRunsView', () => {
     })] }));
     expect(el.querySelector('img, script')).toBeNull();
     expect(el.querySelector('.recent-run a')?.getAttribute('href')).toBe('/runs?run=a%26pane%3Dnewrun');
-    expect(el.textContent).toContain('<script>alert(1)</script>');
+    expect(el.querySelector('.voyage-identity')?.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 });

@@ -1608,16 +1608,11 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(plate()!.classList.contains('is-collapsed')).toBe(false);
   });
 
-  it('re-runs a recent ticket run: launches mode=ticket with the run ticket/repo', async () => {
+  it('keeps successful recent voyages accessible without retry or relaunch actions', async () => {
     const response: DashboardResponse = await buildResponse();
-    let launchBody: { ticketId?: string; repo?: string; mode?: string } | null = null;
     const terminalRun = { id: 'run-9', ticketId: 'TICK-9', repo: 'acme/widgets', status: 'succeeded', attempt: 1, prNumber: 55, startedAt: new Date().toISOString(), costUsd: 1 };
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url: string = String(input);
-      if (url.includes('/api/agents/launch')) {
-        launchBody = JSON.parse(String(init?.body ?? '{}'));
-        return { ok: true, status: 200, json: async () => ({ runId: 'run-new' }) } as unknown as Response;
-      }
       if (url.includes('/api/agents')) return { ok: true, status: 200, json: async () => ({ runs: [terminalRun] }) } as unknown as Response;
       if (url.includes('/api/config')) return { ok: true, status: 200, json: async () => ({ config: {}, overridden: [] }) } as unknown as Response;
       return { ok: true, status: 200, json: async () => response } as unknown as Response;
@@ -1627,12 +1622,10 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const view: DashboardView = new DashboardView(root);
     await view.refresh();
 
-    const rerunBtn: HTMLButtonElement | null = root.querySelector<HTMLButtonElement>('.recent-run .recent-rerun');
-    expect(rerunBtn).not.toBeNull();
-    expect(rerunBtn!.disabled).toBe(false);
-    rerunBtn!.click();
-    await vi.waitFor(() => expect(launchBody).not.toBeNull());
-    expect(launchBody).toMatchObject({ ticketId: 'TICK-9', repo: 'acme/widgets', mode: 'ticket' });
+    const row = root.querySelector('.recent-run[data-runid="run-9"]');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('.recent-rerun, [data-retry-run-id]')).toBeNull();
+    expect(row?.querySelector('.runs-voyage-link')?.getAttribute('href')).toBe('/runs?run=run-9');
   });
 
   it('launches an underway ticket without a branch using the full selected repo and shows its log', async () => {

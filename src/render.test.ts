@@ -343,7 +343,17 @@ describe('renderDashboard', () => {
     expect(el.querySelector('.newrun-launch')).not.toBeNull();
   });
 
-  it('renders recent-run rows for terminal runs, excludes running ones, and links the PR', () => {
+  it('defaults the new voyage repository to the selected scope when it is not the first option', () => {
+    const el: HTMLDivElement = root();
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], 'org/beta');
+
+    const repoSelect = el.querySelector<HTMLSelectElement>('.newrun-repo');
+    expect(repoSelect?.options[0]?.value).toBe('org/alpha');
+    expect(repoSelect?.value).toBe('org/beta');
+    expect(repoSelect?.selectedOptions[0]?.getAttribute('selected')).not.toBeNull();
+  });
+
+  it('renders terminal voyages with result icons and links to their details', () => {
     const el: HTMLDivElement = root();
     const runs: RunSummary[] = [
       {
@@ -387,11 +397,12 @@ describe('renderDashboard', () => {
     expect(recentRunsHtml).not.toContain('ABC-1');
     expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-result')?.getAttribute('aria-label')).toBe('Review recommendation: Request changes');
     expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-id')?.textContent).toBe('run-2');
-    const link: HTMLAnchorElement | null = el.querySelector<HTMLAnchorElement>('a[href="https://github.com/org/beta/pull/42"]');
-    expect(link).not.toBeNull();
+    expect(el.querySelector('.recent-run[data-runid="run-2"] .runs-voyage-link')?.getAttribute('href')).toBe('/runs?run=run-2');
+    expect(el.querySelector('.recent-run[data-runid="run-2"] .voyage-identity')?.textContent).toContain('ABC-2');
+    expect(el.querySelector('.recent-run .chip, .recent-run .agent-cost, .recent-run .lane-no')).toBeNull();
   });
 
-  it('retains ticket relaunch and retries failed freeform voyages by their original run ID', () => {
+  it('only offers retry for failed voyages and preserves their original run ID', () => {
     const el: HTMLDivElement = root();
     const runs: RunSummary[] = [
       { id: 'r1', ticketId: 'ABC-2', repo: 'org/beta', status: 'succeeded', attempt: 1, prNumber: 42, startedAt: NOW.toISOString(), costUsd: 1 },
@@ -399,11 +410,8 @@ describe('renderDashboard', () => {
     ];
     renderDashboard(el, snapshot(), NOW, [], [], null, runs);
     const rows = el.querySelectorAll<HTMLElement>('.recent-run');
-    const ticketBtn = rows[0]!.querySelector<HTMLButtonElement>('.recent-rerun')!;
     const freeformBtn = rows[1]!.querySelector<HTMLButtonElement>('[data-retry-run-id]');
-    expect(ticketBtn.disabled).toBe(false);
-    expect(ticketBtn.dataset.ticket).toBe('ABC-2');
-    expect(ticketBtn.dataset.repo).toBe('org/beta');
+    expect(rows[0]?.querySelector('.recent-rerun, [data-retry-run-id]')).toBeNull();
     expect(freeformBtn?.disabled).toBe(false);
     expect(freeformBtn?.dataset.retryRunId).toBe('r2');
     expect(rows[1]?.querySelector('.recent-rerun')).toBeNull();
@@ -990,7 +998,7 @@ describe('renderRunsDrawer', () => {
     const id = 'b5fcda70-6766-461d-a828-bd1fe233a580';
     el.innerHTML = renderVoyage({ id, ticketId: 'T-1', repo: 'org/repo', status: 'succeeded', attempt: 1, prNumber: null, startedAt: '2026-09-18T00:00:00Z', costUsd: null });
     expect(el.querySelector('.runs-voyage-link [data-copy-run-id]')).toBeNull();
-    expect(el.querySelector('.recent-run > [data-copy-run-id]')?.getAttribute('data-copy-run-id')).toBe(id);
+    expect(el.querySelector('.recent-run .voyage-row-meta > [data-copy-run-id]')?.getAttribute('data-copy-run-id')).toBe(id);
     expect(el.querySelector('.voyage-id')?.textContent).toBe('b5fcda706766');
   });
 
@@ -1003,7 +1011,8 @@ describe('renderRunsDrawer', () => {
     if (status === 'failed') {
       expect(retry?.dataset.retryRunId).toBe(id);
       expect(retry?.type).toBe('button');
-      expect(retry?.textContent).toBe('Retry');
+      expect(retry?.querySelector('.sr-only')?.textContent).toBe('Retry');
+      expect(retry?.querySelector('svg')).not.toBeNull();
       expect(retry?.getAttribute('aria-label')).toBe(`Retry failed voyage ${id}`);
       expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('data-retry-feedback-for')).toBe(id);
       expect(el.querySelector('[data-retry-feedback-for]')?.getAttribute('aria-live')).toBe('polite');
@@ -1017,6 +1026,8 @@ describe('renderRunsDrawer', () => {
     el.innerHTML = renderRunsDrawer(tabs, 'failed-run');
     expect(el.querySelectorAll('[data-retry-run-id]')).toHaveLength(1);
     expect(el.querySelector('.run-drawer-retry [data-retry-run-id]')?.getAttribute('data-retry-run-id')).toBe('failed-run');
+    expect(el.querySelector('.run-drawer-retry [data-retry-run-id]')?.textContent).toBe('Retry');
+    expect(el.querySelector('.run-drawer-retry [data-retry-run-id] .sr-only')).toBeNull();
     expect(el.querySelector('.run-drawer-retry')?.nextElementSibling?.classList.contains('run-drawer-body')).toBe(true);
     expect(el.querySelectorAll('a button, button button, button a')).toHaveLength(0);
     el.innerHTML = renderRunsDrawer(tabs, 'running-run');

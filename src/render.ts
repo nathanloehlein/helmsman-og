@@ -74,12 +74,6 @@ function reviewChip(decision: string): { cls: string; label: string } {
   return { cls: 'chip-review', label: 'Review' };
 }
 
-const RUN_STATUS_CHIP: Record<string, { label: string; chipClass: string; laneState: string }> = {
-  succeeded: { label: 'Succeeded', chipClass: 'chip-done', laneState: 'double' },
-  failed: { label: 'Failed', chipClass: 'chip-blocked', laneState: 'ring' },
-  stopped: { label: 'Stopped', chipClass: 'chip-progress', laneState: 'gap' },
-}
-
 const ICON_LOCK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.5 7V5.1a2.5 2.5 0 0 1 5 0V7"/></svg>'
 
@@ -121,7 +115,6 @@ const ICON_DOTS: string =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>'
 
 export function renderVoyageResult(run: RunSummary): string {
-  if (!['succeeded', 'failed', 'stopped'].includes(run.status)) return '';
   const results: Record<string, { label: string; tone: string; icon: string }> = {
     APPROVE: { label: 'Review recommendation: Approve', tone: 'approved', icon: ICON_CHECK },
     REQUEST_CHANGES: { label: 'Review recommendation: Request changes', tone: 'changes', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4v8m0-4h4a3 3 0 0 0 3-3V4"/><circle cx="5" cy="2.5" r="1.5"/><circle cx="5" cy="13.5" r="1.5"/><circle cx="12" cy="2.5" r="1.5"/></svg>' },
@@ -130,10 +123,16 @@ export function renderVoyageResult(run: RunSummary): string {
   const review = run.status === 'succeeded' && typeof run.reviewOutcome === 'string' && Object.hasOwn(results, run.reviewOutcome)
     ? results[run.reviewOutcome] : undefined;
   const result = review ?? (run.status === 'failed'
-    ? { label: 'Voyage failed', tone: 'changes', icon: ICON_X_MARK }
+    ? { label: 'Voyage failed', tone: 'failed', icon: ICON_X_MARK }
     : run.status === 'stopped'
       ? { label: 'Voyage stopped', tone: 'unknown', icon: ICON_STOP }
-      : { label: 'Completed · No review recommendation recorded', tone: 'unknown', icon: ICON_INFO });
+      : run.status === 'running'
+        ? { label: 'Voyage underway', tone: 'running', icon: ICON_DOTS }
+        : run.status === 'queued'
+          ? { label: 'Voyage queued', tone: 'unknown', icon: ICON_DOTS }
+          : run.status === 'succeeded'
+            ? { label: 'Completed · No review recommendation recorded', tone: 'unknown', icon: ICON_INFO }
+            : { label: `Voyage status: ${run.status || 'Unknown'}`, tone: 'unknown', icon: ICON_INFO });
   const verdict = typeof run.reviewVerdict === 'string' ? run.reviewVerdict.slice(0, 240) : '';
   const title = review ? `${result.label}. Published as a GitHub comment.${verdict ? ` ${verdict}` : ''}` : result.label;
   return `<span class="voyage-result voyage-result-${result.tone}" role="img" aria-label="${esc(result.label)}" title="${esc(title)}">${result.icon}</span>`;
@@ -449,40 +448,15 @@ export function renderDashboard(
   const sampleSources = degraded.filter(source => source !== 'jira-underway');
   const banner: string =
     sampleSources.length > 0
-      ? `<div class="degraded-banner">${jiraEnabled ? 'Showing sample data for' : 'Unavailable integrations'}: ${sampleSources.join(', ')} — check server credentials.</div>`
+      ? `<div class="degraded-banner">${jiraEnabled && !selectedRepo ? 'Showing sample data for' : 'Unavailable integrations'}: ${sampleSources.join(', ')} — check server credentials.</div>`
       : '';
 
   const newRunRepoOptions: string = sortedRepos
-    .map((repo) => `<option value="${esc(repo)}">${esc(shortRepo(repo))}</option>`)
+    .map((repo) => `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`)
     .join('');
 
   const recentRunItems: string = terminalRuns.length
-    ? terminalRuns
-        .map((run, i) => {
-          const statusInfo = RUN_STATUS_CHIP[run.status] ?? { label: esc(run.status), chipClass: 'chip-progress', laneState: 'gap' };
-          const costText: string = run.costUsd != null ? `$${run.costUsd.toFixed(2)}` : '&mdash;';
-          const prLink: string =
-            run.prNumber != null
-              ? `<a class="recent-run-pr" href="https://github.com/${esc(run.repo)}/pull/${run.prNumber}" target="_blank" rel="noopener">#${run.prNumber}</a>`
-              : '';
-          const canRerun: boolean = jiraEnabled && TICKET_RE.test(run.ticketId);
-          const rerunBtn: string = canRerun
-            ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Relaunch voyage for ${esc(run.ticketId)}" title="Relaunch voyage for ${esc(run.ticketId)}">${ICON_REDO}</button>`
-            : `<button class="recent-rerun" type="button" disabled aria-label="Cannot relaunch voyage" title="Cannot relaunch voyage — original task is unavailable">${ICON_REDO}</button>`;
-          return `
-      <li class="lane recent-run" data-runid="${esc(run.id)}">
-        <span class="lane-no mono">${laneNo(i)}</span>
-        ${renderVoyageResult(run)}
-        <span class="voyage-identity"><span class="ticket-id">${ticketLabel(run.ticketId || 'freeform', jiraBaseUrl)}</span>${renderVoyageId(run.id)}</span>
-        <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
-        ${laneRail(statusInfo.laneState)}
-        <span class="agent-cost mono">${costText}</span>
-        ${prLink}
-        <span class="chip ${statusInfo.chipClass}">${statusInfo.label}</span>
-        ${run.status === 'failed' ? renderVoyageRetry(run.id) : rerunBtn}
-      </li>`;
-        })
-        .join('')
+    ? terminalRuns.map(run => renderVoyage(run, now)).join('')
     : '<li class="empty-note">No past voyages.</li>';
 
   const repoPrCount: number = validListPrs(scopeRepoPrs(selectedRepo, repoPrs)).length;
@@ -568,9 +542,9 @@ function renderVoyageId(id: unknown): string {
     : '';
 }
 
-export function renderVoyageRetry(id: string): string {
+export function renderVoyageRetry(id: string, iconOnly = false): string {
   if (typeof id !== 'string' || id.startsWith('err-') || !/^[a-z\d_-]{1,128}$/i.test(id)) return '';
-  return `<button type="button" class="voyage-retry" data-retry-run-id="${esc(id)}" aria-label="Retry failed voyage ${esc(id)}" title="Start a fresh voyage with the original task and settings">${ICON_REDO}<span>Retry</span></button><span class="voyage-retry-feedback" data-retry-feedback-for="${esc(id)}" role="status" aria-live="polite"></span>`;
+  return `<button type="button" class="voyage-retry" data-retry-run-id="${esc(id)}" aria-label="Retry failed voyage ${esc(id)}" title="Start a fresh voyage with the original task and settings">${ICON_REDO}<span${iconOnly ? ' class="sr-only"' : ''}>Retry</span></button><span class="voyage-retry-feedback" data-retry-feedback-for="${esc(id)}" role="status" aria-live="polite"></span>`;
 }
 
 export interface RunTabView {
@@ -834,27 +808,23 @@ export function renderPrDiff(files: PrFileDiff[] | null): string {
   return `<div class="pr-diff">${fileBlocks}</div>`;
 }
 
-export function renderVoyage(run: RunSummary): string {
-  const statusName = typeof run.status === 'string' && run.status ? run.status : 'Unknown';
-  const status = Object.hasOwn(RUN_STATUS_CHIP, statusName) ? RUN_STATUS_CHIP[statusName]
-    : statusName === 'running' ? { label: 'Underway', chipClass: 'chip-progress' }
-      : statusName === 'queued' ? { label: 'Queued', chipClass: 'chip-review' }
-        : { label: statusName, chipClass: 'chip-progress' };
+export function renderVoyage(run: RunSummary, now: Date = new Date()): string {
   const title = typeof run.ticketId === 'string' && run.ticketId ? run.ticketId : 'Freeform voyage';
-  const pr = Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0 ? ` · PR #${run.prNumber}` : '';
+  const hasPr = Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0;
+  const label = hasPr ? `${/^review$/i.test(title) ? '' : `${title} · `}PR #${run.prNumber}` : title;
   const startedAt = typeof run.startedAt === 'string' && Number.isFinite(Date.parse(run.startedAt))
-    ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}">${esc(formatRelativeTime(run.startedAt, new Date()))}</time>` : '';
+    ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}" title="${esc(new Date(run.startedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}">${esc(formatRelativeTime(run.startedAt, now))}</time>` : '';
   const href = `/runs?${new URLSearchParams({ run: run.id })}`;
   return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
-    <a class="app-link lane runs-voyage-link" href="${esc(href)}">
+    <a class="app-link runs-voyage-link" href="${esc(href)}">
       ${renderVoyageResult(run)}
-      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span></span>
-      <span class="agent-repo mono">${esc(run.repo.split('/').pop() ?? run.repo)}</span>
-      ${startedAt}
-      <span class="chip ${status.chipClass}">${esc(status.label)}</span>
+      <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
     </a>
-    ${renderVoyageId(run.id)}
-    ${run.status === 'failed' ? renderVoyageRetry(run.id) : ''}
+    <div class="voyage-row-meta">
+      ${run.status === 'failed' ? renderVoyageRetry(run.id, true) : ''}
+      ${startedAt}
+      ${renderVoyageId(run.id)}
+    </div>
   </li>`;
 }
 
@@ -869,7 +839,7 @@ export function renderRecentPrRuns(runs: RunSummary[], repo: string | null): str
       <span class="panel-count mono">${recent.length}${matches.length > recent.length ? ` of ${matches.length}` : ''}</span>
       <a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'recent' }))}">All voyages ↗</a>
     </div>
-    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(renderVoyage).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
+    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(run => renderVoyage(run)).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
   </section>`;
 }
 

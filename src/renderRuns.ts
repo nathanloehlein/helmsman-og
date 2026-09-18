@@ -47,7 +47,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
         <span class="panel-count mono">${runs.length}</span>
         <a class="app-link runs-pane-link" href="${esc(paneHref('recent', opts.selectedRepo))}" aria-label="Link to Recent voyages">Link ↗</a>
       </div>
-      <ul class="recent-runs-list lane-list">${runs.length ? runs.map(renderVoyage).join('') : '<li class="empty-note">No voyages yet.</li>'}</ul>
+      <ul class="recent-runs-list lane-list">${runs.length ? runs.map(run => renderVoyage(run)).join('') : '<li class="empty-note">No voyages yet.</li>'}</ul>
     </section>
     <div class="runs-drawer-slot" data-pane="tasks"></div>
 `);
