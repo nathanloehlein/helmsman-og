@@ -7,8 +7,17 @@ import { resolveSocket } from './socket';
 
 export type RunWez = (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-/** How often watchEvents re-lists panes. WezTerm has no event stream. */
+export interface WezTermBridgeOptions {
+  run?: RunWez;
+  /** How often watchEvents re-lists panes. WezTerm has no event stream. */
+  pollMs?: number;
+  /** Where to reach wezterm, or null when there is nothing to drive. */
+  socket?: () => string | null;
+}
+
 const POLL_MS = 1000;
+
+const NOT_RUNNING = 'wezterm is not running';
 
 /**
  * Read at call time, not module scope: ESM evaluates this import before
@@ -44,7 +53,11 @@ function trimTrailingBlankLines(text: string): string {
   return text.replace(/\s+$/, '');
 }
 
-export function createWezTermBridge(run: RunWez = defaultRun, pollMs: number = POLL_MS): Bridge {
+export function createWezTermBridge(options: WezTermBridgeOptions = {}): Bridge {
+  const run: RunWez = options.run ?? defaultRun;
+  const pollMs: number = options.pollMs ?? POLL_MS;
+  const target: () => string | null = options.socket ?? ((): string | null => resolveSocket());
+
   /**
    * Which pane has focus. Its own failure is not fatal — toTabs degrades to
    * per-tab is_active — so a broken list-clients must not take listTabs down.
@@ -60,7 +73,19 @@ export function createWezTermBridge(run: RunWez = defaultRun, pollMs: number = P
     }
   }
 
+  /**
+   * Never shell out with nothing to connect to. `wezterm cli` falls back to its
+   * default unix domain and, because that domain does not set
+   * no_serve_automatically, silently starts a headless wezterm-mux-server. The
+   * panel would then report connected and accept input for panes that have no
+   * window — an invisible terminal, and a fresh orphan server per restart.
+   *
+   * Setting WEZTERM_SOCKET (or inheriting WEZTERM_UNIX_SOCKET) is the opt-in:
+   * resolveSocket returns it whether or not a GUI is up, so deliberately
+   * pointing at a headless mux domain still works.
+   */
   async function listTabs(): Promise<{ connected: boolean; tabs: CmuxTab[] }> {
+    if (target() === null) return { connected: false, tabs: [] };
     try {
       const res = await run(['cli', 'list', '--format', 'json']);
       if (res.code !== 0) return { connected: false, tabs: [] };
@@ -76,6 +101,7 @@ export function createWezTermBridge(run: RunWez = defaultRun, pollMs: number = P
     surfaceRef: string,
     lines: number,
   ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    if (target() === null) return { ok: false, error: NOT_RUNNING };
     const pane = paneId(surfaceRef);
     if (!pane) return { ok: false, error: `not a wezterm pane id: ${surfaceRef}` };
     try {
@@ -99,6 +125,7 @@ export function createWezTermBridge(run: RunWez = defaultRun, pollMs: number = P
     text: string,
     enter: boolean,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (target() === null) return { ok: false, error: NOT_RUNNING };
     const pane = paneId(surfaceRef);
     if (!pane) return { ok: false, error: `not a wezterm pane id: ${surfaceRef}` };
     try {
@@ -115,6 +142,7 @@ export function createWezTermBridge(run: RunWez = defaultRun, pollMs: number = P
   }
 
   async function sendKey(surfaceRef: string, key: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (target() === null) return { ok: false, error: NOT_RUNNING };
     const pane = paneId(surfaceRef);
     if (!pane) return { ok: false, error: `not a wezterm pane id: ${surfaceRef}` };
     const bytes = keyToBytes(key);
@@ -137,16 +165,25 @@ export function createWezTermBridge(run: RunWez = defaultRun, pollMs: number = P
   function watchEvents(onChange: () => void): () => void {
     let stopped = false;
     let last: string | null = null;
+    let inFlight = false;
 
     const fingerprint = (tabs: CmuxTab[]): string =>
       tabs.map((t) => `${t.windowRef}/${t.workspaceRef}/${t.surfaceRef}/${t.selected}`).join(',');
 
     const tick = async (): Promise<void> => {
-      if (stopped) return;
-      const { connected, tabs } = await listTabs();
-      const next = connected ? fingerprint(tabs) : 'disconnected';
-      if (last !== null && next !== last) onChange();
-      last = next;
+      // setInterval does not wait, and a list can take seconds — wezterm blocks
+      // for its connect timeout before spawning a mux server. Without this,
+      // slow polls stack up and every tick spawns another pair of processes.
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        const { connected, tabs } = await listTabs();
+        const next = connected ? fingerprint(tabs) : 'disconnected';
+        if (last !== null && next !== last) onChange();
+        last = next;
+      } finally {
+        inFlight = false;
+      }
     };
 
     const timer = setInterval(() => {
