@@ -9,17 +9,19 @@ try {
     const arg = args[index];
     if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--clear') options.clear = true;
+    else if (arg === '--wait') options.waitForLockMs = 30_000;
     else if (arg === '--cmux' || arg === '--state-dir') {
       const value = args[++index];
       if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.`);
       options[arg === '--cmux' ? 'cmuxPath' : 'stateDir'] = value;
     } else if (arg === '--help') {
-      process.stdout.write('Refresh native cmux sidebar Codex API estimates.\nOptions: --dry-run --clear --cmux <executable> --state-dir <directory>\n');
+      process.stdout.write('Refresh native cmux sidebar Codex API estimates.\nOptions: --dry-run --clear --wait --cmux <executable> --state-dir <directory>\n');
       process.exit(0);
     } else throw new Error(`Unknown option: ${arg}`);
   }
   const result = await refreshCodexCostSidebar(options);
   process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (result.warnings.length) process.exitCode = 1;
 } catch {
   process.stderr.write('Codex cost refresh failed. Check cmux access and local session files.\n');
   process.exitCode = 1;

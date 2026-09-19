@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { COST_ESTIMATE_DATE } from '../cost-estimates.ts';
 import { CodexCostUsageTracker, type CodexCostCheckpoint } from './codex-cost-usage.ts';
 
@@ -29,6 +30,7 @@ export interface CodexCostSidebarOptions {
   stateDir: string;
   dryRun?: boolean;
   clear?: boolean;
+  waitForLockMs?: number;
   runCmux?: (args: string[]) => Promise<string>;
 }
 
@@ -244,8 +246,19 @@ export async function refreshCodexCostSidebar(options: CodexCostSidebarOptions):
   try {
     if (!options.dryRun) {
       await mkdir(options.stateDir, { recursive: true, mode: 0o700 });
-      release = await acquireLock(join(options.stateDir, 'refresh.lock'));
-      if (!release) return { statuses: [], warnings: ['A cost refresh is already running.'] };
+      const requestedWait = options.waitForLockMs ?? (options.clear ? 30_000 : 0);
+      const waitMs = Number.isFinite(requestedWait) ? Math.min(30_000, Math.max(0, requestedWait)) : 0;
+      const deadline = performance.now() + waitMs;
+      do {
+        release = await acquireLock(join(options.stateDir, 'refresh.lock'));
+        if (release) break;
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) break;
+        await delay(Math.min(100, remaining));
+      } while (true);
+      if (!release) return { statuses: [], warnings: [waitMs > 0
+        ? 'Timed out waiting for the active cost refresh; requested refresh was not completed.'
+        : 'A cost refresh is already running.'] };
     }
     const [treeResult, sessionResult] = await Promise.allSettled([
       run(['--json', '--id-format', 'both', 'tree', '--all']).then(output => JSON.parse(output) as unknown),

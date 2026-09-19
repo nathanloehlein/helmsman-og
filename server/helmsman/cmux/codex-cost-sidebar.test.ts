@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, writeFile, appendFile, rm, rename, stat, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CODEX_COST_STATUS_PREFIX, refreshCodexCostSidebar } from './codex-cost-sidebar';
 
@@ -167,6 +168,39 @@ describe('native cmux Codex sidebar', () => {
     const report = await refreshCodexCostSidebar(f.options);
     expect(report.warnings).toEqual(['A cost refresh is already running.']);
     expect(f.calls).toEqual([]);
+  });
+
+  it.each([false, true])('waits for an active refresh before completion or cleanup: clear=%s', async clear => {
+    const f = await fixture();
+    await mkdir(f.stateDir);
+    const lockPath = join(f.stateDir, 'refresh.lock');
+    await writeFile(lockPath, String(process.pid));
+    f.statusLines.set(workspace, `${currentKey}=old\ncodex=Idle`);
+    const refresh = refreshCodexCostSidebar({ ...f.options, clear, ...(clear ? {} : { waitForLockMs: 1_000 }) });
+    await delay(20);
+    expect(f.calls).toEqual([]);
+    await appendFile(f.transcript, `${tokens(2_000, 0, 200)}\n`);
+    await rm(lockPath);
+    const report = await refresh;
+    expect(report.warnings).toEqual([]);
+    if (clear) {
+      expect(report.statuses).toEqual([]);
+      expect(f.calls).toContainEqual(['clear-status', currentKey, '--workspace', workspace]);
+    } else {
+      expect(report.statuses[0]?.label).toBe('Codex surface:9 · $0.03 est');
+    }
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reports a bounded lock timeout without clearing statuses or removing another refresh lock', async () => {
+    const f = await fixture();
+    await mkdir(f.stateDir);
+    const lockPath = join(f.stateDir, 'refresh.lock');
+    await writeFile(lockPath, String(process.pid));
+    const report = await refreshCodexCostSidebar({ ...f.options, clear: true, waitForLockMs: 20 });
+    expect(report.warnings).toEqual(['Timed out waiting for the active cost refresh; requested refresh was not completed.']);
+    expect(f.calls).toEqual([]);
+    expect(await readFile(lockPath, 'utf8')).toBe(String(process.pid));
   });
 
   it('invalidates cached prices when the rate card date changes', async () => {

@@ -19,10 +19,11 @@ From this checkout, with Node 24 or newer and cmux running:
 npm run cmux:costs:install
 ```
 
-This installs three named rules in `~/.cmuxterm/automations.json`, preserving
+This installs four named rules in `~/.cmuxterm/automations.json`, preserving
 unrelated rules and backing up an existing file. It uses cmux's supported
 `agent.hook.*`, `surface.closed` and `surface.moved` events. Codex hook events are
-rate-limited to one refresh every three seconds. No cmux application patch,
+rate-limited to one refresh every three seconds. Turn completion has a separate
+rule and waits for any active refresh so the final usage is included. No cmux application patch,
 Codex restart, background daemon or socket-permission change is needed.
 
 Estimates update when a Codex hook arrives, including tool activity and turn

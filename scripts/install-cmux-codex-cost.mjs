@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { shellQuote, updateCostAutomations } from '../server/helmsman/cmux/codex-cost-install.ts';
 
+let configurationWritten = false;
 try {
   const uninstall = process.argv.includes('--uninstall');
   if (process.argv.slice(2).some(arg => arg !== '--uninstall')) throw new Error('Usage: install-cmux-codex-cost.mjs [--uninstall]');
@@ -29,10 +30,12 @@ try {
   const temporary = `${configPath}.${randomUUID()}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   renameSync(temporary, configPath);
+  configurationWritten = true;
   execFileSync(cmuxPath, ['automation', 'reload'], { stdio: 'inherit', timeout: 10_000 });
-  execFileSync(nodePath, [scriptPath, '--cmux', cmuxPath, ...(uninstall ? ['--clear'] : [])], { stdio: 'inherit', timeout: 45_000 });
+  execFileSync(nodePath, [scriptPath, '--cmux', cmuxPath, '--wait', ...(uninstall ? ['--clear'] : [])], { stdio: 'inherit', timeout: 45_000 });
   process.stdout.write(uninstall ? 'Removed Helmsman Codex cost automation rules.\n' : 'Installed native cmux Codex cost estimates.\n');
 } catch (error) {
   process.stderr.write(`${error instanceof Error && !(error instanceof SyntaxError) && !('stderr' in error) ? error.message : 'Could not install cmux cost automations. Check cmux access and the existing configuration.'}\n`);
+  if (configurationWritten) process.stderr.write('The configuration was saved, but activation or refresh failed. Fix cmux access and rerun this command.\n');
   process.exitCode = 1;
 }
