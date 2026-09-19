@@ -62,7 +62,7 @@ function renderForm(state: TodosViewState, opts: TodosViewOpts): string {
         <label class="todo-field">${term('repository')}<input name="repo" required list="todo-repositories" pattern="[A-Za-z0-9_\\x2d][A-Za-z0-9_.\\x2d]*\\x2f[A-Za-z0-9_\\x2d][A-Za-z0-9_.\\x2d]*" placeholder="owner/name" value="${esc(repo)}"><datalist id="todo-repositories">${(opts.repos ?? []).map(repo => `<option value="${esc(repo)}"></option>`).join('')}</datalist></label>
         <div class="todo-form-row"><label class="todo-field">Priority<select name="priority">${options(TODO_PRIORITIES, draft.priority ?? 'P2', priorities)}</select></label>
         <label class="todo-field">State<select name="state">${TODO_STATES.map(value => `<option value="${value}"${value === (draft.state ?? 'todo') ? ' selected' : ''}${value === 'in_progress' ? ' disabled' : ''}>${stateLabels()[value]}${value === 'in_progress' ? ` · ${term('run').toLowerCase()} managed` : ''}</option>`).join('')}</select></label></div>
-        <label class="todo-field">Description<textarea name="description" rows="5" maxlength="20000" placeholder="Describe the problem, expected behavior, and relevant files or context.">${esc(text(draft.description))}</textarea><span class="todo-field-hint">Required to start a ${term('run').toLowerCase()}. You can save a draft first.</span></label>
+        <label class="todo-field">Description<textarea name="description" aria-describedby="todo-description-help" rows="5" maxlength="20000" placeholder="Describe the problem, expected behavior, and relevant files or context.">${esc(text(draft.description))}</textarea><span class="todo-field-hint" id="todo-description-help">Required to start a ${term('run').toLowerCase()}. You can save a draft first.</span></label>
         <label class="todo-field">Acceptance criteria (optional)<textarea name="acceptanceCriteria" rows="4" maxlength="20000" placeholder="How will we know this is done? Include tests, edge cases, and constraints.">${esc(text(draft.acceptanceCriteria))}</textarea></label>
         <div class="todo-actions"><button class="todo-button todo-button-primary" type="submit">${selected ? 'Save changes' : 'Add todo'}</button>${selected ? '<button class="todo-button" type="button" data-todo-cancel>Cancel</button>' : ''}</div>
       </fieldset>
@@ -77,17 +77,18 @@ function renderItem(item: Todo, state: TodosViewState, selectedRepo: string | nu
     : item.state !== 'todo' ? 'Set the state to To do before launching.'
     : !text(item.description).trim() ? 'Add a description before launching.' : '';
   const stateLabel = stateLabels()[item.state] ?? 'Unknown';
+  const hintId = `todo-launch-help-${encodeURIComponent(item.id)}`;
   return `<li class="todo-item${state.editingId === item.id ? ' is-editing' : ''}" data-todo-id="${esc(item.id)}">
     <div class="todo-item-heading"><span class="todo-priority mono">${esc(text(item.priority))}</span><h3>${esc(item.title)}</h3><span class="todo-state">${esc(stateLabel)}</span></div>
     <div class="todo-item-meta mono">${esc(text(item.repo))}<span>${esc(item.id)}</span></div>
     ${item.description ? `<p class="todo-description">${esc(text(item.description))}</p>` : `<p class="todo-missing">Draft · add a description to make this todo ready for a ${term('run').toLowerCase()}.</p>`}
     ${item.acceptanceCriteria ? `<details class="todo-criteria"><summary>Acceptance criteria</summary><p>${esc(text(item.acceptanceCriteria))}</p></details>` : ''}
-    <div class="todo-actions"><button class="todo-button todo-button-primary" type="button" data-todo-launch="${esc(item.id)}"${busy || reason ? ' disabled' : ''}${reason ? ` title="${esc(reason)}"` : ''}>${term('launchRun')}</button>
-      <button class="todo-button" type="button" data-todo-edit="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Edit</button>
-      <button class="todo-button todo-button-delete" type="button" data-todo-delete="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Delete</button>
+    <div class="todo-actions"><button class="todo-button todo-button-primary" type="button" data-todo-launch="${esc(item.id)}" aria-label="${term('launchRun')} for ${esc(item.id)}: ${esc(item.title)}"${reason ? ` aria-describedby="${esc(hintId)}"` : ''}${busy || reason ? ' disabled' : ''}${reason ? ` title="${esc(reason)}"` : ''}>${term('launchRun')}</button>
+      <button class="todo-button" type="button" data-todo-edit="${esc(item.id)}" aria-label="Edit ${esc(item.id)}: ${esc(item.title)}"${busy || active ? ' disabled' : ''}>Edit</button>
+      <button class="todo-button todo-button-delete" type="button" data-todo-delete="${esc(item.id)}" aria-label="Delete ${esc(item.id)}: ${esc(item.title)}"${busy || active ? ' disabled' : ''}>Delete</button>
       ${item.runId ? `<a class="app-link todo-run-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, run: item.runId }))}">View ${term('run').toLowerCase()} ↗</a>` : ''}
     </div>
-    ${reason ? `<p class="todo-field-hint">${esc(active ? `${term('run')} in progress. Editing is available when it finishes.` : reason)}</p>` : ''}
+    ${reason ? `<p class="todo-field-hint" id="${esc(hintId)}">${esc(active ? `${term('run')} in progress. Editing is available when it finishes.` : reason)}</p>` : ''}
     ${state.deletingId === item.id ? `<div class="todo-confirmation" role="region" aria-label="Confirm todo deletion"><strong>Delete this todo?</strong><p>This permanently removes the todo. Its ${term('run').toLowerCase()} history is kept.</p><div class="todo-actions"><button class="todo-button todo-button-delete" type="button" data-todo-confirm-delete="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Confirm deletion</button><button class="todo-button" type="button" data-todo-cancel-delete${busy ? ' disabled' : ''}>Keep todo</button></div></div>` : ''}
   </li>`;
 }

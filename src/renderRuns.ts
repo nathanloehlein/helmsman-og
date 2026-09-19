@@ -58,7 +58,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
     .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
   const value = state.repo && state.number ? `${state.repo}#${state.number}` : '';
   const panel = state.loading
-    ? `<div class="pr-panel empty-note">${term('loadingPr')}</div>`
+    ? `<div class="pr-panel empty-note" role="status">${term('loadingPr')}</div>`
     : state.number
       ? renderPrPanel(state.pr, Boolean(state.pr && repos.includes(state.pr.repo)), true, opts.selectedRepo)
       : `<div class="pr-panel empty-note">Load a ${term('pr')} for a code ${term('review').toLowerCase()} or to address feedback with the ${term('crew').toLowerCase()}.</div>`;
@@ -69,10 +69,10 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
         <span class="panel-title">${term('runPr')}</span>
         <a class="app-link runs-pane-link" href="${esc(paneHref('newrun', opts.selectedRepo, state.number, state.repo))}" aria-label="Link to ${term('runPr')}">Section link</a>
       </div>
-      <p class="runs-lookup-help">Loading a ${term('pr')} shows its details and available actions. It does not start an agent.</p>
+      <p class="runs-lookup-help" id="runs-lookup-help">Loading a ${term('pr')} shows its details and available actions. It does not start an agent.</p>
       <label class="runs-lookup-label" for="runs-pr-lookup">${term('pr')} URL or owner/repo#number</label>
       <div class="pr-lookup-form">
-        <input id="runs-pr-lookup" class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
+        <input id="runs-pr-lookup" class="pr-lookup-input" aria-describedby="runs-lookup-help" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
         <button class="pr-lookup-go" type="button">Load ${term('pr')}</button>
       </div>
       <div class="pr-lookup-result">${panel}</div>

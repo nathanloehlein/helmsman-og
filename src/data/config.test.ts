@@ -15,33 +15,59 @@ describe('getConfig', () => {
       return { ok: true, status: 200, json: async () => payload } as unknown as Response;
     }) as typeof globalThis.fetch;
 
-    const result: UiConfig = await getConfig();
+    const result = await getConfig();
 
     expect(result).toEqual(payload);
   });
 
-  it('returns an empty config on a non-ok response', async () => {
+  it('returns null on a non-ok response', async () => {
     globalThis.fetch = vi.fn(async (): Promise<Response> => {
       return { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
     }) as typeof globalThis.fetch;
 
-    const result: UiConfig = await getConfig();
+    const result = await getConfig();
 
-    expect(result).toEqual({ config: {}, overridden: [], jiraTokenSet: false });
+    expect(result).toBeNull();
   });
 
-  it('returns an empty config when fetch throws', async () => {
+  it('returns null when fetch throws', async () => {
     globalThis.fetch = vi.fn(async (): Promise<Response> => {
       throw new Error('network down');
     }) as typeof globalThis.fetch;
 
-    const result: UiConfig = await getConfig();
+    const result = await getConfig();
 
-    expect(result).toEqual({ config: {}, overridden: [], jiraTokenSet: false });
+    expect(result).toBeNull();
+  });
+});
+
+describe('config response validation', () => {
+  it.each([null, [], {}, { config: null, overridden: [] }, { config: [], overridden: [] },
+    { config: {}, overridden: null }, { config: {}, overridden: [null] },
+    { config: {}, overridden: [], jiraTokenSet: 'false' }, { config: { KEY: {} }, overridden: [] },
+    { config: { KEY: [] }, overridden: [] }])('rejects malformed payload %j', async payload => {
+    globalThis.fetch = vi.fn(async () => Response.json(payload));
+    expect(await getConfig()).toBeNull();
+  });
+
+  it('accepts nullable and scalar settings', async () => {
+    const payload = { config: { EMPTY: null, ENABLED: false, COUNT: 2, TEXT: '' }, overridden: [], jiraTokenSet: false };
+    globalThis.fetch = vi.fn(async () => Response.json(payload));
+    expect(await getConfig()).toEqual(payload);
+  });
+
+  it('returns null for invalid JSON', async () => {
+    globalThis.fetch = vi.fn(async () => new Response('{'));
+    expect(await getConfig()).toBeNull();
   });
 });
 
 describe('setConfig', () => {
+  it.each([null, [], { error: null }, { error: {} }, { error: 42 }])('ignores malformed save errors %j', async payload => {
+    globalThis.fetch = vi.fn(async () => Response.json(payload, { status: 400 }));
+    expect(await setConfig('key', 'value')).toEqual({ ok: false, error: undefined });
+  });
+
   it('returns ok:true on a 200 response', async () => {
     globalThis.fetch = vi.fn(async (): Promise<Response> => {
       return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;

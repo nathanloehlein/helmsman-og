@@ -4,13 +4,26 @@ export interface UiConfig {
   jiraTokenSet?: boolean;
 }
 
-export async function getConfig(): Promise<UiConfig> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isUiConfig(value: unknown): value is UiConfig {
+  return isRecord(value) && isRecord(value.config)
+    && Object.values(value.config).every(item => item === null || typeof item === 'string'
+      || typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item)))
+    && Array.isArray(value.overridden) && value.overridden.every(key => typeof key === 'string')
+    && (value.jiraTokenSet === undefined || typeof value.jiraTokenSet === 'boolean');
+}
+
+export async function getConfig(): Promise<UiConfig | null> {
   try {
-    const res: Response = await fetch('/api/config');
-    if (!res.ok) return { config: {}, overridden: [], jiraTokenSet: false };
-    return (await res.json()) as UiConfig;
+    const res: Response = await fetch('/api/config', { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return null;
+    const payload: unknown = await res.json();
+    return isUiConfig(payload) ? payload : null;
   } catch {
-    return { config: {}, overridden: [], jiraTokenSet: false };
+    return null;
   }
 }
 
@@ -18,12 +31,13 @@ export async function setConfig(key: string, value: string): Promise<{ ok: boole
   try {
     const res: Response = await fetch('/api/config', {
       method: 'PUT',
+      signal: AbortSignal.timeout(10_000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value }),
     });
     if (!res.ok) {
-      const body: { error?: string } = await res.json().catch((): { error?: string } => ({}));
-      return { ok: false, error: body.error };
+      const body: unknown = await res.json().catch(() => null);
+      return { ok: false, error: isRecord(body) && typeof body.error === 'string' ? body.error : undefined };
     }
     return { ok: true };
   } catch {

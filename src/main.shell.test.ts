@@ -184,3 +184,41 @@ describe('persistent app shell', () => {
     expect(root.querySelectorAll('.page-tab[tabindex="0"]')).toHaveLength(1);
   });
 });
+
+describe('Helm panel keyboard controls', () => {
+  it('moves panels with arrow keys, persists the layout, and retains keyboard focus', async () => {
+    const { root } = await setup();
+    const handle = root.querySelector<HTMLButtonElement>('.rack-handle[data-panel="underway"]')!;
+    handle.focus();
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    let layout = JSON.parse(localStorage.getItem('helmsman.rackLayout') ?? '[]');
+    expect(layout[0][1].active).toBe('underway');
+    expect(document.activeElement).toBe(root.querySelector('.rack-handle[data-panel="underway"]'));
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    layout = JSON.parse(localStorage.getItem('helmsman.rackLayout') ?? '[]');
+    expect(layout[1].at(-1).active).toBe('underway');
+    expect(document.activeElement).toBe(root.querySelector('.rack-handle[data-panel="underway"]'));
+    view!.destroy();
+    view = new DashboardView(root);
+    await view.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(root.querySelectorAll('.rack-column')[1]?.querySelector('.rack-handle[data-panel="underway"]')).not.toBeNull();
+  });
+
+  it('navigates stacked panels by keyboard and retains focus after selection and collapse', async () => {
+    localStorage.setItem('helmsman.rackLayout', JSON.stringify([[{ panels: ['newrun', 'backlog'], active: 'newrun', collapsed: false }]]));
+    const { root } = await setup();
+    const tab = root.querySelector<HTMLButtonElement>('.slot-tab[data-panel-tab="newrun"]')!;
+    tab.focus();
+    tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    const selected = root.querySelector<HTMLButtonElement>('.slot-tab[data-panel-tab="backlog"]')!;
+    expect(selected.getAttribute('aria-selected')).toBe('true');
+    expect(selected.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(selected);
+    expect(window.location.search).toContain('pane=backlog');
+    selected.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(root.querySelector('.slot-tab[data-panel-tab="newrun"]'));
+    root.querySelector<HTMLButtonElement>('.panel-collapse[data-panel="newrun"]')!.click();
+    expect(document.activeElement).toBe(root.querySelector('.panel-collapse[data-panel="newrun"]'));
+  });
+});

@@ -489,7 +489,9 @@ describe('renderDashboard', () => {
       expect(input?.step).toBe('1');
       expect(input?.required).toBe(true);
       expect(row?.querySelector('label')?.getAttribute('for')).toBe(input?.id);
-      expect(el.querySelector(`#${input?.getAttribute('aria-describedby')}`)?.textContent).toContain(key);
+      const descriptions = input?.getAttribute('aria-describedby')?.split(/\s+/) ?? [];
+      expect(descriptions.map(id => document.getElementById(id)?.textContent ?? '').join(' ')).toContain(key);
+      expect(descriptions).toContain(`error-${key}`);
       expect(row?.querySelector('.config-save')?.getAttribute('data-key')).toBe(key);
     }
   });
@@ -838,6 +840,9 @@ describe('renderPrPanel', () => {
     const html: string = renderPrPanel(null, false);
     expect(html).toContain('empty-note');
     expect(html.toLowerCase()).toContain(term('noPrFound').toLowerCase());
+    const el = root();
+    el.innerHTML = html;
+    expect(el.querySelector('[role="status"]')?.textContent).toContain('Check the URL and your GitHub access');
   });
 
   it('escapes a malicious headRefName and url', () => {
@@ -1433,6 +1438,9 @@ describe('renderPrView + renderPrDiff', () => {
     expect(el.querySelector('.diff-patch .diff-add')?.textContent).toContain('+new');
     expect(el.querySelector('.diff-patch .diff-del')?.textContent).toContain('-old');
     expect(el.querySelector('.diff-hunk')).not.toBeNull();
+    expect(el.querySelector('.diff-patch')?.getAttribute('tabindex')).toBe('0');
+    expect(el.querySelector('.diff-patch')?.getAttribute('role')).toBe('region');
+    expect(el.querySelector('.diff-patch')?.getAttribute('aria-label')).toContain(diff[0]?.filename);
     expect(el.querySelector('.diff-nopatch')).not.toBeNull();
   });
 
@@ -1489,4 +1497,108 @@ it('groups every Slack setting in one panel with integration and watcher switche
   }
   expect(panel?.querySelector<HTMLSelectElement>('#config-SLACK_ENABLED')?.value).toBe('false');
   expect(panel?.querySelector<HTMLSelectElement>('#config-SLACK_WATCH_ENABLED')?.value).toBe('false');
+});
+
+
+describe('accessible configuration states', () => {
+  const opts = { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID };
+
+  it('connects every setting to its label and error, and makes Save names unambiguous', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({ config: { AGENT_ADAPTER: 'codex', 'unknown key': 'value' }, overridden: [] }, opts);
+    for (const row of el.querySelectorAll('.config-row')) {
+      const input = row.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input');
+      expect(input?.labels?.length).toBe(1);
+      const ids = input?.getAttribute('aria-describedby')?.split(/\s+/) ?? [];
+      expect(ids.length).toBeGreaterThan(0);
+      expect(ids).toContain(row.querySelector('.config-error')?.id);
+      for (const id of ids) expect(document.getElementById(id)).not.toBeNull();
+      expect(row.querySelector('.config-save')?.getAttribute('aria-label')).toMatch(/^(Save|Update) .+/);
+    }
+    const ids = Array.from(el.querySelectorAll('[id]')).map(element => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const adapter = el.querySelector<HTMLInputElement>('#config-AGENT_ADAPTER');
+    const helpIds = adapter?.getAttribute('aria-describedby')?.split(/\s+/) ?? [];
+    expect(helpIds.map(id => document.getElementById(id)?.textContent).join(' ')).toContain(CONFIG_HELP.AGENT_ADAPTER);
+  });
+
+  it('announces first-load progress without exposing default server settings as loaded values', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { ...opts, loading: true, unavailable: true });
+    expect(el.querySelector('[role="status"]')?.textContent).toContain('Loading configuration');
+    expect(el.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(el.querySelector('.config-input, .config-save')).toBeNull();
+    expect(el.querySelector<HTMLSelectElement>('.theme-select')?.value).toBe(DEFAULT_THEME_ID);
+    expect(el.querySelector('[data-pirate-mode]')).not.toBeNull();
+  });
+
+  it('offers retry for unavailable settings and safely renders the failure', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({ config: {}, overridden: [] }, { ...opts, error: '<img src=x> Invalid configuration response.', unavailable: true });
+    expect(el.querySelector('[role="alert"]')?.textContent).toContain('Invalid configuration response');
+    expect(el.querySelector('img')).toBeNull();
+    expect(el.querySelector<HTMLButtonElement>('[data-config-retry]')?.disabled).toBe(false);
+    expect(el.querySelector('.config-input')).toBeNull();
+  });
+
+  it('keeps previously loaded settings available after a failed refresh and disables duplicate retry', () => {
+    const el = root();
+    el.innerHTML = renderConfigView({ config: { AGENT_ADAPTER: 'codex' }, overridden: [] }, { ...opts, error: 'Network unavailable.', loading: true });
+    expect(el.querySelector('[role="alert"]')?.textContent).toContain('Showing the last loaded settings');
+    expect(el.querySelector<HTMLInputElement>('#config-AGENT_ADAPTER')?.value).toBe('codex');
+    expect(el.querySelector<HTMLButtonElement>('[data-config-retry]')?.disabled).toBe(true);
+  });
+});
+
+it('associates stacked rack tabs with their active panel and exposes movement instructions', () => {
+  const el = root();
+  renderDashboard(el, snapshot(), NOW, [], [], null, [], [], undefined, DEFAULT_THEME_ID, stackOnto(defaultLayout(), 'backlog', 'newrun'));
+  const tabs = el.querySelector('.slot-tabs');
+  expect(tabs?.getAttribute('aria-label')).toBe('Stacked panels');
+  expect(tabs?.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  for (const tab of tabs?.querySelectorAll('[role="tab"]') ?? []) {
+    const panel = document.getElementById(tab.getAttribute('aria-controls') ?? '');
+    expect(panel?.getAttribute('role')).toBe('tabpanel');
+    if (tab.getAttribute('aria-selected') === 'true') expect(panel?.getAttribute('aria-labelledby')).toBe(tab.id);
+  }
+  for (const handle of el.querySelectorAll('.rack-handle')) {
+    expect(document.getElementById(handle.getAttribute('aria-describedby') ?? '')?.textContent).toContain('arrow keys');
+  }
+});
+
+it('describes how keyboard users can release Terminal capture', () => {
+  const el = root();
+  el.innerHTML = renderCmuxView(cmuxStateFixture({ selectedSurface: 'surface-1', isCapturing: true }));
+  for (const control of el.querySelectorAll('.cmux-capture-toggle, .cmux-screen')) {
+    expect(document.getElementById(control.getAttribute('aria-describedby') ?? '')?.textContent).toContain('Shift+Escape');
+  }
+});
+
+
+it('provides a retry action for Terminal failure without hiding cached terminal tabs', () => {
+  const el = root();
+  el.innerHTML = renderCmuxView(cmuxStateFixture({ selectedSurface: 'surface-1', screen: 'last output', error: 'Terminal tabs could not be refreshed.' }));
+  expect(el.querySelector('[role="alert"]')?.textContent).toContain('Terminal tabs could not be refreshed.');
+  expect(el.querySelector('[data-cmux-refresh]')?.textContent).toBe('Try again');
+  expect(el.querySelector('.cmux-tab')).not.toBeNull();
+  expect(el.querySelector('.cmux-screen')?.textContent).toBe('last output');
+});
+
+it('distinguishes Terminal disconnect from a failed connection check', () => {
+  const el = root();
+  el.innerHTML = renderCmuxView(cmuxStateFixture({ connected: false }));
+  expect(el.querySelector('[role="status"]')?.textContent).toContain('Terminal not connected');
+  expect(el.querySelector('[data-cmux-refresh]')).not.toBeNull();
+  el.innerHTML = renderCmuxView(cmuxStateFixture({ connected: false, error: 'Could not check terminal connection.' }));
+  expect(el.querySelector('[role="alert"]')?.textContent).toContain('Could not check terminal connection');
+  expect(el.textContent).not.toContain('Terminal not connected');
+});
+
+
+it('gives Helm and the PR inbox a page heading without changing their visible layout', () => {
+  const el = root();
+  renderDashboard(el, snapshot(), NOW);
+  expect(el.querySelector('main h1.sr-only')?.textContent).toBe('Helm');
+  el.innerHTML = renderPrView({ repo: null, number: null, pr: null, diff: null, loading: false }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+  expect(el.querySelector('main h1.sr-only')?.textContent).toBe(term('prs'));
 });

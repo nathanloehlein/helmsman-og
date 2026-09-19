@@ -330,10 +330,10 @@ function renderRackSlot(slot: RackSlot, defs: Record<PanelId, PanelDef>, c: numb
   const def: PanelDef = defs[active];
   const header: string =
     slot.panels.length > 1
-      ? `<div class="slot-tabs" role="tablist">${slot.panels
+      ? `<div class="slot-tabs" role="tablist" aria-label="Stacked panels">${slot.panels
           .map(
             (p) =>
-              `<button class="slot-tab${p === active ? ' is-active' : ''}" type="button" role="tab" aria-selected="${p === active}" data-panel-tab="${p}">${esc(PANEL_TITLE[p])}</button>`,
+              `<button class="slot-tab${p === active ? ' is-active' : ''}" type="button" role="tab" id="rack-tab-${c}-${s}-${p}" aria-controls="rack-panel-${c}-${s}" aria-selected="${p === active}" tabindex="${p === active ? 0 : -1}" data-panel-tab="${p}">${esc(PANEL_TITLE[p])}</button>`,
           )
           .join('')}</div>`
       : `<span class="faceplate-title">${esc(PANEL_TITLE[active])}</span>`;
@@ -341,13 +341,13 @@ function renderRackSlot(slot: RackSlot, defs: Record<PanelId, PanelDef>, c: numb
   return `
       <section class="faceplate${slot.collapsed ? ' is-collapsed' : ''}" data-col="${c}" data-slot="${s}" data-panel="${active}">
         <div class="faceplate-head" data-drop="head" data-panel="${active}">
-          <button class="rack-handle" draggable="true" data-panel="${active}" aria-label="Drag to move ${esc(PANEL_TITLE[active])}">${ICON_GRIP}</button>
+          <button class="rack-handle" type="button" draggable="true" data-panel="${active}" aria-label="Move ${esc(PANEL_TITLE[active])}" aria-describedby="rack-move-help-${c}-${s}" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight">${ICON_GRIP}</button><span class="sr-only" id="rack-move-help-${c}-${s}">Use arrow keys to move this panel between positions or columns, or drag it.</span>
           ${header}
           <span class="faceplate-lamp lamp lamp-${def.lamp}" aria-hidden="true"></span>
           ${count}
           <button class="panel-collapse" type="button" data-panel="${active}" aria-expanded="${slot.collapsed ? 'false' : 'true'}" aria-label="${slot.collapsed ? 'Expand' : 'Collapse'} ${esc(PANEL_TITLE[active])}">${slot.collapsed ? ICON_EXPAND : ICON_COLLAPSE}</button>
         </div>
-        <div class="faceplate-body" data-drop="body" data-col="${c}" data-slot="${s}">${def.body}</div>
+        <div class="faceplate-body" id="rack-panel-${c}-${s}"${slot.panels.length > 1 ? ` role="tabpanel" aria-labelledby="rack-tab-${c}-${s}-${active}" tabindex="0"` : ''} data-drop="body" data-col="${c}" data-slot="${s}">${def.body}</div>
       </section>`;
 }
 
@@ -547,7 +547,7 @@ export function renderDashboard(
   root.innerHTML = renderAppShell({
     active: 'dashboard', repos, selectedRepo, themeId,
     readout: { running: activeRuns.length, queued: queue.length, review: data.stats.awaitingReview },
-  }, `${banner}${renderRack(layout, panelDefs)}<div class="runs-drawer-slot"></div>`);
+  }, `<h1 class="sr-only">Helm</h1>${banner}${renderRack(layout, panelDefs)}<div class="runs-drawer-slot"></div>`);
 }
 
 function renderVoyageId(id: unknown): string {
@@ -624,7 +624,7 @@ function prTimestamp(value: unknown, fallback: string): string {
 }
 
 export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false, selectedRepo: string | null = null): string {
-  if (!pr) return `<div class="pr-panel empty-note">${term('noPrFound')}</div>`;
+  if (!pr) return `<div class="pr-panel empty-note" role="status">${term('noPrFound')} Check the URL and your GitHub access, then select Load ${term('pr')} again.</div>`;
   const stateLabel: string = pr.merged ? 'Merged' : pr.draft ? 'Draft' : pr.state === 'closed' ? 'Closed' : 'Open';
   const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
   const checks: { passed: number; failed: number; pending: number } = pr.checks ?? { passed: 0, failed: 0, pending: 0 };
@@ -826,7 +826,7 @@ export function renderPrDiff(files: PrFileDiff[] | null): string {
   if (files.length === 0) return '<div class="empty-note">No file changes in this PR.</div>';
   const fileBlocks: string = files.map((f) => {
     const body: string = f.patch
-      ? `<pre class="diff-patch">${f.patch.split('\n').map((l) => `<span class="diff-line ${diffLineClass(l)}">${esc(l)}</span>`).join('\n')}</pre>`
+      ? `<pre class="diff-patch" tabindex="0" role="region" aria-label="Diff for ${esc(f.filename)}">${f.patch.split('\n').map((l) => `<span class="diff-line ${diffLineClass(l)}">${esc(l)}</span>`).join('\n')}</pre>`
       : '<div class="empty-note diff-nopatch">No inline diff (binary or too large).</div>';
     return `
       <details class="diff-file">
@@ -881,7 +881,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
   const value: string = state.repo && state.number ? `${state.repo}#${state.number}` : '';
   const canRerun: boolean = Boolean(state.pr && opts.repos.includes(state.pr.repo));
   const panel: string = state.loading
-    ? `<div class="pr-panel empty-note">${term('loadingPr')}</div>`
+    ? `<div class="pr-panel empty-note" role="status">${term('loadingPr')}</div>`
     : state.number
       ? renderPrPanel(state.pr, canRerun, false, opts.selectedRepo)
       : `<div class="pr-panel empty-note">${term('prLookupHint')}</div>`;
@@ -892,6 +892,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
       </section>`
     : '';
   return renderAppShell({ active: 'prs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <h1 class="sr-only">${term('prs')}</h1>
       <div class="pr-inbox pr-inbox-grid">${renderPrLists(opts.lists, opts.selectedRepo)}</div>
       ${renderRecentPrRuns(opts.runs ?? [], opts.selectedRepo)}
       <section class="panel pr-lookup-panel">
@@ -1131,6 +1132,9 @@ export interface ConfigViewOpts {
   selectedRepo: string | null;
   themeId: string;
   localGit?: LocalGitState;
+  loading?: boolean;
+  error?: string | null;
+  unavailable?: boolean;
 }
 
 function configRowsHtml(uiConfig: UiConfig): string {
@@ -1146,10 +1150,11 @@ function configRowsHtml(uiConfig: UiConfig): string {
         : '';
       return `
       <div class="config-row" data-key="${esc(key)}"${help ? ` title="${esc(help)}"` : ''}>
-        <label class="config-key mono" for="config-${esc(key)}">${esc(key)}${isOverridden ? ' <span class="config-overridden">(saved override)</span>' : ''}${hint}</label>
-        <input id="config-${esc(key)}" class="config-input" type="text" value="${esc(String(value ?? ''))}">
-        <button class="config-save" data-key="${esc(key)}">Save</button>
-        <span class="config-error" role="alert"></span>
+        <label class="config-key mono" for="config-${esc(encodeURIComponent(key))}">${esc(key)}${isOverridden ? ' <span class="config-overridden">(saved override)</span>' : ''}${hint}</label>
+        <input id="config-${esc(encodeURIComponent(key))}" class="config-input" type="text" value="${esc(String(value ?? ''))}" aria-describedby="${help ? `help-${esc(encodeURIComponent(key))} ` : ''}error-${esc(encodeURIComponent(key))}">
+        <button type="button" class="config-save" data-key="${esc(key)}" aria-label="Save ${esc(key)}">Save</button>
+        <span class="config-error" id="error-${esc(encodeURIComponent(key))}" role="alert"></span>
+        ${help ? `<span class="sr-only" id="help-${esc(encodeURIComponent(key))}">${esc(help)}</span>` : ''}
       </div>`;
     })
     .join('');
@@ -1167,9 +1172,9 @@ function prePrConfigPanel(uiConfig: UiConfig): string {
     return `
       <div class="config-row" data-key="${envKey}">
         <label class="config-key" for="config-${envKey}">${labels[key]}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}</label>
-        <input id="config-${envKey}" class="config-input" type="number" min="${min}" max="${max}" step="1" required value="${esc(String(value))}" aria-describedby="help-${envKey}">
-        <button class="config-save" data-key="${envKey}">Save</button>
-        <span class="config-error" role="alert"></span>
+        <input id="config-${envKey}" class="config-input" type="number" min="${min}" max="${max}" step="1" required value="${esc(String(value))}" aria-describedby="help-${envKey} error-${envKey}">
+        <button type="button" class="config-save" data-key="${envKey}" aria-label="Save ${labels[key]}">Save</button>
+        <span class="config-error" id="error-${envKey}" role="alert"></span>
       </div>
       <div class="config-warning" id="help-${envKey}">${esc(CONFIG_HELP[envKey] ?? '')} Range: ${min}–${max}; default: ${defaultValue}. <span class="mono">${envKey}</span></div>`;
   }).join('');
@@ -1188,36 +1193,18 @@ function jiraTokenRowHtml(tokenSet: boolean): string {
   return `
       <div class="config-row config-secret-row" data-key="JIRA_API_TOKEN">
         <label class="config-key mono" for="config-JIRA_API_TOKEN">JIRA_API_TOKEN ${status}<span class="config-hint" tabindex="0" role="img" aria-label="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed." title="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed.">${ICON_INFO}</span></label>
-        <input id="config-JIRA_API_TOKEN" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste new token to update">
-        <button class="config-save" data-key="JIRA_API_TOKEN">Update</button>
-        <span class="config-error" role="alert"></span>
+        <input id="config-JIRA_API_TOKEN" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste new token to update" aria-describedby="help-JIRA_API_TOKEN error-JIRA_API_TOKEN">
+        <button type="button" class="config-save" data-key="JIRA_API_TOKEN" aria-label="Update Jira API token">Update</button>
+        <span class="config-error" id="error-JIRA_API_TOKEN" role="alert"></span>
+        <span class="sr-only" id="help-JIRA_API_TOKEN">Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed.</span>
       </div>`;
 }
 
-export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
-  const jiraEnabled = uiConfig.config?.JIRA_ENABLED !== 'false' && uiConfig.config?.JIRA_ENABLED !== false;
+function configCustomizationPanel(themeId: string): string {
   const themeOptions = THEMES.map(
-    (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
+    (theme) => `<option value="${esc(theme.id)}"${theme.id === themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
   ).join('');
-  return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
-      <header class="page-intro"><h1>Config</h1><p>Configure work sources, integrations, and ${term('agent').toLowerCase()} defaults. Save each setting separately.</p></header>
-      <section class="panel config-panel" aria-labelledby="work-source-title">
-        <div class="panel-head"><span class="panel-title" id="work-source-title">${term('runSource')}</span></div>
-        <div class="config-list">
-          <div class="config-row" data-key="JIRA_ENABLED">
-            <label class="config-key" for="jira-enabled">Jira integration</label>
-            <select class="config-input" id="jira-enabled" aria-describedby="jira-enabled-help">
-              <option value="true"${jiraEnabled ? ' selected' : ''}>Enabled — Jira tickets</option>
-              <option value="false"${jiraEnabled ? '' : ' selected'}>Disabled — local todos</option>
-            </select>
-            <button type="button" class="config-save" data-key="JIRA_ENABLED">Save</button>
-            <span class="config-error" role="alert"></span>
-          </div>
-        </div>
-        <p class="config-warning" id="jira-enabled-help">Disabling Jira replaces Triage and Bugs with Todos. The backlog and auto-claim use local todos. Saved credentials and todos are kept when switching sources.</p>
-        ${jiraEnabled ? '' : `<p class="config-warning"><a class="app-link" href="${esc(routeHref({ view: 'todos', repo: opts.selectedRepo }))}">Manage todos →</a></p>`}
-      </section>
-      <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
+  return `      <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
         <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
         <div class="ui-customization-body">
           <p id="pirate-mode-help">Toggle Pirate mode with the flag at the bottom-right of every page. The preference is saved in this browser; your content stays unchanged.</p>
@@ -1227,7 +1214,36 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
           <p id="ui-theme-help">Applies immediately and is saved in this browser.</p>
           ${renderThemePreview()}
         </div>
+      </section>`;
+}
+
+export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
+  const customization = configCustomizationPanel(opts.themeId);
+  const intro = `<header class="page-intro"><h1>Config</h1><p>Configure work sources, integrations, and ${term('agent').toLowerCase()} defaults. Save each setting separately.</p></header>`;
+  const status = `${opts.error ? `<div class="config-load-error degraded-banner" role="alert">${esc(opts.error)}${opts.unavailable ? '' : ' Showing the last loaded settings.'} <button type="button" data-config-retry${opts.loading ? ' disabled' : ''}>Try again</button></div>` : ''}${opts.loading ? '<p class="empty-note" role="status">Loading configuration…</p>' : ''}`;
+  if (opts.unavailable) {
+    return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `${intro}<section class="panel config-loading" aria-label="Configuration" aria-busy="${Boolean(opts.loading)}">${status || '<p class="empty-note">Configuration is unavailable. <button type="button" data-config-retry>Try again</button></p>'}</section>${customization}`);
+  }
+  const jiraEnabled = uiConfig.config?.JIRA_ENABLED !== 'false' && uiConfig.config?.JIRA_ENABLED !== false;
+  return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      ${intro}${status}
+      <section class="panel config-panel" aria-labelledby="work-source-title">
+        <div class="panel-head"><span class="panel-title" id="work-source-title">${term('runSource')}</span></div>
+        <div class="config-list">
+          <div class="config-row" data-key="JIRA_ENABLED">
+            <label class="config-key" for="jira-enabled">Jira integration</label>
+            <select class="config-input" id="jira-enabled" aria-describedby="jira-enabled-help error-JIRA_ENABLED">
+              <option value="true"${jiraEnabled ? ' selected' : ''}>Enabled — Jira tickets</option>
+              <option value="false"${jiraEnabled ? '' : ' selected'}>Disabled — local todos</option>
+            </select>
+            <button type="button" class="config-save" data-key="JIRA_ENABLED" aria-label="Save Jira integration">Save</button>
+            <span class="config-error" id="error-JIRA_ENABLED" role="alert"></span>
+          </div>
+        </div>
+        <p class="config-warning" id="jira-enabled-help">Disabling Jira replaces Triage and Bugs with Todos. The backlog and auto-claim use local todos. Saved credentials and todos are kept when switching sources.</p>
+        ${jiraEnabled ? '' : `<p class="config-warning"><a class="app-link" href="${esc(routeHref({ view: 'todos', repo: opts.selectedRepo }))}">Manage todos →</a></p>`}
       </section>
+      ${customization}
       <section class="panel config-panel slack-review-config" aria-labelledby="slack-review-config-title">
         <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack integration</span></div>
         <p class="config-warning">The button on your open ${term('prs')} posts the ${term('pr')} link and tags your ${term('review').toLowerCase()} group. Requests are sent only when you click it.</p>
@@ -1235,17 +1251,17 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
           ${[['SLACK_ENABLED', 'Slack integration', 'true'], ['SLACK_WATCH_ENABLED', 'Automatic reviews from Slack', 'false']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
-              <select id="config-${key}" class="config-input">
+              <select id="config-${key}" class="config-input" aria-describedby="slack-review-setup error-${key}">
                 <option value="true"${String(uiConfig.config?.[key] ?? fallback) === 'true' ? ' selected' : ''}>On</option>
                 <option value="false"${String(uiConfig.config?.[key] ?? fallback) === 'false' ? ' selected' : ''}>Off</option>
               </select>
-              <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
+              <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
           ${[['SLACK_CLIENT_ID', 'Slack client ID', ''], ['SLACK_CHANNEL_ID', 'Watched channel ID', ''], ['SLACK_CHANNEL_NAME', 'Watched channel name', ''], ['SLACK_BROWSER_SURFACE', 'Browser surface (optional)', ''], ['SLACK_REVIEW_CHANNEL', 'Review request channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
-              <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup">
-              <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
+              <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup error-${key}">
+              <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
         </div>
         <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved.</p>
@@ -1300,6 +1316,7 @@ const CMUX_NAV_KEYS: CmuxNavKeySpec[] = [
 
 export interface CmuxViewState {
   connected: boolean;
+  error?: string | null;
   tabs: CmuxTabView[];
   selectedSurface: string | null;
   screen: string;
@@ -1319,8 +1336,9 @@ export function renderCmuxView(state: CmuxViewState): string {
     readout: null,
   };
   const intro = '<header class="page-intro"><h1>Terminal</h1><p>View and control an existing terminal session. Text and keys are sent directly to the selected tab.</p></header>';
+  const error = state.error ? `<div class="cmux-load-error degraded-banner" role="alert">${esc(state.error)} <button type="button" data-cmux-refresh>Try again</button></div>` : '';
   if (!state.connected) {
-    return renderAppShell(opts, `${intro}<div class="panel empty-note">Terminal not connected. Open your configured terminal app, then refresh this page.</div>`);
+    return renderAppShell(opts, `${intro}${error}${state.error ? '' : '<div class="panel empty-note" role="status">Terminal not connected. Open your configured terminal app, then refresh. <button type="button" data-cmux-refresh>Refresh</button></div>'}`);
   }
 
   const list: string = state.tabs.length
@@ -1333,17 +1351,17 @@ export function renderCmuxView(state: CmuxViewState): string {
       </button>`,
         )
         .join('')
-    : '<div class="empty-note">No terminal tabs available. Open a terminal tab in your configured terminal app, then refresh this page.</div>';
+    : '<div class="empty-note" role="status">No terminal tabs available. Open a terminal tab in your configured terminal app, then refresh. <button type="button" data-cmux-refresh>Refresh</button></div>';
 
   const selected: CmuxTabView | null = state.tabs.find((t) => t.surfaceRef === state.selectedSurface) ?? null;
 
   const detail: string = selected
     ? `
       <div class="cmux-capture-row">
-        <button class="cmux-capture-toggle${state.isCapturing ? ' is-active' : ''}" type="button" data-cmux-capture aria-pressed="${state.isCapturing ? 'true' : 'false'}">${state.isCapturing ? 'Stop keyboard control' : 'Control with keyboard'}</button>
-        ${state.isCapturing ? `<span class="cmux-capture-hint">Keys go directly to ${esc(selected.surfaceTitle)}. Click Stop keyboard control to release.</span>` : ''}
+        <button class="cmux-capture-toggle${state.isCapturing ? ' is-active' : ''}" type="button"${state.isCapturing ? ' aria-describedby="cmux-capture-help"' : ''} data-cmux-capture aria-pressed="${state.isCapturing ? 'true' : 'false'}">${state.isCapturing ? 'Stop keyboard control' : 'Control with keyboard'}</button>
+        ${state.isCapturing ? `<span class="cmux-capture-hint" id="cmux-capture-help">Keys go directly to ${esc(selected.surfaceTitle)} while the screen has focus. Press Shift+Escape to stop keyboard control.</span>` : ''}
       </div>
-      <pre class="cmux-screen mono${state.isCapturing ? ' is-capturing' : ''}" tabindex="0" aria-label="Screen output from ${esc(selected.surfaceTitle)}">${esc(state.screen)}</pre>
+      <pre class="cmux-screen mono${state.isCapturing ? ' is-capturing' : ''}" tabindex="0"${state.isCapturing ? ' aria-describedby="cmux-capture-help"' : ''} aria-label="Screen output from ${esc(selected.surfaceTitle)}">${esc(state.screen)}</pre>
       <div class="cmux-keypad">
         ${CMUX_NAV_KEYS.map((k) => `<button class="cmux-keypad-btn" type="button" data-key="${esc(k.key)}" aria-label="Send ${esc(k.key)} key" title="Send ${esc(k.key)} key">${k.label}</button>`).join('')}
       </div>
@@ -1362,7 +1380,7 @@ export function renderCmuxView(state: CmuxViewState): string {
   const listCollapsed: boolean = collapsed.has('cmux:list');
   const detailCollapsed: boolean = collapsed.has('cmux:detail');
   return renderAppShell(opts, `
-    ${intro}
+    ${intro}${error}
     <div class="cmux-body">
       <div class="panel cmux-list${listCollapsed ? ' is-collapsed' : ''}">
         <div class="panel-head"><span class="panel-title">Terminal tabs</span>${surfaceCollapseBtn('cmux:list', 'Terminal tabs', listCollapsed)}</div>

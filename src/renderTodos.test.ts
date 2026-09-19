@@ -136,3 +136,16 @@ describe('todo rendering', () => {
     expect(root.querySelector('[role=status]')?.textContent).toBe('Saving todo…');
   });
 });
+
+
+it('distinguishes repeated todo actions and connects launch restrictions to the action', () => {
+  const root = render({ items: [item(), item({ id: 'TODO-2', title: 'Second task', description: '' })] });
+  for (const action of ['launch', 'edit', 'delete']) {
+    expect(root.querySelector(`[data-todo-${action}="TODO-1"]`)?.getAttribute('aria-label')).toContain('TODO-1: Improve search');
+    expect(root.querySelector(`[data-todo-${action}="TODO-2"]`)?.getAttribute('aria-label')).toContain('TODO-2: Second task');
+  }
+  const launch = root.querySelector('[data-todo-launch="TODO-2"]');
+  expect(root.querySelector(`[id="${launch?.getAttribute('aria-describedby')}"]`)?.textContent).toContain('Add a description');
+  const description = root.querySelector('[name="description"]');
+  expect(root.querySelector(`[id="${description?.getAttribute('aria-describedby')}"]`)?.textContent).toContain('Required to start');
+});

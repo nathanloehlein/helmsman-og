@@ -7,15 +7,15 @@ import type { RunSummary } from './data/agents';
 const json = (data: unknown): Response => new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 let view: DashboardView | null = null;
 
-async function setup(path = '/helm?repo=org/a', runs: RunSummary[] = [], contextAvailable = true) {
+async function setup(path = '/helm?repo=org/a', runs: RunSummary[] = [], contextAvailable = true, jiraEnabled = true) {
   window.history.replaceState(null, '', path);
   const snapshot = await loadMockSnapshot();
   const requests: string[] = [];
   const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
     const url = new URL(String(input), window.location.origin);
     requests.push(url.pathname);
-    if (url.pathname === '/api/context') return contextAvailable ? json({ repos: ['org/a'], jiraBaseUrl: null }) : new Response(null, { status: 404 });
-    if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/a'], selectedRepo: url.searchParams.get('repo'), jiraBaseUrl: null });
+    if (url.pathname === '/api/context') return contextAvailable ? json({ repos: ['org/a'], jiraBaseUrl: null, jiraEnabled }) : new Response(null, { status: 404 });
+    if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/a'], selectedRepo: url.searchParams.get('repo'), jiraBaseUrl: null, jiraEnabled });
     if (url.pathname === '/api/agents') return json({ runs, autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
     if (url.pathname === '/api/runs') {
       const filtered = runs.filter(run => !url.searchParams.get('repo') || run.repo === url.searchParams.get('repo'));
@@ -85,6 +85,27 @@ describe('view-aware polling', () => {
     expect(root.querySelector('.newrun-task')).toBe(task);
     expect(task.value).toBe('Preserve this draft');
     expect(count('/api/dashboard')).toBe(1);
+  });
+
+  it.each([true, false])('keeps the new-run draft and caret during full dashboard refresh (Jira %s)', async jiraEnabled => {
+    const { root, count } = await setup('/helm?repo=org/a', [], true, jiraEnabled);
+    const task = root.querySelector<HTMLTextAreaElement>('.newrun-task')!;
+    task.value = 'Keep these task instructions';
+    task.focus();
+    task.setSelectionRange(5, 10);
+    const freeform = root.querySelector<HTMLInputElement>('.newrun-mode[value="freeform"]')!;
+    freeform.checked = true;
+    const model = root.querySelector<HTMLSelectElement>('.newrun-model')!;
+    const modelChoice = model.options[1]?.value ?? '';
+    model.value = modelChoice;
+    await vi.advanceTimersByTimeAsync(jiraEnabled ? POLL_MS : LOCAL_POLL_MS);
+    const updated = root.querySelector<HTMLTextAreaElement>('.newrun-task')!;
+    expect(count('/api/dashboard')).toBe(2);
+    expect(updated.value).toBe('Keep these task instructions');
+    expect(document.activeElement).toBe(updated);
+    expect([updated.selectionStart, updated.selectionEnd]).toEqual([5, 10]);
+    expect(root.querySelector<HTMLInputElement>('.newrun-mode[value="freeform"]')?.checked).toBe(true);
+    expect(root.querySelector<HTMLSelectElement>('.newrun-model')?.value).toBe(modelChoice);
   });
 
   it('stops hidden polling and refreshes only overdue data upon return', async () => {

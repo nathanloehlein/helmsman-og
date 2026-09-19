@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectSurface, isPolling, providerOf, type CmuxTabView } from './cmuxPanel';
+import { selectSurface, isPolling, providerOf, parseCmuxTabs, type CmuxTabView } from './cmuxPanel';
 
 const tab = (over: Partial<CmuxTabView>): CmuxTabView => ({
   windowRef: 'window:1',
@@ -54,5 +54,18 @@ describe('cmuxPanel', () => {
   it('providerOf keeps cmux agent-sessions working, refined by title', () => {
     expect(providerOf(tab({ type: 'agent-session' }))).toBe('claude');
     expect(providerOf(tab({ type: 'agent-session', surfaceTitle: 'codex' }))).toBe('codex');
+  });
+});
+
+
+describe('terminal response validation', () => {
+  it.each([null, [], {}, { connected: 'true', tabs: [] }, { connected: true, tabs: null }, { connected: true, tabs: [null] }, { connected: true, tabs: [tab({ surfaceRef: '' })] }, { connected: true, tabs: [{ ...tab({}), surfaceTitle: {} }] }])('rejects malformed tab responses: %j', payload => {
+    expect(parseCmuxTabs(payload)).toBeNull();
+  });
+
+  it('accepts usable tabs and clears stale tabs when disconnected', () => {
+    const tabs = [tab({})];
+    expect(parseCmuxTabs({ connected: true, tabs })).toEqual({ connected: true, tabs });
+    expect(parseCmuxTabs({ connected: false, tabs })).toEqual({ connected: false, tabs: [] });
   });
 });

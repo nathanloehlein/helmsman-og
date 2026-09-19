@@ -51,7 +51,7 @@ import {
 } from './data/agents';
 import { getConfig, setConfig, type UiConfig } from './data/config';
 import { getPrStatus, getPrDiff, submitReview as submitPrReview, parsePrUrl, type PrStatusView } from './data/pr';
-import { selectSurface, isPolling, providerOf, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
+import { selectSurface, isPolling, providerOf, parseCmuxTabs, type CmuxTabView, type PanelState } from './logic/cmuxPanel';
 import { mapKeyEvent, type CmuxKeyIntent } from './logic/cmuxKeys';
 import { applyTheme, loadThemeId, saveThemeId } from './data/themes';
 import {
@@ -81,11 +81,6 @@ const RUN_LOG_BATCH_MS = 32;
 
 const CMUX_SCREEN_POLL_MS: number = 2_000;
 const CMUX_SCREEN_UNAVAILABLE: string = 'Screen unavailable — tab has no rendered output yet.';
-
-interface CmuxTabsPayload {
-  connected?: boolean;
-  tabs?: CmuxTabView[];
-}
 
 interface CmuxScreenPayload {
   surface?: string;
@@ -136,6 +131,7 @@ export class DashboardView {
   private snapshot: DashboardSnapshot | null = null;
   private snapshotRepo: string | null | undefined = undefined;
   private contentView: PageView | null = null;
+  private newRunRepoScope: string | null | undefined = undefined;
   private degraded: string[] = [];
   private repos: string[] = [];
   private hasContext: boolean = false;
@@ -148,6 +144,13 @@ export class DashboardView {
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private uiConfig: UiConfig = { config: {}, overridden: [] };
+  private configLoaded = false;
+  private configLoading = false;
+  private configError: string | null = null;
+  private configSeq = 0;
+  private configDrafts = new Map<string, string>();
+  private configErrors = new Map<string, string>();
+  private configPendingKeys = new Set<string>();
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
@@ -197,6 +200,8 @@ export class DashboardView {
   private triagePages: TriagePages = { backlog: 1, todo: 1, mine: 1 };
   private bugsResponse: BugsResponse | null = null;
   private cmuxConnected: boolean = false;
+  private cmuxTabsError: string | null = null;
+  private cmuxTabsSeq = 0;
   private cmuxTabs: CmuxTabView[] = [];
   private cmuxPanelState: PanelState = { selectedSurface: null };
   private cmuxScreen: string = '';
@@ -241,6 +246,22 @@ export class DashboardView {
         return;
       }
       const tab = event.target;
+      if (tab instanceof HTMLButtonElement && tab.matches('.rack-handle')) {
+        this.handleRackKeyboardMove(tab, event);
+        return;
+      }
+      if (tab instanceof HTMLButtonElement && tab.matches('.slot-tab')) {
+        const tabs = Array.from(tab.closest('.slot-tabs')?.querySelectorAll<HTMLButtonElement>('.slot-tab') ?? []);
+        const index = tabs.indexOf(tab);
+        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+          : event.key === 'ArrowLeft' ? (index - 1 + tabs.length) % tabs.length
+          : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+        if (next !== null) {
+          event.preventDefault();
+          tabs[next]?.click();
+        }
+        return;
+      }
       if (tab instanceof HTMLAnchorElement && tab.matches('.page-tab')) {
         const tabs = Array.from(this.root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
         const index = tabs.indexOf(tab);
@@ -579,10 +600,8 @@ export class DashboardView {
     else if (route.view === 'outcomes') await this.loadOutcomes();
     else if (route.view === 'runs') historyLoad = this.loadRunHistory();
     else if (route.view === 'config') {
-      const config = await getConfig();
+      await this.loadUiConfig();
       if (seq !== this.routeSeq) return;
-      this.uiConfig = config;
-      this.paint();
       void this.loadLocalGit();
     }
     else if (route.view === 'cmux') {
@@ -682,10 +701,10 @@ export class DashboardView {
     const seq: number = ++this.refreshSeq;
     const slackSeq = ++this.slackSeq;
     const repo: string | null = this.selectedRepo;
-    const [response, agents, config, slack, context] = await Promise.all([
+    const [response, agents, , slack, context] = await Promise.all([
       dashboardDue ? loadDashboard(repo).catch((): DashboardResponse | null => null) : null,
       localDue ? fetchAgents() : null,
-      force ? getConfig() : null,
+      force ? this.loadUiConfig(false) : null,
       localDue ? fetchSlack() : undefined,
       localDue ? getContext() : null,
     ]);
@@ -707,9 +726,8 @@ export class DashboardView {
       this.autoClaimRepos = agents.autoClaim;
       this.caps = agents.caps;
     }
-    if (config) {
-      this.uiConfig = config;
-      if (config.config?.JIRA_ENABLED !== undefined) this.jiraEnabled = config.config.JIRA_ENABLED !== false && config.config.JIRA_ENABLED !== 'false';
+    if (force && this.configLoaded && !this.configError && this.uiConfig.config.JIRA_ENABLED !== undefined) {
+      this.jiraEnabled = this.uiConfig.config.JIRA_ENABLED !== false && this.uiConfig.config.JIRA_ENABLED !== 'false';
     }
     if (context) {
       this.repos = [...new Set([...(response?.repos ?? this.repos), ...context.repos])].sort();
@@ -724,7 +742,11 @@ export class DashboardView {
         this.lastDashboardRefresh = -Infinity;
       }
       const sourceSelect = this.root.querySelector<HTMLSelectElement>('#jira-enabled');
-      if (sourceSelect && sourceSelect !== document.activeElement) sourceSelect.value = String(this.jiraEnabled);
+      if (sourceSelect && sourceSelect !== document.activeElement && !this.configDrafts.has('JIRA_ENABLED')
+        && sourceSelect.value === sourceSelect.dataset.configValue) {
+        sourceSelect.value = String(this.jiraEnabled);
+        sourceSelect.dataset.configValue = sourceSelect.value;
+      }
     }
     this.syncShell();
     if ((!this.jiraEnabled && (this.view === 'triage' || this.view === 'bugs')) || (this.jiraEnabled && this.view === 'todos')) {
@@ -756,6 +778,7 @@ export class DashboardView {
       }
       await this.loadReviewRequests(force);
     } else if (this.view === 'config' && force) {
+      this.paintConfig();
       void this.loadLocalGit();
     } else if (this.view === 'todos' && localDue) {
       await this.loadTodos();
@@ -1020,6 +1043,19 @@ export class DashboardView {
     const preBody: HTMLElement | null =
       this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
     const savedScrollTop: number = preBody ? preBody.scrollTop : 0;
+    const newRun = this.root.querySelector('.newrun-body');
+    const preserveNewRun = this.contentView === 'dashboard' && this.newRunRepoScope === this.selectedRepo;
+    const focused = document.activeElement;
+    const fields = preserveNewRun ? Array.from(newRun?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select') ?? [])
+      .map(input => ({
+        selector: `.${input.classList[0]}`,
+        value: input.value,
+        checked: input instanceof HTMLInputElement && input.type === 'radio' ? input.checked : undefined,
+        focused: input === focused,
+        selection: input instanceof HTMLTextAreaElement || (input instanceof HTMLInputElement && input.type === 'text')
+          ? [input.selectionStart, input.selectionEnd] as const : null,
+      })) : [];
+    const launchPending = preserveNewRun && newRun?.querySelector<HTMLButtonElement>('.newrun-launch')?.disabled === true;
     const page = document.createElement('div');
     renderDashboard(
       page,
@@ -1038,6 +1074,20 @@ export class DashboardView {
       this.jiraEnabled,
     );
     this.mountPage(page.innerHTML);
+    this.newRunRepoScope = this.selectedRepo;
+    for (const field of fields) {
+      const controls = this.root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(field.selector);
+      const input = field.checked === undefined ? controls[0] : Array.from(controls).find(control => control.value === field.value);
+      if (!input) continue;
+      if (field.checked !== undefined && input instanceof HTMLInputElement) input.checked = field.checked;
+      else if (!(input instanceof HTMLSelectElement) || Array.from(input.options).some(option => option.value === field.value)) input.value = field.value;
+      if (field.focused) {
+        input.focus({ preventScroll: true });
+        if (field.selection && !(input instanceof HTMLSelectElement)) input.setSelectionRange(...field.selection);
+      }
+    }
+    const launch = this.root.querySelector<HTMLButtonElement>('.newrun-launch');
+    if (launch && launchPending) launch.disabled = true;
     this.bindHeadControls();
     this.bindRackDnD();
     this.rehomeRunDrawer();
@@ -1073,6 +1123,7 @@ export class DashboardView {
   }
 
   private mountPage(markup: string): void {
+    if (this.contentView === 'config') this.captureConfigDrafts();
     const template = document.createElement('template');
     template.innerHTML = markup;
     const next = template.content.querySelector('#page-content');
@@ -1255,6 +1306,27 @@ export class DashboardView {
     this.paintSlack();
   }
 
+  private handleRackKeyboardMove(handle: HTMLButtonElement, event: KeyboardEvent): void {
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
+    const panel = handle.dataset.panel as PanelId | undefined;
+    if (!panel) return;
+    const column = this.rackLayout.findIndex(slots => slots.some(slot => slot.panels.includes(panel)));
+    const slots = this.rackLayout[column];
+    const index = slots?.findIndex(slot => slot.panels.includes(panel)) ?? -1;
+    if (!slots || index < 0) return;
+    event.preventDefault();
+    const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
+    const targetColumn = horizontal ? column + (event.key === 'ArrowLeft' ? -1 : 1) : column;
+    const targetSlots = this.rackLayout[targetColumn];
+    if (!targetSlots) return;
+    const targetIndex = horizontal ? targetSlots.length : Math.max(0, Math.min(slots.length - 1, index + (event.key === 'ArrowUp' ? -1 : 1)));
+    if (targetColumn === column && targetIndex === index) return;
+    this.rackLayout = movePanel(this.rackLayout, panel, targetColumn, targetIndex);
+    saveRackLayoutRaw(serializeRack(this.rackLayout));
+    this.paint();
+    this.root.querySelector<HTMLButtonElement>(`.rack-handle[data-panel="${panel}"]`)?.focus();
+  }
+
   private bindRackDnD(): void {
     this.root.querySelectorAll<HTMLElement>('.rack-handle').forEach((handle) => {
       handle.addEventListener('dragstart', (event: DragEvent): void => {
@@ -1303,6 +1375,7 @@ export class DashboardView {
   private paintCmux(): void {
     this.mountPage(renderCmuxView({
       connected: this.cmuxConnected,
+      error: this.cmuxTabsError,
       tabs: this.cmuxTabs,
       selectedSurface: this.cmuxPanelState.selectedSurface,
       screen: this.cmuxScreen,
@@ -1456,13 +1529,67 @@ export class DashboardView {
     return promise;
   }
 
+  private captureConfigDrafts(): void {
+    for (const row of this.root.querySelectorAll<HTMLElement>('.config-row[data-key]')) {
+      const key = row.dataset.key;
+      const input = row.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input');
+      if (!key || !input || input.dataset.configValue === undefined) continue;
+      if (input.value !== input.dataset.configValue) this.configDrafts.set(key, input.value);
+      else this.configDrafts.delete(key);
+    }
+  }
+
+  private async loadUiConfig(paint = true): Promise<void> {
+    if (this.configPendingKeys.size > 0) return;
+    const seq = ++this.configSeq;
+    this.configLoading = true;
+    if (paint && this.view === 'config') this.paintConfig();
+    const config = await getConfig();
+    if (seq !== this.configSeq || this.destroyed) return;
+    this.configLoading = false;
+    if (config) {
+      this.uiConfig = config;
+      this.configLoaded = true;
+      this.configError = null;
+    } else {
+      this.configError = 'Settings could not be loaded. Check the Helmsman connection and retry. Unsaved changes are kept.';
+    }
+    if (paint && this.view === 'config') this.paintConfig();
+  }
+
   private paintConfig(): void {
+    const focused = document.activeElement;
+    const focusKey = focused instanceof HTMLInputElement || focused instanceof HTMLSelectElement
+      ? focused.closest<HTMLElement>('.config-row')?.dataset.key : undefined;
+    const selection = focused instanceof HTMLInputElement && focused.type === 'text'
+      ? [focused.selectionStart, focused.selectionEnd] as const : null;
     this.mountPage(renderConfigView(this.uiConfig, {
       repos: this.repos,
       selectedRepo: this.selectedRepo,
       themeId: this.themeId,
       localGit: this.localGit,
+      loading: this.configLoading,
+      error: this.configError,
+      unavailable: !this.configLoaded,
     }));
+    for (const row of this.root.querySelectorAll<HTMLElement>('.config-row[data-key]')) {
+      const key = row.dataset.key;
+      const input = row.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input');
+      if (!key || !input) continue;
+      input.dataset.configValue = input.value;
+      const draft = this.configDrafts.get(key);
+      if (draft !== undefined) input.value = draft;
+      const error = this.configErrors.get(key);
+      const errorEl = row.querySelector('.config-error');
+      if (errorEl) errorEl.textContent = error ?? '';
+      if (error) input.setAttribute('aria-invalid', 'true');
+      const button = row.querySelector<HTMLButtonElement>('.config-save');
+      if (button) button.disabled = this.configPendingKeys.has(key);
+      if (focusKey === key) {
+        input.focus({ preventScroll: true });
+        if (selection && input instanceof HTMLInputElement && input.type === 'text') input.setSelectionRange(...selection);
+      }
+    }
     this.bindHeadControls();
   }
 
@@ -1630,14 +1757,19 @@ export class DashboardView {
   }
 
   private async loadCmuxTabs(): Promise<void> {
+    const seq = ++this.cmuxTabsSeq;
     try {
       const res: Response = await fetch('/api/cmux/tabs');
-      const data: CmuxTabsPayload = res.ok ? ((await res.json()) as CmuxTabsPayload) : {};
-      this.cmuxConnected = data?.connected ?? false;
-      this.cmuxTabs = data?.tabs ?? [];
+      const data = res.ok ? parseCmuxTabs(await res.json()) : null;
+      if (seq !== this.cmuxTabsSeq || this.destroyed) return;
+      if (!data) throw new Error('Terminal tabs unavailable');
+      this.cmuxConnected = data.connected;
+      this.cmuxTabs = data.tabs;
+      this.cmuxTabsError = null;
     } catch {
-      this.cmuxConnected = false;
-      this.cmuxTabs = [];
+      if (seq !== this.cmuxTabsSeq || this.destroyed) return;
+      this.cmuxTabsError = 'Terminal tabs could not be refreshed. Check the Helmsman connection and try again.';
+      return;
     }
     const surface: string | null = this.cmuxPanelState.selectedSurface;
     const stillExists: boolean = surface !== null && this.cmuxTabs.some((t) => t.surfaceRef === surface);
@@ -1657,7 +1789,7 @@ export class DashboardView {
       } catch {
         return;
       }
-      if (msg.kind === 'cmux-tabs-changed') void this.handleCmuxTabsChanged();
+      if (msg?.kind === 'cmux-tabs-changed') void this.handleCmuxTabsChanged();
     };
     this.cmuxEventSource = src;
   }
@@ -1666,7 +1798,7 @@ export class DashboardView {
     const tabsPart: string = this.cmuxTabs
       .map((t) => `${t.surfaceRef}${t.surfaceTitle}${t.workspaceTitle}${t.type}`)
       .join('');
-    return `${this.cmuxConnected}${tabsPart}`;
+    return JSON.stringify([this.cmuxConnected, this.cmuxTabsError, tabsPart]);
   }
 
   private async handleCmuxTabsChanged(): Promise<void> {
@@ -1769,6 +1901,7 @@ export class DashboardView {
     if (!errEl) {
       errEl = document.createElement('div');
       errEl.className = 'cmux-error';
+      errEl.setAttribute('role', 'alert');
       detail.appendChild(errEl);
     }
     errEl.textContent = message;
@@ -1885,9 +2018,7 @@ export class DashboardView {
     if (this.cmuxCapturing) this.startCapture();
     else this.stopCapture();
     this.paint();
-    if (this.cmuxCapturing) {
-      this.root.querySelector<HTMLElement>('.cmux-screen')?.focus();
-    }
+    this.root.querySelector<HTMLElement>(this.cmuxCapturing ? '.cmux-screen' : '[data-cmux-capture]')?.focus();
   }
 
   private startCapture(): void {
@@ -1900,7 +2031,12 @@ export class DashboardView {
 
   private handleCaptureKeydown(event: KeyboardEvent): void {
     if (this.view !== 'cmux' || !this.cmuxCapturing) return;
-    if (this.isEditableTarget(event.target)) return;
+    if (event.key === 'Escape' && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      this.handleCmuxCaptureToggle();
+      return;
+    }
+    if (!(event.target instanceof HTMLElement) || !event.target.matches('.cmux-screen')) return;
     const surface: string | null = this.cmuxPanelState.selectedSurface;
     if (!surface) return;
     const intent: CmuxKeyIntent = mapKeyEvent(event);
@@ -1908,11 +2044,6 @@ export class DashboardView {
     event.preventDefault();
     if (intent.kind === 'key') void this.sendCmuxKey(surface, intent.token);
     else void this.sendCmuxText(surface, intent.text);
-  }
-
-  private isEditableTarget(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
   }
 
   private async handleCmuxKeyPad(btn: HTMLButtonElement): Promise<void> {
@@ -2161,6 +2292,7 @@ export class DashboardView {
       this.rackLayout = toggleCollapse(this.rackLayout, collapseBtn.dataset.panel as PanelId);
       saveRackLayoutRaw(serializeRack(this.rackLayout));
       this.paint();
+      this.root.querySelector<HTMLButtonElement>(`.panel-collapse[data-panel="${collapseBtn.dataset.panel}"]`)?.focus();
       return;
     }
 
@@ -2183,6 +2315,12 @@ export class DashboardView {
       this.updateAddress({ ...this.route, view: 'dashboard', pane: slotTab.dataset.panelTab ?? null });
       saveRackLayoutRaw(serializeRack(this.rackLayout));
       this.paint();
+      this.root.querySelector<HTMLButtonElement>(`.slot-tab[data-panel-tab="${slotTab.dataset.panelTab}"]`)?.focus();
+      return;
+    }
+
+    if (target.closest('[data-cmux-refresh]')) {
+      void this.handleCmuxTabsChanged();
       return;
     }
 
@@ -2259,6 +2397,10 @@ export class DashboardView {
       return;
     }
 
+    if (target.closest('[data-config-retry]')) {
+      if (!this.configLoading) void this.loadUiConfig();
+      return;
+    }
     const configSaveBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.config-save');
     if (configSaveBtn) {
       void this.handleConfigSave(configSaveBtn);
@@ -2803,49 +2945,83 @@ export class DashboardView {
       this.openErrorTab(ticketId || title, message);
     } finally {
       btn.disabled = false;
+      if (seq === this.launchSeq) {
+        const current = this.root.querySelector<HTMLButtonElement>('.newrun-launch');
+        if (current) current.disabled = false;
+      }
     }
   }
 
   private async handleConfigSave(btn: HTMLButtonElement): Promise<void> {
-    if (btn.disabled) return;
-    const row: HTMLElement | null = btn.closest<HTMLElement>('.config-row');
-    const key: string | undefined = row?.dataset.key;
-    const input = row?.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input') ?? null;
-    if (!key || !input) return;
-    const errorEl: HTMLElement | null = row?.querySelector<HTMLElement>('.config-error') ?? null;
+    if (btn.disabled || !this.configLoaded) return;
+    const row = btn.closest<HTMLElement>('.config-row');
+    const key = row?.dataset.key;
+    const input = row?.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input');
+    if (!key || !input || this.configPendingKeys.has(key)) return;
+    if (!input.reportValidity()) return;
+    this.captureConfigDrafts();
+    const value = input.value;
+    this.configErrors.delete(key);
+    input.removeAttribute('aria-invalid');
+    const errorEl = row?.querySelector<HTMLElement>('.config-error');
     if (errorEl) errorEl.textContent = '';
     btn.disabled = true;
+    this.configPendingKeys.add(key);
+    ++this.configSeq;
+    this.configLoading = false;
     ++this.configSaves;
     this.syncPirateToggle();
     try {
-      const result: { ok: boolean; error?: string } = await setConfig(key, input.value);
+      const result = await setConfig(key, value);
+      if (this.destroyed) return;
       if (!result.ok) {
-        if (errorEl) errorEl.textContent = result.error ?? 'Save failed.';
+        const error = result.error || 'Save failed. Check the Helmsman connection and try again.';
+        this.configErrors.set(key, error);
+        for (const currentRow of this.root.querySelectorAll<HTMLElement>('.config-row')) {
+          if (currentRow.dataset.key !== key) continue;
+          const currentError = currentRow.querySelector('.config-error');
+          if (currentError) currentError.textContent = error;
+          currentRow.querySelector('.config-input')?.setAttribute('aria-invalid', 'true');
+        }
         return;
       }
+      ++this.configSeq;
+      ++this.refreshSeq;
+      this.refreshPending = null;
+      this.captureConfigDrafts();
+      if (this.configDrafts.get(key) === value) this.configDrafts.delete(key);
+      if (key === 'JIRA_API_TOKEN') this.uiConfig.jiraTokenSet = true;
+      else this.uiConfig.config[key] = value;
+      for (const currentRow of this.root.querySelectorAll<HTMLElement>('.config-row')) {
+        if (currentRow.dataset.key !== key) continue;
+        const currentInput = currentRow.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input');
+        if (!currentInput) continue;
+        currentInput.dataset.configValue = key === 'JIRA_API_TOKEN' ? '' : value;
+        if (key === 'JIRA_API_TOKEN' && currentInput.value === value) currentInput.value = '';
+      }
       if (key === 'JIRA_ENABLED') {
-        ++this.refreshSeq;
-        this.refreshPending = null;
-        this.jiraEnabled = input.value !== 'false';
+        this.jiraEnabled = value !== 'false';
         this.jiraBaseUrl = null;
         this.snapshot = null;
         this.dashboardRepo = undefined;
         this.lastDashboardRefresh = -Infinity;
         ++this.todosSeq;
         const context = await getContext();
+        if (this.destroyed) return;
         if (context) {
           this.repos = context.repos;
           this.jiraBaseUrl = context.jiraBaseUrl;
         }
         this.syncShell();
       }
-      await this.refresh();
-      if (this.view === 'config') {
-        this.uiConfig = await getConfig();
-        this.paint();
-      }
+      this.configPendingKeys.delete(key);
+      if (this.configPendingKeys.size === 0) await this.refresh();
     } finally {
+      this.configPendingKeys.delete(key);
       btn.disabled = false;
+      for (const button of this.root.querySelectorAll<HTMLButtonElement>('.config-save')) {
+        if (button.dataset.key === key) button.disabled = false;
+      }
       --this.configSaves;
       this.syncPirateToggle();
     }

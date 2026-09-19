@@ -1164,6 +1164,42 @@ describe('DashboardView drawer survives polling', () => {
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
 
+  it('reports invalid terminal data and retries without losing a selected tab draft', async () => {
+    const response = await buildResponse();
+    const tab = cmuxTab();
+    let tabsPayload: unknown = null;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      const payload = url.includes('/api/cmux/tabs') ? tabsPayload
+        : url.includes('/api/cmux/screen') ? { text: 'Ready' } : response;
+      return new Response(JSON.stringify(payload));
+    }) as typeof globalThis.fetch;
+    const root = document.querySelector<HTMLElement>('#app')!;
+    const view = new DashboardView(root);
+    await view.refresh();
+    root.querySelector<HTMLAnchorElement>('[data-view="cmux"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('could not be refreshed'));
+    tabsPayload = { connected: true, tabs: [tab] };
+    root.querySelector<HTMLButtonElement>('[data-cmux-refresh]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-tab')).not.toBeNull());
+    root.querySelector<HTMLButtonElement>('.cmux-tab')!.click();
+    await vi.waitFor(() => expect(root.querySelector('.cmux-input')).not.toBeNull());
+    const input = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    input.value = 'Unsent command';
+    input.focus();
+    tabsPayload = { connected: true, tabs: [null] };
+    const stream = FakeEventSource.instances.find(item => item.url === '/api/cmux/events');
+    stream?.onmessage?.({ data: JSON.stringify({ kind: 'cmux-tabs-changed' }) } as MessageEvent<string>);
+    await vi.waitFor(() => expect(root.querySelector('[data-cmux-refresh]')).not.toBeNull());
+    expect(root.querySelector<HTMLInputElement>('.cmux-input')?.value).toBe('Unsent command');
+    expect(document.activeElement).toBe(root.querySelector('.cmux-input'));
+    tabsPayload = { connected: true, tabs: [tab] };
+    root.querySelector<HTMLButtonElement>('[data-cmux-refresh]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-cmux-refresh]')).toBeNull());
+    expect(root.querySelector<HTMLInputElement>('.cmux-input')?.value).toBe('Unsent command');
+    view.destroy();
+  });
+
   it('sends a mapped key and prevents default when capturing and a surface is selected', async () => {
     const response: DashboardResponse = await buildResponse();
     const tabOne: CmuxTabView = cmuxTab();
@@ -1197,12 +1233,22 @@ describe('DashboardView drawer survives polling', () => {
     root.querySelector<HTMLButtonElement>('[data-cmux-capture]')!.click();
     expect(root.querySelector<HTMLElement>('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('true');
 
-    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
-    document.dispatchEvent(event);
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true, bubbles: true });
+    root.querySelector<HTMLElement>('.cmux-screen')!.dispatchEvent(event);
 
     await vi.waitFor(() => expect(keyCalls.length).toBe(1));
     expect(keyCalls[0]).toEqual({ surface: tabOne.surfaceRef, key: 'up' });
     expect(event.defaultPrevented).toBe(true);
+
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', shiftKey: true, cancelable: true, bubbles: true });
+    root.querySelector<HTMLElement>('.cmux-screen')!.dispatchEvent(escape);
+    expect(escape.defaultPrevented).toBe(true);
+    expect(root.querySelector('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(document.activeElement).toBe(root.querySelector('[data-cmux-capture]'));
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true, bubbles: true });
+    document.activeElement?.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    expect(keyCalls).toHaveLength(1);
 
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
@@ -1239,8 +1285,8 @@ describe('DashboardView drawer survives polling', () => {
 
     root.querySelector<HTMLButtonElement>('[data-cmux-capture]')!.click();
 
-    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'a', cancelable: true });
-    document.dispatchEvent(event);
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'a', cancelable: true, bubbles: true });
+    root.querySelector<HTMLElement>('.cmux-screen')!.dispatchEvent(event);
 
     await vi.waitFor(() => expect(sendCalls.length).toBe(1));
     expect(sendCalls[0]).toEqual({ surface: tabOne.surfaceRef, text: 'a', enter: false });
@@ -1276,8 +1322,8 @@ describe('DashboardView drawer survives polling', () => {
     expect(root.querySelector<HTMLElement>('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('false');
 
     const callsBefore: number = fetchMock.mock.calls.length;
-    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
-    document.dispatchEvent(event);
+    const event: KeyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true, bubbles: true });
+    root.querySelector<HTMLElement>('.cmux-screen')!.dispatchEvent(event);
     await Promise.resolve();
 
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
@@ -1324,7 +1370,7 @@ describe('DashboardView drawer survives polling', () => {
     root.querySelector<HTMLButtonElement>('.view-toggle[data-view="dashboard"]')!.click();
   });
 
-  it('ignores capture keydown when the send input is focused, leaving normal typing intact', async () => {
+  it.each(['.cmux-input', '[data-cmux-capture]', '.repo-select'])('leaves controls outside terminal capture usable: %s', async selector => {
     const response: DashboardResponse = await buildResponse();
     const tabOne: CmuxTabView = cmuxTab();
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
@@ -1352,7 +1398,7 @@ describe('DashboardView drawer survives polling', () => {
     root.querySelector<HTMLButtonElement>('[data-cmux-capture]')!.click();
     expect(root.querySelector<HTMLElement>('[data-cmux-capture]')?.getAttribute('aria-pressed')).toBe('true');
 
-    const sendInput: HTMLInputElement = root.querySelector<HTMLInputElement>('.cmux-input')!;
+    const sendInput = root.querySelector<HTMLElement>(selector)!;
     sendInput.focus();
     expect(document.activeElement).toBe(sendInput);
 
