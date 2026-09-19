@@ -140,6 +140,6 @@ describe('persistent Slack notifications', () => {
     unavailable = true;
     await view.refresh();
     expect(document.querySelectorAll('.slack-notification')).toHaveLength(1);
-    expect(document.querySelector('.slack-health')?.textContent).toContain('Reader unavailable');
+    expect(document.querySelector('.slack-health')?.textContent).toContain('Automatic checks unavailable');
   });
 });

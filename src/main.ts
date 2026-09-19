@@ -1375,7 +1375,7 @@ export class DashboardView {
     if (!repo || this.localGit.repo !== repo || this.localGit.loading || this.localGit.pendingAction || this.localGitOperations.has(repo)) return Promise.resolve();
     const seq = ++this.localGitSeq;
     this.localGit = { ...this.localGit, confirmation: undefined, cleanup: undefined, error: null,
-      pendingAction: action.action === 'refresh-remotes' ? 'Checking remotes…'
+      pendingAction: action.action === 'refresh-remotes' ? 'Fetching remote status…'
         : action.action === 'preview-delete-untracked-branches' ? 'Checking eligible branches…' : 'Deleting…' };
     this.paintLocalGit();
     const promise = updateLocalGit(repo, action).then(result => {
@@ -1407,7 +1407,7 @@ export class DashboardView {
     if (autoClaim) {
       const enabled = this.autoClaimRepos.includes(this.selectedRepo ?? '');
       autoClaim.setAttribute('aria-pressed', String(enabled));
-      autoClaim.textContent = enabled ? 'Disable auto-claim' : 'Enable auto-claim';
+      autoClaim.textContent = enabled ? 'Stop automatic starts' : 'Start todos automatically';
     }
     const feedback = this.root.querySelector('[data-todo-feedback]');
     if (feedback) {

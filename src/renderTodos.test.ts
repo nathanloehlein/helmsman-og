@@ -49,7 +49,7 @@ describe('todo rendering', () => {
     root.innerHTML = renderTodos({ items: [], loading: false, error: null, search: '', stateFilter: 'all' }, {
       repos: ['owner/repo'], selectedRepo: 'owner/repo', themeId: 'quarterdeck', autoClaimEnabled: true,
     });
-    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Disable auto-claim');
+    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Stop automatic starts');
     expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('true');
   });
 

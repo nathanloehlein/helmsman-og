@@ -447,8 +447,8 @@ describe('renderDashboard', () => {
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
     const attemptsRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_MAX_ATTEMPTS"]');
     expect(attemptsRow).not.toBeNull();
-    expect(attemptsRow!.textContent).toContain('overridden');
-    expect(adapterRow!.textContent).not.toContain('overridden');
+    expect(attemptsRow!.textContent).toContain('saved override');
+    expect(adapterRow!.textContent).not.toContain('saved override');
   });
 
   it('groups pre-PR settings in one panel with bounded numeric inputs and defaults', () => {

@@ -36,7 +36,7 @@ export function renderClarifications(items: Clarification[], contacts: TrustedCo
   const history = items.filter(item => item.state !== 'pending');
   return `<div class="clarification-page">
     <header class="clarification-heading"><div><h1>${term('clarifications')}</h1><p>When an agent needs a decision from you, its question appears here. Your answer goes back to that agent.</p></div><button type="button" data-refresh-questions>Refresh questions</button></header>
-    <p class="clarification-help">This page is for answering agents. To give an agent a new task, <a class="app-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'newrun' }))}">start a ${term('run').toLowerCase()}</a>.</p>
+    <p class="clarification-help">This page is for answering agents. To give an agent a new task, <a class="app-link" href="${esc(routeHref({ view: 'dashboard', repo, pane: 'newrun' }))}">start a ${term('run').toLowerCase()}</a>.</p>
     ${state.notice ? `<p role="status" class="clarification-notice">${esc(state.notice)}</p>` : ''}
     ${error ? `<p role="alert" class="clarification-error">Could not refresh questions. ${esc(error)} Use “Refresh questions” to try again.</p>` : ''}
     <section class="clarification-list" aria-labelledby="pending-questions"><div class="clarification-section-heading"><h2 id="pending-questions">Questions awaiting your answer${pending.length ? ` (${pending.length})` : ''}</h2><span class="clarification-meta">${esc(repo ?? term('allRepositories'))}</span></div>

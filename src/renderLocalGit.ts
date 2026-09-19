@@ -61,7 +61,7 @@ export function renderLocalGit(state: LocalGitState): string {
     <strong>Delete ${confirmation.action === 'delete-branch' ? 'local branch' : 'worktree'} <span class="mono">${esc(confirmation.action === 'delete-branch' ? confirmation.branch : confirmation.path)}</span>?</strong>
     <p>${confirmation.action === 'delete-branch' ? 'This removes the local branch. The remote branch is unchanged.' : 'This removes the worktree directory. Its branch is kept. Worktrees with uncommitted changes cannot be deleted.'}</p>
     ${confirmation.action === 'delete-branch' ? '<label class="local-git-force-label"><input class="local-git-force" type="checkbox"> Also delete if unmerged (may lose local commits)</label>' : ''}
-    <div class="local-git-item-actions"><button class="local-git-confirm-delete local-git-delete" type="button"${busy ? ' disabled' : ''}>Confirm deletion</button><button class="local-git-cancel local-git-refresh" type="button"${busy ? ' disabled' : ''}>Cancel</button></div>
+    <div class="local-git-item-actions"><button class="local-git-confirm-delete local-git-delete" type="button"${busy ? ' disabled' : ''}>Delete ${confirmation.action === 'delete-branch' ? 'local branch' : 'worktree'}</button><button class="local-git-cancel local-git-refresh" type="button"${busy ? ' disabled' : ''}>Cancel</button></div>
   </div>` : '';
   const content = !repo
     ? `<div class="empty-note">Select a ${term('repository').toLowerCase()} to see its local branches and worktrees.</div>`
@@ -75,9 +75,9 @@ export function renderLocalGit(state: LocalGitState): string {
         <section class="local-git-group" aria-label="Local worktrees"><h3>Worktrees <span class="local-git-count mono">${worktrees.length}</span></h3><ul class="local-git-list">${worktreeRows || '<li class="empty-note">No local worktrees.</li>'}</ul></section>
       </div>` : ''}`;
   return `<section class="panel local-git-panel" data-pane="local-git" aria-busy="${busy}">
-    <div class="panel-head"><span class="panel-title">Local branches &amp; worktrees</span><div class="local-git-actions"><button class="local-git-refresh" type="button"${busy || !repo ? ' disabled' : ''}>Refresh</button><button class="local-git-check-remotes local-git-refresh" type="button"${busy || !repo ? ' disabled' : ''}>Check remotes</button><a class="app-link pane-link" href="${esc(routeHref({ view: 'config', repo: repo || null, pane: 'local-git' }))}" aria-label="Link to local branches and worktrees">↗</a></div></div>
-    ${repo ? '<p class="local-git-hint">Remote status uses local tracking refs. Check remotes fetches and prunes them to detect deleted remote branches. Refresh only reads local data.</p>' : ''}
-    <div class="local-git-cleanup-controls"><label class="local-git-force-label"><input class="local-git-cleanup-force" type="checkbox"${cleanupForce ? ' checked' : ''}${busy || !repo || !path ? ' disabled' : ''}> Include unmerged branches</label><button class="local-git-cleanup-preview local-git-delete" type="button"${busy || !repo || !path ? ' disabled' : ''}>Clean up branches without upstreams</button></div>
+    <div class="panel-head"><span class="panel-title">Local branches &amp; worktrees</span><div class="local-git-actions"><button class="local-git-refresh" type="button"${busy || !repo ? ' disabled' : ''}>Refresh local data</button><button class="local-git-check-remotes local-git-refresh" type="button"${busy || !repo ? ' disabled' : ''}>Fetch remote status</button><a class="app-link pane-link" href="${esc(routeHref({ view: 'config', repo: repo || null, pane: 'local-git' }))}" aria-label="Link to local branches and worktrees">↗</a></div></div>
+    ${repo ? '<p class="local-git-hint">Fetch remote status updates tracking information to detect deleted remote branches. Refresh local data only reads this checkout. Preview cleanup before deleting any local branches.</p>' : ''}
+    <div class="local-git-cleanup-controls"><label class="local-git-force-label"><input class="local-git-cleanup-force" type="checkbox"${cleanupForce ? ' checked' : ''}${busy || !repo || !path ? ' disabled' : ''}> Include unmerged branches</label><button class="local-git-cleanup-preview local-git-delete" type="button"${busy || !repo || !path ? ' disabled' : ''}>Preview branch cleanup</button></div>
     ${content}
   </section>`;
 }

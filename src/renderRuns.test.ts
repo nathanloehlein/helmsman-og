@@ -26,10 +26,10 @@ describe('renderRunsView', () => {
   it.each([true, false])('uses the selected terminology for the run page controls (%s)', pirate => {
     setPirateMode(pirate);
     const el = mount(renderRunsView(state, opts));
-    expect(el.querySelector('[data-pane=newrun] .panel-title')?.textContent).toBe(pirate ? 'Sail for a bounty' : 'Run a PR');
+    expect(el.querySelector('[data-pane=newrun] .panel-title')?.textContent).toBe(pirate ? 'Review or update a bounty' : 'Review or update a PR');
     expect(el.querySelector('[data-pane=recent] .panel-title')?.textContent).toBe(pirate ? 'Recent voyages' : 'Recent runs');
     expect(el.querySelector('.pr-lookup-go')?.textContent).toBe(pirate ? 'Load Bounty' : 'Load PR');
-    expect(el.querySelector('.pr-lookup-input')?.getAttribute('aria-label')).toBe(pirate ? 'Bounty to run' : 'PR to run');
+    expect(el.querySelector('label[for="runs-pr-lookup"]')?.textContent).toBe(pirate ? 'Bounty URL or owner/repo#number' : 'PR URL or owner/repo#number');
     expect(el.querySelector('[data-pane=recent] .empty-note')?.textContent).toBe(pirate ? 'No past voyages.' : 'No past runs.');
     expect(el.querySelector('[data-pane=newrun] .app-link')?.getAttribute('href')).toBe('/runs?pane=newrun');
   });

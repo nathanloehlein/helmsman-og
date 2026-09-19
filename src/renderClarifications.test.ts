@@ -65,6 +65,7 @@ describe('agent question rendering', () => {
     document.body.innerHTML = renderClarifications([question()], [], 'org/app', null);
     expect(document.querySelector('h1')?.textContent).toBe('Agent Questions');
     expect(document.querySelector('.clarification-create')).toBeNull();
+    expect(document.querySelector('.clarification-help a')?.getAttribute('href')).toBe('/helm?repo=org%2Fapp&pane=newrun');
     const settings = document.querySelector<HTMLDetailsElement>('details[data-contact-settings]');
     expect(settings).not.toBeNull();
     expect(settings?.open).toBe(false);

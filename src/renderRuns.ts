@@ -29,13 +29,16 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
       ? renderPrPanel(state.pr, Boolean(state.pr && repos.includes(state.pr.repo)), true, opts.selectedRepo)
       : `<div class="pr-panel empty-note">Load a ${term('pr')} for a code ${term('review').toLowerCase()} or to address feedback with the ${term('crew').toLowerCase()}.</div>`;
   return renderAppShell({ active: 'runs', repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: { running: runs.filter(run => run.status === 'running').length, queued: null, review: null } }, `
+    <div class="runs-intro"><h1>${term('runs')}</h1><p>Open a ${term('run').toLowerCase()} to follow its progress and logs, or load a ${term('pr')} to review code and address feedback.</p></div>
     <section class="panel pr-lookup-panel" data-pane="newrun">
       <div class="panel-head">
         <span class="panel-title">${term('runPr')}</span>
-        <a class="app-link runs-pane-link" href="${esc(paneHref('newrun', opts.selectedRepo, state.number, state.repo))}" aria-label="Link to ${term('runPr')}">Link ↗</a>
+        <a class="app-link runs-pane-link" href="${esc(paneHref('newrun', opts.selectedRepo, state.number, state.repo))}" aria-label="Link to ${term('runPr')}">Section link</a>
       </div>
+      <p class="runs-lookup-help">Loading a ${term('pr')} shows its details and available actions. It does not start an agent.</p>
+      <label class="runs-lookup-label" for="runs-pr-lookup">${term('pr')} URL or owner/repo#number</label>
       <div class="pr-lookup-form">
-        <input class="pr-lookup-input" aria-label="${term('pr')} to run" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
+        <input id="runs-pr-lookup" class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
         <button class="pr-lookup-go" type="button">Load ${term('pr')}</button>
       </div>
       <div class="pr-lookup-result">${panel}</div>
@@ -44,7 +47,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
       <div class="panel-head">
         <span class="panel-title">${term('recentRuns')}</span>
         <span class="panel-count mono">${runs.length}</span>
-        <a class="app-link runs-pane-link" href="${esc(paneHref('recent', opts.selectedRepo))}" aria-label="Link to ${term('recentRuns')}">Link ↗</a>
+        <a class="app-link runs-pane-link" href="${esc(paneHref('recent', opts.selectedRepo))}" aria-label="Link to ${term('recentRuns')}">Section link</a>
       </div>
       <ul class="recent-runs-list lane-list">${runs.length ? runs.map(run => renderVoyage(run, undefined, opts.selectedRepo)).join('') : `<li class="empty-note">${term('noRuns')}</li>`}</ul>
     </section>

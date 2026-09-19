@@ -54,8 +54,8 @@ function renderNotification(item: Notification, now: Date, selectedRepo: string 
 
 function renderHealth(health: SlackHealth, source: string, now: Date): string {
   const status = health.status === 'healthy' ? `Scanning every ${Math.round(health.intervalMs / 60_000)} min`
-    : health.status === 'scanning' ? 'Scanning now' : health.status === 'disabled' ? 'Reader disabled'
-    : health.status === 'partial' ? 'Scan incomplete' : 'Reader unavailable';
+    : health.status === 'scanning' ? 'Scanning now' : health.status === 'disabled' ? 'Automatic checks off'
+    : health.status === 'partial' ? 'Scan incomplete' : 'Automatic checks unavailable';
   return `<div class="slack-health" role="status"><strong>${esc(source)}</strong><span>${esc(status)}</span>${health.lastSuccessAt ? `<span>Last scanned ${esc(formatRelativeTime(health.lastSuccessAt, now))}</span>` : ''}${health.error ? `<span class="slack-error">${esc(health.error)}</span>` : ''}</div>`;
 }
 
@@ -71,6 +71,6 @@ export function renderSlack(state: SlackState, open: boolean, error: string | nu
     ${renderHealth(state.health, channelName ? `Slack #${channelName}` : 'Slack', now)}
     ${state.githubHealth ? renderHealth(state.githubHealth, `GitHub requested ${term('reviews').toLowerCase()}`, now) : ''}
     ${error ? `<p class="slack-action-error" role="alert">${esc(error)}</p>` : ''}
-    ${notifications.length ? `<ol class="slack-notification-list">${notifications.map(item => renderNotification(item, now, selectedRepo)).join('')}</ol>` : '<p class="slack-empty">No notifications yet.</p>'}
+    ${notifications.length ? `<ol class="slack-notification-list">${notifications.map(item => renderNotification(item, now, selectedRepo)).join('')}</ol>` : `<p class="slack-empty">No notifications yet${selectedRepo ? ' for this ' + term('repository').toLowerCase() : ''}. Completed ${term('runs').toLowerCase()} and automatic ${term('review').toLowerCase()} activity appear here.</p>`}
   </section>`;
 }
