@@ -61,7 +61,8 @@ export function mountClarifications(container: HTMLElement, options: { repo(): s
   let destroyed = false;
   let sequence = 0;
   let scope = options.repo();
-  let submission: { repo: string | null } | null = null;
+  let scopeGeneration = 0;
+  let submission: { generation: number } | null = null;
 
   function paint(): void {
     if (destroyed) return;
@@ -86,7 +87,7 @@ export function mountClarifications(container: HTMLElement, options: { repo(): s
   async function refresh(): Promise<void> {
     const token = ++sequence;
     const repo = options.repo();
-    if (repo !== scope) { scope = repo; items = []; notice = null; error = null; container.innerHTML = ''; loading = true; paint(); }
+    if (repo !== scope) { scopeGeneration++; scope = repo; items = []; notice = null; error = null; container.innerHTML = ''; loading = true; paint(); }
     const [questions, people] = await Promise.allSettled([fetchClarifications(repo), fetchTrustedContacts()]);
     if (destroyed || token !== sequence || repo !== options.repo()) return;
     if (questions.status === 'fulfilled') { items = questions.value; error = null; }
@@ -94,14 +95,14 @@ export function mountClarifications(container: HTMLElement, options: { repo(): s
     if (people.status === 'fulfilled') { contacts = people.value; contactError = null; }
     else contactError = people.reason instanceof Error ? people.reason.message : 'Try refreshing questions.';
     loading = false;
-    if (!submission || submission.repo !== scope) paint();
+    if (!submission || submission.generation !== scopeGeneration) paint();
   }
 
   const submit = (event: Event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
     event.preventDefault();
-    if (submission && submission.repo === scope) return;
+    if (submission?.generation === scopeGeneration) return;
     const repo = scope;
     const data = new FormData(form);
     const id = form.dataset.answer;
@@ -109,7 +110,7 @@ export function mountClarifications(container: HTMLElement, options: { repo(): s
     const feedback = form.querySelector<HTMLElement>('.clarification-form-error');
     if (id && !answer) { if (feedback) feedback.textContent = 'Enter an answer before sending.'; return; }
     const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-    const pendingSubmission = { repo };
+    const pendingSubmission = { generation: scopeGeneration };
     submission = pendingSubmission;
     notice = null;
     if (feedback) feedback.textContent = '';
@@ -120,16 +121,17 @@ export function mountClarifications(container: HTMLElement, options: { repo(): s
         else if (form.matches('.trusted-contact-form')) await saveTrustedContact({ name: String(data.get('name') ?? ''), address: String(data.get('address') ?? ''), enabled: data.get('enabled') === 'on' });
         else return;
         if (destroyed || repo !== options.repo()) return;
+        if (pendingSubmission.generation !== scopeGeneration) { await refresh(); return; }
         form.reset();
         notice = id ? 'Answer sent to the agent.' : 'Contact saved. No notification was sent.';
         if (id) items = items.map(item => item.id === id ? { ...item, state: 'answered', answer } : item);
         await refresh();
       } catch (reason) {
-        if (!destroyed && repo === options.repo() && feedback) feedback.textContent = `Could not ${id ? 'send answer' : 'save contact'}. ${reason instanceof Error ? reason.message : 'Try again.'}`;
+        if (!destroyed && pendingSubmission.generation === scopeGeneration && repo === options.repo() && feedback) feedback.textContent = `Could not ${id ? 'send answer' : 'save contact'}. ${reason instanceof Error ? reason.message : 'Try again.'}`;
       } finally {
         if (submission === pendingSubmission) submission = null;
         if (button) { button.disabled = false; button.textContent = id ? 'Send answer' : 'Save contact'; }
-        if (!destroyed && repo === options.repo() && notice) paint();
+        if (!destroyed && pendingSubmission.generation === scopeGeneration && repo === options.repo() && notice) paint();
       }
     })();
   };

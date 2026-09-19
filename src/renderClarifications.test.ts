@@ -211,6 +211,30 @@ describe('agent question interactions', () => {
     expect(answerForm(container, current.id).querySelector<HTMLTextAreaElement>('textarea[name="answer"]')?.value).toBe('Current scope draft');
   });
 
+  it('keeps a revisited scope usable when its previous answer submission fails', async () => {
+    const submission = deferred<Clarification>();
+    vi.mocked(client.answerClarification).mockReturnValueOnce(submission.promise);
+    let repo = 'org/app';
+    const { container, controller } = mount(() => repo);
+    await vi.waitFor(() => expect(container.querySelector('form[data-answer]')).not.toBeNull());
+    draft(container, 'Previous visit answer');
+    answerForm(container).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    repo = 'org/other';
+    vi.mocked(client.fetchClarifications).mockResolvedValue([question({ id: 'other-question', repo })]);
+    await controller.refresh();
+    repo = 'org/app';
+    vi.mocked(client.fetchClarifications).mockResolvedValue([question()]);
+    await controller.refresh();
+    expect(container.querySelector('form[data-answer="question-1"]')).not.toBeNull();
+    draft(container, 'New draft after returning');
+    submission.reject(new Error('Previous visit failure'));
+    await flushResponses();
+    expect(container.textContent).not.toContain('Loading questions');
+    expect(container.textContent).not.toContain('Previous visit failure');
+    expect(answerForm(container).querySelector<HTMLTextAreaElement>('textarea[name="answer"]')?.value).toBe('New draft after returning');
+    expect(answerForm(container).querySelector<HTMLButtonElement>('button')?.disabled).toBe(false);
+  });
+
   it('discards responses arriving after unmount', async () => {
     const pending = deferred<Clarification[]>();
     vi.mocked(client.fetchClarifications).mockReturnValue(pending.promise);
