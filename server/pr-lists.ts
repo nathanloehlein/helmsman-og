@@ -1,7 +1,8 @@
 import type { GithubConfig } from './config';
 import { cachedGithubRead } from './github-read-cache';
+import { fetchPrListStats, type PrListStats } from './github';
 
-export interface ListedPr {
+export interface ListedPr extends PrListStats {
   number: number;
   title: string;
   repo: string;
@@ -25,6 +26,8 @@ interface RawListResponse {
 const API: string = 'https://api.github.com';
 const PAGE_SIZE: number = 100;
 const PAGE_CAP: number = 3;
+const STATS_LIMIT = 30;
+const STATS_CONCURRENCY = 4;
 
 export function isGithubRepo(repo: string): boolean {
   return /^[a-zA-Z0-9-]+\/[a-zA-Z0-9_.-]+$/.test(repo) && !['.', '..'].includes(repo.split('/')[1] ?? '');
@@ -115,6 +118,12 @@ export async function fetchRepoOpenPrs(github: GithubConfig | null, repo: string
     else result.degraded = true;
   }
   result.prs = sortedUnique(result.prs);
+  const pending = result.prs.slice(0, STATS_LIMIT);
+  await Promise.all(Array.from({ length: Math.min(STATS_CONCURRENCY, pending.length) }, async () => {
+    for (let pr = pending.shift(); pr; pr = pending.shift()) {
+      Object.assign(pr, await fetchPrListStats(github, pr.repo, pr.number));
+    }
+  }));
   return result;
 }
 

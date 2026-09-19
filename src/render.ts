@@ -117,6 +117,10 @@ const ICON_X_MARK: string =
 const ICON_DOTS: string =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>'
 
+const ICON_COMMENT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 2.5h-11v8h3v3l3-3h5z"/></svg>';
+
+const ICON_REVIEW_PENDING = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/></svg>';
+
 export function renderVoyageResult(run: RunSummary): string {
   const results: Record<string, { label: string; tone: string; icon: string }> = {
     APPROVE: { label: `${term('review')} recommendation: Approve`, tone: 'approved', icon: ICON_CHECK },
@@ -732,14 +736,29 @@ function slackReviewButton(repo: string, number: number): string {
   </span>`;
 }
 
+function prListStats(pr: OpenPr): { html: string; label: string } {
+  const stats = [
+    { key: 'comments', value: pr.comments, icon: ICON_COMMENT, label: 'comments', detail: 'Discussion and inline comments', includeZero: true },
+    { key: 'approved', value: pr.reviews?.approved, icon: ICON_CHECK, label: 'approvals', detail: 'Approvals', includeZero: true },
+    { key: 'changes', value: pr.reviews?.changesRequested, icon: ICON_X_MARK, label: 'changes requested', detail: 'Changes requested', includeZero: false },
+    { key: 'pending', value: pr.reviews?.requested, icon: ICON_REVIEW_PENDING, label: `pending ${term('reviews').toLowerCase()}`, detail: `Pending ${term('reviews').toLowerCase()}`, includeZero: false },
+  ].flatMap(stat => typeof stat.value === 'number' && Number.isSafeInteger(stat.value) && stat.value >= 0 && (stat.includeZero || stat.value > 0)
+    ? [{ ...stat, value: stat.value }] : []);
+  return {
+    label: stats.map(stat => `${stat.label}: ${stat.value}`).join('; '),
+    html: stats.length ? `<span class="pr-list-stats mono">${stats.map(stat => `<span class="pr-list-stat" data-pr-stat="${stat.key}" role="img" aria-label="${esc(stat.label)}: ${stat.value}" title="${esc(stat.detail)}: ${stat.value}">${stat.icon}<span aria-hidden="true">${stat.value}</span></span>`).join('')}</span>` : '',
+  };
+}
+
 function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false, selectedRepo: string | null = null): string {
   const prs: OpenPr[] = validListPrs(state);
   const rows: string = prs.map((pr) => {
     const chip = reviewChip(pr.reviewDecision ?? '');
     const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
-    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}">
+    const stats = prListStats(pr);
+    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}${stats.label ? `; ${esc(stats.label)}` : ''}">
       <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
-      <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span></span>
+      <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span>${stats.html}</span>
       ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
       ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
       ${requestReview ? slackReviewButton(pr.repo, pr.number) : ''}
