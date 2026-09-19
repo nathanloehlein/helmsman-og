@@ -844,13 +844,15 @@ export function renderVoyage(run: RunSummary, now: Date = new Date(), selectedRe
     ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}" title="${esc(new Date(run.startedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}">${esc(formatRelativeTime(run.startedAt, now))}</time>` : '';
   const href = routeHref({ view: 'runs', run: run.id, repo: selectedRepo });
   return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
-    <a class="app-link runs-voyage-link" href="${esc(href)}">
-      ${renderVoyageResult(run)}
-      <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
-    </a>
+    <div class="voyage-row-main">
+      <a class="app-link runs-voyage-link" href="${esc(href)}">
+        ${renderVoyageResult(run)}
+        <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
+      </a>
+      ${run.status === 'failed' ? renderVoyageRetry(run.id, true) : ''}
+    </div>
     <div class="voyage-row-meta">
       ${renderVoyageId(run.id)}
-      ${run.status === 'failed' ? renderVoyageRetry(run.id, true) : ''}
       ${startedAt}
     </div>
   </li>`;
