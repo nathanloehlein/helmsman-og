@@ -48,6 +48,7 @@ describe('Pirate mode and greeting', () => {
     expect(document.querySelector('[data-view="prs"]')?.textContent).toBe('PRs');
     expect(document.querySelector('[data-view="dashboard"]')?.textContent).toBe('Dashboard');
     expect(document.querySelector('.repo-select')?.getAttribute('aria-label')).toBe('Scope by repository');
+    expect(document.querySelector('.helm-readout')?.getAttribute('aria-label')).toBe('System status');
     expect(document.querySelector('.operator-note')?.textContent).toContain('the agent');
     expect(document.querySelector('[data-footer-running]')?.textContent).toBe('0 running');
     expect(document.querySelector<HTMLInputElement>('[data-key="MAX_ATTEMPTS"] input')?.value).toBe('7');
@@ -59,6 +60,7 @@ describe('Pirate mode and greeting', () => {
     toggle(true);
     expect(document.querySelector('[data-view="prs"]')?.textContent).toBe('Bounties');
     expect(document.querySelector('.operator-note')?.textContent).toContain('the deckhand');
+    expect(document.querySelector('.helm-readout')?.getAttribute('aria-label')).toBe('Fleet status');
     expect(document.activeElement).toBe(document.querySelector('[data-pirate-mode]'));
   });
 

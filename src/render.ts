@@ -1,4 +1,4 @@
-import { term, isPirateMode, TERMINOLOGY } from './logic/terminology';
+import { term, isPirateMode, TERMINOLOGY, TERMINOLOGY_REFERENCE_KEYS } from './logic/terminology';
 import { renderLocalGit } from './renderLocalGit';
 import { renderThemePreview } from './renderThemePreview';
 import { emptyLocalGit, type LocalGitState } from './data/localGit';
@@ -231,7 +231,7 @@ const PAGE_TABS: { view: PageView; label: string }[] = [
 const PANEL_TITLE: Record<PanelId, string> = {
   get newrun() { return term('newRun'); },
   backlog: 'Backlog queue',
-  get underway() { return `Mine · ${term('running').toLowerCase()}`; },
+  get underway() { return term('mineRunning'); },
   get running() { return term('activeAgents'); },
   get recent() { return term('recentRuns'); },
   get repoprs() { return term('openPrs'); },
@@ -270,7 +270,7 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
     (t) =>
       `<a class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" href="${esc(routeHref({ view: t.view, repo: opts.selectedRepo }))}" data-view="${t.view}" role="tab" id="page-tab-${t.view}" aria-selected="${t.view === opts.active}" aria-controls="page-content" tabindex="${t.view === opts.active ? 0 : -1}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`,
   ).join('');
-  const readout = `<div class="helm-readout mono" aria-label="Fleet status">
+  const readout = `<div class="helm-readout mono" aria-label="${term('systemStatus')}">
     ${(['running', 'queued', 'review'] as const).map((key) => {
       const value = opts.readout?.[key];
       const known = typeof value === 'number' && Number.isFinite(value);
@@ -377,7 +377,7 @@ export function renderDashboard(
   const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
   const underwayItems = underwayKnown && underway.length
     ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, jiraEnabled ? selectedRepo : null)).join('')
-    : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : 'Underway tickets unavailable.'}</li>`;
+    : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : term('unavailableRunningTickets')}</li>`;
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
 
@@ -1002,7 +1002,7 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
       <div class="triage-grid">
         ${triageGroup('Unassigned · Backlog', 'backlog', paginateTriageTickets(filtered.unassignedBacklog, pageSize, opts.pages?.backlog ?? 1), launchRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unassigned backlog tickets.', scopeHint, 'triage:backlog', collapsed.has('triage:backlog'))}
         ${triageGroup('Unassigned · To Do', 'todo', paginateTriageTickets(filtered.unassignedTodo, pageSize, opts.pages?.todo ?? 1), launchRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unassigned to-do tickets.', scopeHint, 'triage:todo', collapsed.has('triage:todo'))}
-        ${triageGroup('Mine · underway', 'mine', paginateTriageTickets(filtered.mineOpen, pageSize, opts.pages?.mine ?? 1), statusRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unfinished tickets assigned to you.', scopeHint, 'triage:mine', collapsed.has('triage:mine'))}
+        ${triageGroup(term('mineRunning'), 'mine', paginateTriageTickets(filtered.mineOpen, pageSize, opts.pages?.mine ?? 1), statusRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unfinished tickets assigned to you.', scopeHint, 'triage:mine', collapsed.has('triage:mine'))}
       </div>
       <div class="runs-drawer-slot"></div>
 `);
@@ -1191,7 +1191,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
         <div class="ui-customization-body">
           <label class="pirate-mode-control" for="pirate-mode"><input id="pirate-mode" type="checkbox" data-pirate-mode${isPirateMode() ? ' checked' : ''} aria-describedby="pirate-mode-help"> Pirate mode</label>
           <p id="pirate-mode-help">Use nautical names for interface labels. Saved in this browser; your content stays unchanged.</p>
-          <details class="terminology-reference"><summary>Terminology reference</summary><table><thead><tr><th scope="col">Plain</th><th scope="col">Pirate</th></tr></thead><tbody>${(['success', 'failed', 'tokens', 'agent', 'start', 'review', 'pr', 'repository', 'run', 'launchTicket'] as const).map(key => TERMINOLOGY[key]).map(({ plain, pirate }) => `<tr><td>${esc(plain)}</td><td>${esc(pirate)}</td></tr>`).join('')}</tbody></table></details>
+          <details class="terminology-reference"><summary>Terminology reference</summary><table><thead><tr><th scope="col">Plain</th><th scope="col">Pirate</th></tr></thead><tbody>${TERMINOLOGY_REFERENCE_KEYS.map(key => TERMINOLOGY[key]).map(({ plain, pirate }) => `<tr><td>${esc(plain)}</td><td>${esc(pirate)}</td></tr>`).join('')}</tbody></table></details>
           <label for="ui-theme">Theme</label>
           <select id="ui-theme" class="theme-select" aria-describedby="ui-theme-help">${themeOptions}</select>
           <p id="ui-theme-help">Applies immediately and is saved in this browser.</p>

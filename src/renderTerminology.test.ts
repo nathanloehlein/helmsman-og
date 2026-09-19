@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { renderConfigView, renderHelmHead, renderVoyage, runTabStatus } from './render';
+import { renderConfigView, renderHelmHead, renderVoyage, renderTriageView, runTabStatus } from './render';
 import { DEFAULT_THEME_ID } from './data/themes';
 import { setPirateMode } from './logic/terminology';
 
@@ -22,8 +22,15 @@ describe('pirate interface wording', () => {
     expect(element.querySelector('[data-view="prs"]')?.textContent).toBe(enabled ? 'Bounties' : 'PRs');
     expect(element.querySelector('[data-view="runs"]')?.textContent).toBe(enabled ? 'Voyages' : 'Runs');
     expect(element.querySelector('.repo-select')?.getAttribute('aria-label')).toBe(enabled ? 'Scope by galleon' : 'Scope by repository');
+    expect(element.querySelector('.helm-readout')?.getAttribute('aria-label')).toBe(enabled ? 'Fleet status' : 'System status');
     expect(element.querySelector('[data-readout-label="review"]')?.textContent).toBe(enabled ? 'inspection' : 'review');
     expect(element.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/agent-review');
+  });
+
+  it.each([true, false])('uses the same mapped Mine heading in Triage with mode=%s', enabled => {
+    setPirateMode(enabled);
+    const element = mount(renderTriageView({ unassignedBacklog: [], unassignedTodo: [], mineOpen: [] }, { ...opts, jiraBaseUrl: null, degraded: false }));
+    expect(element.querySelector('[data-collapse-id="triage:mine"]')?.closest('.panel')?.querySelector('.panel-title')?.textContent).toContain(enabled ? 'Mine · underway' : 'Mine · running');
   });
 
   it.each([true, false])('preserves user titles, repository IDs and machine status with mode=%s', enabled => {
@@ -39,7 +46,12 @@ describe('pirate interface wording', () => {
     setPirateMode(enabled);
     const element = mount(renderConfigView({ config: {}, overridden: [] }, opts));
     expect(element.querySelector<HTMLInputElement>('[data-pirate-mode]')?.checked).toBe(enabled);
-    expect(element.querySelectorAll('.terminology-reference tbody tr')).toHaveLength(10);
+    const rows = Array.from(element.querySelectorAll('.terminology-reference tbody tr'), row => Array.from(row.querySelectorAll('td'), cell => cell.textContent));
+    expect(rows).toEqual(expect.arrayContaining([
+      ['Dashboard', 'Helm'], ['Runs', 'Voyages'], ['Repositories', 'Galleons'],
+      ['Agents', 'Crew'], ['Running', 'Underway'], ['System status', 'Fleet status'],
+      ['Completed work', 'Out to sea'], ['Activity log', "Ship's log"],
+    ]));
     expect(element.querySelector('#config-SLACK_BOT_TOKEN')?.getAttribute('placeholder')).toBe('Paste bot token to update');
     expect(element.querySelector('#work-source-title')?.textContent).toBe(enabled ? 'Voyage source' : 'Run source');
   });

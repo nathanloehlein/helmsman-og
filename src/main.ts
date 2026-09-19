@@ -1,3 +1,4 @@
+import { applyBootTerminology } from './logic/bootTerminology';
 import { term, setPirateMode, isPirateMode } from './logic/terminology';
 import { loadProfile } from './data/profile';
 import { copyText } from './logic/clipboard';
@@ -959,6 +960,7 @@ export class DashboardView {
       if (next.hasAttribute('title')) count.setAttribute('title', next.title);
       else count.removeAttribute('title');
     }
+    shell.querySelector('.helm-readout')?.setAttribute('aria-label', term('systemStatus'));
     for (const label of template.content.querySelectorAll<HTMLElement>('[data-readout-label]')) {
       const current = shell.querySelector(`[data-readout-label="${label.dataset.readoutLabel}"]`);
       if (current) current.textContent = label.textContent;
@@ -2595,6 +2597,7 @@ export class DashboardView {
 }
 
 function armBootScreen(boot: HTMLElement): () => void {
+  applyBootTerminology(boot);
   const MIN_MS: number = 2000;
   const CAP_MS: number = 4200;
   const start: number = performance.now();

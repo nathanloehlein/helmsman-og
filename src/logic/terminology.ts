@@ -26,6 +26,19 @@ export const TERMINOLOGY = {
   run: { plain: 'Run', pirate: 'Voyage' },
   runs: { plain: 'Runs', pirate: 'Voyages' },
   dashboard: { plain: 'Dashboard', pirate: 'Helm' },
+  systemStatus: { plain: 'System status', pirate: 'Fleet status' },
+  mineRunning: { plain: 'Mine · running', pirate: 'Mine · underway' },
+  unavailableRunningTickets: { plain: 'Assigned tickets unavailable.', pirate: 'Underway tickets unavailable.' },
+  invalidRunId: { plain: 'Invalid run ID.', pirate: 'Invalid voyage ID.' },
+  missingRetryRunId: { plain: 'The server did not return a new run ID. Check recent runs before retrying.', pirate: 'The server did not return a new voyage ID. Check recent voyages before retrying.' },
+  unavailableCheckout: { plain: 'Local checkout unavailable for this repository.', pirate: 'Local checkout unavailable for this galleon.' },
+  bootStatus: { plain: 'Helmsman is starting', pirate: 'Helmsman preparing to get underway' },
+  bootTagline: { plain: 'LOADING DASHBOARD · PREPARING WORKSPACE', pirate: 'TAKING THE HELM · CHARTING THE COURSE' },
+  bootNavigation: { plain: 'navigation · ready', pirate: 'navigation · ready' },
+  bootHeading: { plain: 'settings · loaded', pirate: 'heading · set' },
+  bootCourse: { plain: 'workspace · ready', pirate: 'course · plotted' },
+  bootCrew: { plain: 'agents · standing by', pirate: 'crew · standing by' },
+  bootReady: { plain: 'ready to start', pirate: 'ready to get underway' },
   crew: { plain: 'Agents', pirate: 'Crew' },
   greeting: { plain: 'Hello', pirate: 'Ahoy' },
   allRepositories: { plain: 'All repositories', pirate: 'All galleons' },
@@ -79,6 +92,13 @@ export const TERMINOLOGY = {
 } as const;
 
 export type TermKey = keyof typeof TERMINOLOGY;
+
+export const TERMINOLOGY_REFERENCE_KEYS = [
+  'dashboard', 'run', 'runs', 'repository', 'repositories', 'crew', 'agent', 'agents',
+  'agentTasks', 'activeAgents', 'running', 'systemStatus', 'shipped', 'activity',
+  'success', 'failed', 'tokens', 'start', 'review', 'reviews', 'pr', 'prs',
+  'launchTicket', 'greeting',
+] as const satisfies readonly TermKey[];
 
 export function wording(key: TermKey, enabled: boolean): string {
   return TERMINOLOGY[key][enabled ? 'pirate' : 'plain'];
