@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleApi, type RouterDeps } from './router';
 import { openTodoStore, type TodoStore } from './todos';
 import { SlackReviewError } from './slack/review-request';
+import { ResumeError } from './resume';
 import type { PrStatus } from '../github';
 import type { BugsResponse } from '../../src/types';
 import { openDb, type RunRow } from './db';
@@ -57,6 +58,25 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('continues an existing voyage without creating a replacement run', async () => {
+    const resumeRun = vi.fn(async () => {});
+    const launch = vi.fn(deps.launch);
+    const local = { ...deps, launch, resumeRun, db: { ...deps.db, getRun: () => ({ id: 'original' }) as RunRow } };
+    expect(await handleApi('POST', '/api/agents/original/resume', new URLSearchParams(), { task: 'ignored' }, local))
+      .toEqual({ status: 200, json: { runId: 'original' } });
+    expect(resumeRun).toHaveBeenCalledExactlyOnceWith('original');
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it('returns continuation validation failures without starting a new run', async () => {
+    const resumeRun = vi.fn(async () => { throw new ResumeError('Retained worktree has changed.'); });
+    const local = { ...deps, resumeRun, db: { ...deps.db, getRun: () => ({ id: 'original' }) as RunRow } };
+    expect(await handleApi('POST', '/api/agents/original/resume', new URLSearchParams(), null, local))
+      .toEqual({ status: 409, json: { error: 'Retained worktree has changed.' } });
+    expect((await handleApi('POST', '/api/agents/bad%20id/resume', new URLSearchParams(), null, local))?.status).toBe(400);
+    expect((await handleApi('POST', '/api/agents/original/resume', new URLSearchParams(), null, { ...local, db: { ...local.db, getRun: () => null } }))?.status).toBe(404);
+    expect(resumeRun).toHaveBeenCalledTimes(1);
+  });
   it('serves only public GitHub profile fields without using the selected galleon', async () => {
     const githubProfile = vi.fn(async () => ({ displayName: 'Captain Example', login: 'captain', token: 'private' }));
     expect(await handleApi('GET', '/api/github/profile', new URLSearchParams('repo=o/r'), null, { ...deps, githubProfile }))

@@ -16,6 +16,7 @@ import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
+import { resumeFailedPrePrRun, ResumeError } from './resume';
 import { hasCmux, pickHost, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
@@ -170,10 +171,9 @@ function pollCreatedPrReviews(): Promise<void> {
   return createdPrReviews.poll().catch((error: unknown) => { process.stderr.write(`Created PR review queue failed: ${String(error)}\n`); });
 }
 
-function dispatchReattach(row: RunRow): Promise<void> {
+function dispatchReattach(row: RunRow, control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null }): Promise<void> {
   const cfg: AppConfig = configStore.current();
   const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
-  const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(row.id, row.repo, () => {
     control.stopped = true;
     void control.stop?.();
@@ -195,6 +195,28 @@ function dispatchReattach(row: RunRow): Promise<void> {
     pm.remove(row.id);
     void pollCreatedPrReviews();
   });
+}
+
+async function resumeVoyage(runId: string): Promise<void> {
+  const row = db.getRun(runId);
+  if (!row) throw new ResumeError('Voyage not found.');
+  const cfg = configStore.current();
+  const repos = [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
+  if (!repos.some(repo => repo.toLowerCase() === row.repo.toLowerCase())) throw new ResumeError('Configure this galleon before continuing the voyage.');
+  const gate = pm.canStart(row.repo);
+  if (!gate.ok) throw new ResumeError(gate.reason ?? 'Cannot continue this voyage while another voyage is active.');
+  if (cfg.maxCostUsd !== null && (row.costUsd ?? 0) >= cfg.maxCostUsd) throw new ResumeError('The voyage has reached its cost cap. Update the cap before continuing.');
+  const task = row.taskJson ? JSON.parse(row.taskJson) as Partial<AgentTask> | null : null;
+  if (!task?.task && !task?.todoId && !cfg.jira) throw new ResumeError('Configure Jira before continuing this Jira voyage.');
+  const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
+  pm.add(row.id, row.repo, () => { control.stopped = true; void control.stop?.(); });
+  try {
+    const resumed = await resumeFailedPrePrRun(row, { db, host, runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped });
+    void dispatchReattach(resumed, control).catch(error => { process.stderr.write(`Voyage continuation failed: ${String(error)}\n`); });
+  } catch (error) {
+    pm.remove(row.id);
+    throw error;
+  }
 }
 
 const reattachIds: string[] = db.reattachableRuns().map((r: RunRow) => r.id);
@@ -522,6 +544,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       db,
       canStart: (repo: string) => pm.canStart(repo),
       launch,
+      resumeRun: resumeVoyage,
       stop: (id: string) => pm.stop(id),
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),
