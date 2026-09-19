@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { renderConfigView, renderHelmHead, renderVoyage, renderTriageView, runTabStatus } from './render';
+import { renderAppShell, renderConfigView, renderHelmHead, renderVoyage, renderTriageView, runTabStatus } from './render';
 import { DEFAULT_THEME_ID } from './data/themes';
 import { setPirateMode } from './logic/terminology';
 
@@ -42,10 +42,14 @@ describe('pirate interface wording', () => {
     expect(runTabStatus('failed')).toEqual({ kind: 'failed', label: enabled ? 'Marooned' : 'Failed' });
   });
 
-  it.each([true, false])('reflects mode=%s in Appearance and keeps credential tokens literal', enabled => {
+  it.each([true, false])('reflects mode=%s in the footer and keeps the Appearance reference and credential tokens literal', enabled => {
     setPirateMode(enabled);
     const element = mount(renderConfigView({ config: {}, overridden: [] }, opts));
-    expect(element.querySelector<HTMLInputElement>('[data-pirate-mode]')?.checked).toBe(enabled);
+    expect(element.querySelectorAll('[data-pirate-mode]')).toHaveLength(1);
+    expect(element.querySelector('.app-footer [data-pirate-mode]')?.getAttribute('aria-pressed')).toBe(String(enabled));
+    expect(element.querySelector('.app-footer [data-pirate-mode]')?.getAttribute('title')).toBe(`Turn Pirate mode ${enabled ? 'off' : 'on'}`);
+    expect(element.querySelector('.ui-customization-panel [data-pirate-mode]')).toBeNull();
+    expect(element.querySelector('#pirate-mode-help')?.textContent).toContain('flag at the bottom-right');
     const rows = Array.from(element.querySelectorAll('.terminology-reference tbody tr'), row => Array.from(row.querySelectorAll('td'), cell => cell.textContent));
     expect(rows).toEqual(expect.arrayContaining([
       ['Dashboard', 'Helm'], ['Runs', 'Voyages'], ['Repositories', 'Galleons'],
@@ -54,5 +58,19 @@ describe('pirate interface wording', () => {
     ]));
     expect(element.querySelector('#config-SLACK_BOT_TOKEN')?.getAttribute('placeholder')).toBe('Paste bot token to update');
     expect(element.querySelector('#work-source-title')?.textContent).toBe(enabled ? 'Voyage source' : 'Run source');
+  });
+
+  it.each(['dashboard', 'prs', 'runs', 'todos', 'triage', 'bugs', 'cmux', 'config'] as const)('provides one accessible footer flag on %s', active => {
+    setPirateMode(false);
+    const element = mount(renderAppShell({ ...opts, active, readout: null }, 'Content'));
+    const button = element.querySelector<HTMLButtonElement>('.app-footer [data-pirate-mode]');
+    expect(element.querySelectorAll('[data-pirate-mode]')).toHaveLength(1);
+    expect(button?.type).toBe('button');
+    expect(button?.getAttribute('aria-label')).toBe('Pirate mode');
+    expect(button?.getAttribute('aria-pressed')).toBe('false');
+    expect(button?.title).toBe('Turn Pirate mode on');
+    expect(button?.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(button?.querySelector('svg')?.getAttribute('stroke')).toBe('currentColor');
+    expect(button?.previousElementSibling?.classList.contains('footer-meta')).toBe(true);
   });
 });

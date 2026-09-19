@@ -197,6 +197,7 @@ export class DashboardView {
   private themeId: string = loadThemeId();
   private greetingName: string | null = null;
   private configSaves: number = 0;
+  private pendingViewActions: number = 0;
   private jiraBaseUrl: string | null = null;
   private jiraEnabled: boolean = true;
   private todos: TodosViewState = { items: [], loading: false, error: null, search: '', stateFilter: 'all' };
@@ -258,10 +259,6 @@ export class DashboardView {
     }, { signal: this.rootEvents.signal });
     this.root.addEventListener('change', (event: Event): void => {
       const control = event.target;
-      if (control instanceof HTMLInputElement && control.matches('[data-pirate-mode]')) {
-        this.changePirateMode(control.checked);
-        return;
-      }
       if (control instanceof HTMLInputElement && control.matches('.local-git-cleanup-force')) {
         if (control.disabled || this.localGit.loading || this.localGit.pendingAction) return;
         this.localGit = { ...this.localGit, cleanup: undefined, cleanupForce: control.checked };
@@ -363,39 +360,67 @@ export class DashboardView {
   }
 
   private syncPirateToggle(): void {
-    const toggle = this.root.querySelector<HTMLInputElement>('[data-pirate-mode]');
+    const toggle = this.root.querySelector<HTMLButtonElement>('[data-pirate-mode]');
     if (toggle) {
-      toggle.disabled = this.configSaves > 0;
-      toggle.checked = isPirateMode();
+      toggle.disabled = this.configSaves > 0 || this.pendingViewActions > 0;
+      toggle.setAttribute('aria-pressed', String(isPirateMode()));
+      toggle.title = `Turn Pirate mode ${isPirateMode() ? 'off' : 'on'}`;
+    }
+  }
+
+  private async withStableView(action: () => Promise<void>): Promise<void> {
+    ++this.pendingViewActions;
+    this.syncPirateToggle();
+    try {
+      await action();
+    } finally {
+      --this.pendingViewActions;
+      this.syncPirateToggle();
     }
   }
 
   private changePirateMode(enabled: boolean): void {
-    if (this.configSaves > 0) {
-      this.syncPirateToggle();
-      return;
-    }
-    const controls = this.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#page-content input, #page-content select, #page-content textarea');
-    const values = new Map<string, string>();
-    const keyFor = (control: Element): string | undefined => control.id || control.closest<HTMLElement>('.config-row')?.dataset.key;
-    for (const control of controls) {
-      const key = keyFor(control);
-      if (key && !control.matches('[data-pirate-mode]')) values.set(key, control.value);
-    }
+    if (this.configSaves > 0 || this.pendingViewActions > 0) return;
+    const controls = (): Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> => {
+      const result = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+      const occurrences = new Map<string, number>();
+      for (const control of this.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')) {
+        const scope = control.closest('.run-drawer') ? 'drawer' : 'page';
+        const identity = `${scope}:${control.tagName}:${control.id || control.name || control.className}`;
+        const occurrence = occurrences.get(identity) ?? 0;
+        occurrences.set(identity, occurrence + 1);
+        result.set(`${identity}:${occurrence}`, control);
+      }
+      return result;
+    };
+    const savedControls = controls();
+    const openDetails = Array.from(this.root.querySelectorAll('details'), detail => detail.open);
+    const pageScroll = this.root.querySelector('#page-content')?.scrollTop ?? 0;
+    const logScroll = this.runDrawerEl.querySelector('.run-drawer-body')?.scrollTop ?? 0;
+    const followLog = this.stickToBottom;
     setPirateMode(enabled);
     this.paint();
     this.paintSlack();
-    this.renderRunDrawer();
+    this.renderRunDrawer(false);
+    this.stickToBottom = followLog;
+    this.flushRunLog();
+    const log = this.runDrawerEl.querySelector('.run-drawer-body');
+    if (log && !followLog) log.scrollTop = logScroll;
     this.updateAddress(this.route, 'replace');
     const template = document.createElement('template');
     template.innerHTML = renderAppShell(this.shellOptions(), '');
     const footer = template.content.querySelector('.app-footer');
     if (footer) this.root.querySelector('.app-footer')?.replaceWith(footer);
-    for (const control of this.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('#page-content input, #page-content select, #page-content textarea')) {
-      const key = keyFor(control);
-      if (key && values.has(key)) control.value = values.get(key)!;
+    for (const [key, control] of controls()) {
+      const previous = savedControls.get(key);
+      if (!previous) continue;
+      control.value = previous.value;
+      if (control instanceof HTMLInputElement && previous instanceof HTMLInputElement) control.checked = previous.checked;
     }
-    this.root.querySelector<HTMLInputElement>('[data-pirate-mode]')?.focus({ preventScroll: true });
+    this.root.querySelectorAll('details').forEach((detail, index) => { detail.open = openDetails[index] ?? false; });
+    const page = this.root.querySelector('#page-content');
+    if (page) page.scrollTop = pageScroll;
+    this.root.querySelector<HTMLButtonElement>('[data-pirate-mode]')?.focus({ preventScroll: true });
   }
 
   destroy(): void {
@@ -1775,7 +1800,7 @@ export class DashboardView {
     }
     if (!(target instanceof HTMLFormElement) || !target.classList.contains('cmux-send')) return;
     event.preventDefault();
-    void this.handleCmuxSend(target);
+    void this.withStableView(() => this.handleCmuxSend(target));
   }
 
   private paintRunRetries(): void {
@@ -1841,6 +1866,11 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+    const pirateToggle = target.closest<HTMLButtonElement>('[data-pirate-mode]');
+    if (pirateToggle) {
+      if (!pirateToggle.disabled) this.changePirateMode(!isPirateMode());
+      return;
+    }
     const copyButton = target.closest<HTMLButtonElement>('button[data-copy-run-id]');
     if (copyButton) {
       event.preventDefault();
@@ -1944,7 +1974,7 @@ export class DashboardView {
 
     const cmuxActionBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-action');
     if (cmuxActionBtn) {
-      void this.handleCmuxAction(cmuxActionBtn);
+      void this.withStableView(() => this.handleCmuxAction(cmuxActionBtn));
       return;
     }
 
@@ -1962,7 +1992,7 @@ export class DashboardView {
 
     const launchBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.launch-btn');
     if (launchBtn) {
-      void this.handleLaunchClick(launchBtn);
+      void this.withStableView(() => this.handleLaunchClick(launchBtn));
       return;
     }
 
@@ -1974,7 +2004,7 @@ export class DashboardView {
 
     const newRunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.newrun-launch');
     if (newRunBtn) {
-      void this.handleNewRun(newRunBtn);
+      void this.withStableView(() => this.handleNewRun(newRunBtn));
       return;
     }
 
@@ -2023,31 +2053,31 @@ export class DashboardView {
 
     const approveBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-approve');
     if (approveBtn) {
-      void this.handleReview(approveBtn, 'APPROVE');
+      void this.withStableView(() => this.handleReview(approveBtn, 'APPROVE'));
       return;
     }
 
     const requestChangesBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-request-changes');
     if (requestChangesBtn) {
-      void this.handleReview(requestChangesBtn, 'REQUEST_CHANGES');
+      void this.withStableView(() => this.handleReview(requestChangesBtn, 'REQUEST_CHANGES'));
       return;
     }
 
     const commentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-comment');
     if (commentBtn) {
-      void this.handleReview(commentBtn, 'COMMENT');
+      void this.withStableView(() => this.handleReview(commentBtn, 'COMMENT'));
       return;
     }
 
     const rerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-rerun');
     if (rerunBtn) {
-      void this.handleRerun(rerunBtn);
+      void this.withStableView(() => this.handleRerun(rerunBtn));
       return;
     }
 
     const reviewAgentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-review-agent');
     if (reviewAgentBtn) {
-      void this.handleReviewAgent(reviewAgentBtn);
+      void this.withStableView(() => this.handleReviewAgent(reviewAgentBtn));
       return;
     }
 
@@ -2370,7 +2400,7 @@ export class DashboardView {
     else this.cancelRunLogFlush();
   }
 
-  private renderRunDrawer(): void {
+  private renderRunDrawer(refreshPr: boolean = true): void {
     this.cancelRunLogFlush();
     this.renderedRunLines = [];
     const tabsView: RunTabView[] = this.runTabs.map((t: RunTab): RunTabView => ({
@@ -2392,7 +2422,14 @@ export class DashboardView {
       this.scheduleRunLogFlush();
     }
     this.renderFooterDom(active);
-    if (active.pr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
+    if (active.pr) {
+      if (refreshPr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
+      else {
+        const panel = this.runDrawerEl.querySelector('.run-drawer-pr');
+        if (panel) panel.innerHTML = renderPrPanel(active.prStatus ?? null, this.repos.includes(active.pr.repo), true, this.selectedRepo);
+        this.paintSlackReviewRequests();
+      }
+    }
   }
 
   private lineEl(event: RunEvent): HTMLDivElement {

@@ -78,6 +78,8 @@ function reviewChip(decision: string): { cls: string; label: string } {
 const ICON_LOCK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.5 7V5.1a2.5 2.5 0 0 1 5 0V7"/></svg>'
 
+const ICON_PIRATE_FLAG = '<svg viewBox="0 0 36 40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 4v32M5 8c9-7 17 7 26 0v21c-9 7-17-7-26 0"/><path d="M17 11.5c-3 0-4.5 1.8-4.5 4.2 0 1.5.8 2.8 2.1 3.4v2h4.8v-2c1.3-.6 2.1-1.9 2.1-3.4 0-2.4-1.5-4.2-4.5-4.2Z"/><circle cx="15.1" cy="16" r=".7" fill="currentColor" stroke="none"/><circle cx="18.9" cy="16" r=".7" fill="currentColor" stroke="none"/><path d="m16.2 18.5.8-1 .8 1M17 19.8v1.3m-5 2.1 10 4m0-4-10 4m-1-4.7 1 .7-.3 1.1m10.3 2.2 1 .7-.3 1.1m-.7-5.8-1 .7.3 1.1m-10.3 2.2-1 .7.3 1.1"/></svg>';
+
 const ICON_STOP: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1.2"/></svg>'
 
@@ -310,6 +312,7 @@ export function renderAppShell(opts: HelmHeadOpts, content: string): string {
         <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} ${term(opts.repos.length === 1 ? 'repository' : 'repositories').toLowerCase()} tracked</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-running>${running} ${term('running').toLowerCase()}</span>
       </div>
+      <button class="pirate-mode-toggle" type="button" data-pirate-mode aria-label="Pirate mode" aria-pressed="${isPirateMode()}" title="Turn Pirate mode ${isPirateMode() ? 'off' : 'on'}">${ICON_PIRATE_FLAG}</button>
     </footer>
   </div>`;
 }
@@ -1189,8 +1192,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
       <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
         <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
         <div class="ui-customization-body">
-          <label class="pirate-mode-control" for="pirate-mode"><input id="pirate-mode" type="checkbox" data-pirate-mode${isPirateMode() ? ' checked' : ''} aria-describedby="pirate-mode-help"> Pirate mode</label>
-          <p id="pirate-mode-help">Use nautical names for interface labels. Saved in this browser; your content stays unchanged.</p>
+          <p id="pirate-mode-help">Toggle Pirate mode with the flag at the bottom-right of every page. The preference is saved in this browser; your content stays unchanged.</p>
           <details class="terminology-reference"><summary>Terminology reference</summary><table><thead><tr><th scope="col">Plain</th><th scope="col">Pirate</th></tr></thead><tbody>${TERMINOLOGY_REFERENCE_KEYS.map(key => TERMINOLOGY[key]).map(({ plain, pirate }) => `<tr><td>${esc(plain)}</td><td>${esc(pirate)}</td></tr>`).join('')}</tbody></table></details>
           <label for="ui-theme">Theme</label>
           <select id="ui-theme" class="theme-select" aria-describedby="ui-theme-help">${themeOptions}</select>
