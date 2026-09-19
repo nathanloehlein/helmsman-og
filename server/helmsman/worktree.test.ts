@@ -9,6 +9,11 @@ import { createReviewWorktree, createWorktreeFromBranch, sweepOrphanedWorktrees,
 
 const execFileAsync = promisify(execFile);
 
+// These drive real git through several worktree adds and fetches per test.
+// Windows git is slow enough to exceed the 5s default, and the work is I/O
+// bound, so a generous ceiling costs nothing when the tests pass.
+vi.setConfig({ testTimeout: 60_000 });
+
 describe('createReviewWorktree', () => {
   it('pins the classified commit through the PR ref while preserving existing branch worktrees', async () => {
     const agentsRoot = await mkdtemp(join(tmpdir(), 'review-agents-'));

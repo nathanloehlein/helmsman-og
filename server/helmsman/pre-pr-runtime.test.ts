@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { canCreateFileSymlink, hasProcessGroups } from '../test-support/platform';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executePrePrStage, githubRepository, localReviewScope, parsePrMetadata, readPrePrReport } from './pre-pr-runtime';
@@ -42,7 +43,8 @@ describe('pre-PR runtime boundaries', () => {
     expect(parsePrMetadata({ title: 'Fix purchase', body: 'Details' }, { ticketId: 'freeform', task: 'Fix purchase' }).title).toBe('Fix purchase');
   });
 
-  it('reads bounded regular JSON reports and rejects symlinks and oversized reports', async () => {
+  // Creating a file symlink on Windows needs Developer Mode or elevation.
+  it.skipIf(!canCreateFileSymlink())('reads bounded regular JSON reports and rejects symlinks and oversized reports', async () => {
     const root = await mkdtemp(join(tmpdir(), 'helmsman-report-test-'));
     try {
       const actual = join(root, 'actual.json');
@@ -88,14 +90,21 @@ describe('pre-PR runtime boundaries', () => {
     try {
       const stage = executePrePrStage(adapter(parent), task, root, event => {
         if (reason === 'cancel' && event.text === 'ready') abort.abort();
-      }, abort.signal, reason === 'timeout' ? 500 : 10_000);
+        // The descendant has to spawn two nested node processes before it can
+        // record its pid. Under full-suite load on Windows that takes longer
+        // than half a second, and a stage that times out first kills the parent
+        // before the descendant exists, leaving nothing to assert about. The
+        // timeout only has to outlast process startup; what is under test is
+        // that the descendant is killed, not how long the stage waited.
+      }, abort.signal, reason === 'timeout' ? 5_000 : 10_000);
       await expect(stage).rejects.toThrow(reason === 'timeout' ? 'timed out' : 'stopped');
       const pid = Number(await readFile(pidPath, 'utf8'));
       await expect.poll(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, { timeout: 2000 }).toBe(true);
     } finally { await rm(root, { recursive: true, force: true }); }
   }, 15_000);
 
-  it('does not signal a released process group again after exit cleanup', async () => {
+  // Signalling a process group (kill(-pid)) has no Windows equivalent.
+  it.skipIf(!hasProcessGroups)('does not signal a released process group again after exit cleanup', async () => {
     const originalKill = process.kill.bind(process);
     const cleaned = new Set<number>();
     const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {

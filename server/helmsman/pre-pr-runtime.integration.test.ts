@@ -9,8 +9,10 @@ import { fileURLToPath } from 'node:url';
 import type { PrePrSettings } from '../../src/logic/prePrSettings';
 import type { AgentTask } from './agents/adapter';
 import { PRE_PR_REVIEW_SUMMARY_LIMIT, type PrePrReviewerId } from './pre-pr-workflow';
+import { gitBin, hasShebangShims } from '../test-support/platform';
 
 const exec = promisify(execFile);
+const GIT = gitBin();
 const cliPath = fileURLToPath(new URL('./pre-pr-cli.ts', import.meta.url));
 const tsx = import.meta.resolve('tsx');
 
@@ -24,7 +26,7 @@ async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remo
   const transcript = join(root, 'transcript.jsonl');
   const bare = join(root, 'remote.git');
   await mkdir(cwd); await mkdir(bin);
-  const git = (args: string[]) => exec('/usr/bin/git', args, { cwd });
+  const git = (args: string[]) => exec(GIT, args, { cwd });
   await git(['init', '-b', 'main']);
   await git(['config', 'user.email', 'test@example.com']);
   await git(['config', 'user.name', 'Test']);
@@ -44,7 +46,7 @@ const path = require('node:path');
 const args = process.argv.slice(2);
 const id = path.basename(process.argv[1]);
 const env = process.env;
-const runGit = args => cp.execFileSync('/usr/bin/git', args, {encoding:'utf8'}).trim();
+const runGit = args => cp.execFileSync(env.TEST_GIT_BIN, args, {encoding:'utf8'}).trim();
 const log = data => fs.appendFileSync(env.TEST_TRANSCRIPT, JSON.stringify(data)+'\n');
 if(id === 'git') {
   if(args[0] === 'fetch' || args[0] === 'ls-remote') args[args.indexOf(env.TEST_REMOTE)] = env.TEST_BARE;
@@ -59,7 +61,7 @@ if(id === 'git') {
       fs.writeFileSync(env.TEST_STATE,JSON.stringify(prs));
     }
   }
-  process.stdout.write(cp.execFileSync('/usr/bin/git', args, {encoding:'utf8'}));
+  process.stdout.write(cp.execFileSync(env.TEST_GIT_BIN, args, {encoding:'utf8'}));
 } else if(id === 'gh') {
   if(args[0] === 'repo') process.stdout.write(JSON.stringify({nameWithOwner:'example/project',defaultBranchRef:{name:'main'}}));
   else if(args[1] === 'list') process.stdout.write(fs.existsSync(env.TEST_STATE) ? fs.readFileSync(env.TEST_STATE) : '[]');
@@ -118,7 +120,7 @@ if(id === 'git') {
   return { root, cwd, state, transcript, async run(task: Partial<AgentTask> = {}) {
     try {
       const output = await exec(process.execPath, ['--import', tsx, cliPath, JSON.stringify({ ...input, task: { ...input.task, ...task } })], {
-        cwd, timeout: 30_000, env: { ...process.env, PATH: bin, TEST_MODE: mode, TEST_REMOTE: mode==='named-remote'?'godaddy':'origin', TEST_BARE: bare, TEST_STATE: state, TEST_TRANSCRIPT: transcript,
+        cwd, timeout: 30_000, env: { ...process.env, PATH: bin, TEST_MODE: mode, TEST_REMOTE: mode==='named-remote'?'godaddy':'origin', TEST_BARE: bare, TEST_STATE: state, TEST_TRANSCRIPT: transcript, TEST_GIT_BIN: GIT,
           TEST_SUMMARY_LIMIT: String(PRE_PR_REVIEW_SUMMARY_LIMIT), TEST_BODY: options.body ?? 'Implemented and checked.', TEST_EXISTING_BODY: options.existingBody ?? 'Human-maintained PR description.' },
       });
       return { code: 0, output: output.stdout };
@@ -129,7 +131,9 @@ if(id === 'git') {
   } };
 }
 
-describe('pre-PR runtime with real git and fake CLIs', () => {
+// The fake git/gh CLIs are shebang scripts placed on PATH under those names,
+// which Windows cannot execute at all.
+describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', () => {
   it.each(['codex', 'claude-code'] as const)('repairs an overlong %s approval once and preserves the original report', async writerId => {
     const env = await fixture('summary-approval', { reviewerCount: 1, maxRounds: 2, stageTimeoutMinutes: 10 }, { writerId });
     try {
@@ -348,7 +352,7 @@ describe('pre-PR runtime with real git and fake CLIs', () => {
       expect(steps[1].args).toContain('gpt-5.6-terra');
       expect(steps[2].args).toContain('sonnet');
       expect(steps[1].args).toContain('model_reasoning_effort="low"');
-      const status = await exec('/usr/bin/git', ['status', '--porcelain'], { cwd: env.cwd });
+      const status = await exec(GIT, ['status', '--porcelain'], { cwd: env.cwd });
       expect(status.stdout).toBe('');
     } finally { await rm(env.root, { recursive: true, force: true }); }
   }, 30_000);
