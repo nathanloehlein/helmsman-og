@@ -39,6 +39,7 @@ const PRIORITY_CLASS: Record<Priority, string> = { P0: 'pri-p0', P1: 'pri-p1', P
 export const CONFIG_HELP: Record<string, string> = {
   get JIRA_ENABLED() { return `Use Jira tickets for ${term('runs').toLowerCase()}; disable to use local todos instead. Applies immediately. Example: false`; },
   GITHUB_REVIEW_WATCH_ENABLED: 'Automatically review GitHub PRs requesting your review every five minutes: true or false. Changes apply immediately. Example: true',
+  SLACK_ENABLED: 'Turn Slack integration on or off. Disables automatic reviews and manual requests without clearing settings. Example: true',
   SLACK_WATCH_ENABLED: 'Enable automatic PR reviews from the watched Slack channel: true or false. Changes apply immediately. Example: true',
   SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
   SLACK_CHANNEL_ID: 'Exact Slack channel ID to watch. Only messages matching this channel are eligible for automatic review. Example: C0123456789',
@@ -1129,7 +1130,7 @@ export interface ConfigViewOpts {
 
 function configRowsHtml(uiConfig: UiConfig): string {
   const entries: [string, unknown][] = Object.entries(uiConfig.config ?? {})
-    .filter(([key]) => !['JIRA_ENABLED', 'SLACK_REVIEW_CHANNEL', 'SLACK_REVIEW_MENTION'].includes(key) && !PRE_PR_CONFIG_KEYS.some((reviewKey) => reviewKey === key));
+    .filter(([key]) => key !== 'JIRA_ENABLED' && !key.startsWith('SLACK_') && !PRE_PR_CONFIG_KEYS.some((reviewKey) => reviewKey === key));
   if (entries.length === 0) return '<div class="empty-note">No configuration keys.</div>';
   return entries
     .map(([key, value]) => {
@@ -1222,17 +1223,26 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
         </div>
       </section>
       <section class="panel config-panel slack-review-config" aria-labelledby="slack-review-config-title">
-        <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack ${term('reviewRequests').toLowerCase()}</span></div>
+        <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack integration</span></div>
         <p class="config-warning">The button on your open ${term('prs')} posts the ${term('pr')} link and tags your ${term('review').toLowerCase()} group. Requests are sent only when you click it.</p>
         <div class="config-list">
-          ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
+          ${[['SLACK_ENABLED', 'Slack integration', 'true'], ['SLACK_WATCH_ENABLED', 'Automatic reviews from Slack', 'false']].map(([key, label, fallback]) => `
+            <div class="config-row" data-key="${key}">
+              <label class="config-key" for="config-${key}">${label}</label>
+              <select id="config-${key}" class="config-input">
+                <option value="true"${String(uiConfig.config?.[key] ?? fallback) === 'true' ? ' selected' : ''}>On</option>
+                <option value="false"${String(uiConfig.config?.[key] ?? fallback) === 'false' ? ' selected' : ''}>Off</option>
+              </select>
+              <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
+            </div>`).join('')}
+          ${[['SLACK_CLIENT_ID', 'Slack client ID', ''], ['SLACK_CHANNEL_ID', 'Watched channel ID', ''], ['SLACK_CHANNEL_NAME', 'Watched channel name', ''], ['SLACK_BROWSER_SURFACE', 'Browser surface (optional)', ''], ['SLACK_REVIEW_CHANNEL', 'Review request channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
               <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup">
               <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
             </div>`).join('')}
         </div>
-        <p class="config-warning" id="slack-review-setup">Uses your signed-in Slack browser and the Slack client and browser settings below. Set a channel name or ID and an @group handle. Existing message drafts are preserved.</p>
+        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">

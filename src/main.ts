@@ -1053,7 +1053,9 @@ export class DashboardView {
       const button = control.querySelector<HTMLButtonElement>('[data-slack-review-request]');
       const status = control.querySelector<HTMLElement>('.slack-review-result');
       if (!button || !status) continue;
-      button.disabled = Boolean(state?.pending || state?.result);
+      const disabled = String(this.uiConfig.config?.SLACK_ENABLED) === 'false';
+      button.disabled = disabled || Boolean(state?.pending || state?.result);
+      button.title = disabled ? 'Enable Slack integration in Config to request a review.' : '';
       button.textContent = state?.pending ? 'Sending…' : state?.result ? term('reviewRequested') : term('requestSlackReview');
       status.classList.toggle('is-error', Boolean(state?.error));
       status.setAttribute('role', state?.error ? 'alert' : 'status');

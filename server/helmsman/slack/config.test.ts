@@ -6,8 +6,8 @@ const valid = { SLACK_WATCH_ENABLED: 'true', SLACK_CLIENT_ID: 'ET0BMD4E7', SLACK
 describe('Slack configuration', () => {
   it('defaults to disabled and exposes no credentials', () => {
     expect(slackSettings({})).toEqual({ enabled: false, clientId: '', channelId: '', channelName: '', surface: undefined, error: null });
-    expect(publicSlackSettings({})).toEqual({ SLACK_WATCH_ENABLED: 'false', SLACK_CLIENT_ID: '', SLACK_CHANNEL_ID: '', SLACK_CHANNEL_NAME: '', SLACK_BROWSER_SURFACE: '' });
-    expect(publicSlackSettings({ ...valid, GITHUB_TOKEN: 'secret' })).toEqual({ ...valid, SLACK_BROWSER_SURFACE: '' });
+    expect(publicSlackSettings({})).toEqual({ SLACK_ENABLED: 'true', SLACK_WATCH_ENABLED: 'false', SLACK_CLIENT_ID: '', SLACK_CHANNEL_ID: '', SLACK_CHANNEL_NAME: '', SLACK_BROWSER_SURFACE: '' });
+    expect(publicSlackSettings({ ...valid, GITHUB_TOKEN: 'secret' })).toEqual({ ...valid, SLACK_ENABLED: 'true', SLACK_BROWSER_SURFACE: '' });
   });
 
   it('validates channel identity and optional surface before enabling', () => {
@@ -18,4 +18,10 @@ describe('Slack configuration', () => {
     expect(slackSettings({ ...valid, SLACK_CHANNEL_ID: '' }).error).toBeTruthy();
     expect(slackSettings({ ...valid, SLACK_BROWSER_SURFACE: '--help' }).error).toBeTruthy();
   });
+});
+
+it('master switch disables watching without clearing watcher preference', () => {
+  const env = { ...valid, SLACK_ENABLED: 'false' };
+  expect(slackSettings(env).enabled).toBe(false);
+  expect(publicSlackSettings(env)).toMatchObject({ SLACK_ENABLED: 'false', SLACK_WATCH_ENABLED: 'true' });
 });

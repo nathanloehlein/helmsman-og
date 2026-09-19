@@ -70,7 +70,7 @@ export class ConfigStore {
     if (SECRET_KEYS.includes(key) || !EDITABLE_KEYS.includes(key)) {
       throw new Error(`not an editable config key: ${key}`);
     }
-    if (['JIRA_ENABLED', 'SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
+    if (['JIRA_ENABLED', 'SLACK_ENABLED', 'SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
       throw new Error(`${key} must be true or false`);
     }
     const slackTarget = value.trim().replace(key === 'SLACK_REVIEW_CHANNEL' ? /^#/ : /^@/, '');

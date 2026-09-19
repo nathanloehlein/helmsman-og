@@ -158,3 +158,12 @@ it('rejects obsolete bot credentials and validates browser review destinations',
   expect(() => store.setOverride('SLACK_REVIEW_MENTION', '<!channel>', () => 'now')).toThrow();
   expect(() => store.setOverride('SLACK_REVIEW_MENTION', 'S12345', () => 'now')).toThrow('handle');
 });
+
+it('persists and validates the Slack master switch independently of watching', () => {
+  db = openDb(':memory:');
+  const store = new ConfigStore({ SLACK_WATCH_ENABLED: 'true' }, db);
+  store.setOverride('SLACK_ENABLED', 'false', () => new Date().toISOString());
+  expect(store.effectiveEnv()).toMatchObject({ SLACK_ENABLED: 'false', SLACK_WATCH_ENABLED: 'true' });
+  expect(() => store.setOverride('SLACK_ENABLED', 'yes', () => '')).toThrow();
+  expect(new ConfigStore({}, db).effectiveEnv().SLACK_ENABLED).toBe('false');
+});

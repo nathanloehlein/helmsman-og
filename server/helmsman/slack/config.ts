@@ -1,9 +1,13 @@
 export const SLACK_INTERVAL_MS = 300_000;
 
-export const SLACK_CONFIG_KEYS = ['SLACK_WATCH_ENABLED', 'SLACK_CLIENT_ID', 'SLACK_CHANNEL_ID', 'SLACK_CHANNEL_NAME', 'SLACK_BROWSER_SURFACE'] as const;
+export const SLACK_CONFIG_KEYS = ['SLACK_ENABLED', 'SLACK_WATCH_ENABLED', 'SLACK_CLIENT_ID', 'SLACK_CHANNEL_ID', 'SLACK_CHANNEL_NAME', 'SLACK_BROWSER_SURFACE'] as const;
+
+export function slackIntegrationEnabled(env: Record<string, string | undefined>): boolean {
+  return env.SLACK_ENABLED !== 'false';
+}
 
 export function slackSettings(env: Record<string, string | undefined>) {
-  const enabled = env.SLACK_WATCH_ENABLED === 'true';
+  const enabled = slackIntegrationEnabled(env) && env.SLACK_WATCH_ENABLED === 'true';
   const clientId = env.SLACK_CLIENT_ID?.trim() ?? '';
   const channelId = env.SLACK_CHANNEL_ID?.trim() ?? '';
   const channelName = env.SLACK_CHANNEL_NAME?.trim() ?? '';
@@ -18,7 +22,8 @@ export function slackSettings(env: Record<string, string | undefined>) {
 export function publicSlackSettings(env: Record<string, string | undefined>): Record<string, unknown> {
   const settings = slackSettings(env);
   return {
-    SLACK_WATCH_ENABLED: settings.enabled ? 'true' : 'false',
+    SLACK_ENABLED: String(slackIntegrationEnabled(env)),
+    SLACK_WATCH_ENABLED: env.SLACK_WATCH_ENABLED === 'true' ? 'true' : 'false',
     SLACK_CLIENT_ID: settings.clientId,
     SLACK_CHANNEL_ID: settings.channelId,
     SLACK_CHANNEL_NAME: settings.channelName,

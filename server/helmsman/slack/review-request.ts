@@ -1,3 +1,4 @@
+import { slackIntegrationEnabled } from './config';
 import Database from 'better-sqlite3';
 import { isGithubRepo } from '../../pr-lists';
 import type { PrStatus } from '../../github';
@@ -6,6 +7,7 @@ export const SLACK_REVIEW_CONFIG_KEYS = ['SLACK_REVIEW_CHANNEL', 'SLACK_REVIEW_M
 
 export function slackReviewSettings(env: Record<string, string | undefined>) {
   return {
+    enabled: slackIntegrationEnabled(env),
     channel: env.SLACK_REVIEW_CHANNEL?.trim().replace(/^#/, '') || 'airo-editing',
     mention: env.SLACK_REVIEW_MENTION?.trim().replace(/^@/, '') || 'airo-editing-squad',
   };
@@ -86,6 +88,7 @@ export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
 
   async function request(input: ReviewInput): Promise<SlackReviewResult> {
     const settings = deps.settings();
+    if (!settings.enabled) throw new SlackReviewError('Slack integration is disabled. Enable it in Config.', 409);
     if (!/^(?:[CG][A-Z\d]{2,31}|[a-z\d_-]{1,80})$/.test(settings.channel)
       || !/^[a-z\d_-]{1,80}$/.test(settings.mention)) {
       throw new SlackReviewError('Set a valid Slack review channel and user group handle in Config.', 400);
@@ -124,6 +127,7 @@ export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
       if (!pr || pr.isOwnPr !== true || pr.state !== 'open' || pr.merged) {
         throw new SlackReviewError('Review requests are available only for your open pull requests.', 409);
       }
+      if (!deps.settings().enabled) throw new SlackReviewError('Slack integration is disabled. Enable it in Config.', 409);
       senderStarted = true;
       const receipt = object(await deps.send({ ...input, channel: settings.channel, mention: settings.mention }));
       if (typeof receipt?.channel !== 'string' || !/^(?:[CG][A-Z\d]{2,31}|[a-z\d_-]{1,80})$/.test(receipt.channel)

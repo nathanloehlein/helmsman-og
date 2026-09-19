@@ -39,9 +39,9 @@ function close(client: ReturnType<typeof openSlackReviewRequester>) {
 
 describe('Slack review requests', () => {
   it('defaults and normalizes destinations without requiring or retaining a token', () => {
-    expect(slackReviewSettings({ SLACK_BOT_TOKEN: 'secret' })).toEqual({ channel: 'airo-editing', mention: 'airo-editing-squad' });
+    expect(slackReviewSettings({ SLACK_BOT_TOKEN: 'secret' })).toEqual({ enabled: true, channel: 'airo-editing', mention: 'airo-editing-squad' });
     expect(publicSlackReviewSettings({ SLACK_BOT_TOKEN: 'secret' })).toEqual({ SLACK_REVIEW_CHANNEL: 'airo-editing', SLACK_REVIEW_MENTION: 'airo-editing-squad' });
-    expect(slackReviewSettings({ SLACK_REVIEW_CHANNEL: ' #another-channel ', SLACK_REVIEW_MENTION: ' @another-group ' })).toEqual({ channel: 'another-channel', mention: 'another-group' });
+    expect(slackReviewSettings({ SLACK_REVIEW_CHANNEL: ' #another-channel ', SLACK_REVIEW_MENTION: ' @another-group ' })).toEqual({ enabled: true, channel: 'another-channel', mention: 'another-group' });
   });
 
   it('sends without a token and passes only canonical PR identifiers and configured destinations', async () => {
@@ -177,4 +177,24 @@ describe('Slack review requests', () => {
     expect(await client.request(input)).toMatchObject({ ok: true, permalink: null });
     expect(send).toHaveBeenCalledTimes(1);
   });
+});
+
+it('blocks manual requests while integration is off without external calls', async () => {
+  const { client, send, getPr } = fixture({ env: { SLACK_ENABLED: 'false' } });
+  await expect(client.request(input)).rejects.toMatchObject({ status: 409, message: expect.stringContaining('disabled') });
+  expect(send).not.toHaveBeenCalled();
+  expect(getPr).not.toHaveBeenCalled();
+});
+
+it('rechecks integration state after preparing a request', async () => {
+  const env = { SLACK_ENABLED: 'true' };
+  const { client, getPr, send } = fixture({ env });
+  getPr.mockImplementationOnce(async () => {
+    env.SLACK_ENABLED = 'false';
+    return { isOwnPr: true, state: 'open', merged: false } as PrStatus;
+  });
+  await expect(client.request(input)).rejects.toMatchObject({ status: 409, uncertain: false });
+  expect(send).not.toHaveBeenCalled();
+  env.SLACK_ENABLED = 'true';
+  await expect(client.request(input)).resolves.toMatchObject({ ok: true });
 });

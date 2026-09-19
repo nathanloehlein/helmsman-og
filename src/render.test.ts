@@ -441,7 +441,7 @@ describe('renderDashboard', () => {
     el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
 
     const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-panel:not(.pre-pr-config-panel) .config-row:not(.config-secret-row)');
-    expect(rows.length).toBe(5);
+    expect(rows.length).toBe(11);
     const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
@@ -1456,4 +1456,19 @@ describe('renderPrView + renderPrDiff', () => {
     expect(el.querySelector('.pr-approval-progress')?.textContent).toBe('Approvals unavailable · 2 required');
     expect(el.querySelector('.pr-approval-progress')?.classList.contains('chip-done')).toBe(false);
   });
+});
+
+it('groups every Slack setting in one panel with integration and watcher switches', () => {
+  const keys = EDITABLE_KEYS.filter(key => key.startsWith('SLACK_'));
+  const config = Object.fromEntries(keys.map(key => [key, key.endsWith('ENABLED') ? 'false' : 'configured']));
+  const root = document.createElement('div');
+  root.innerHTML = renderConfigView({ config, overridden: [] }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
+  const panel = root.querySelector('.slack-review-config');
+  expect(panel).not.toBeNull();
+  for (const key of keys) {
+    expect(root.querySelectorAll(`.config-row[data-key="${key}"]`)).toHaveLength(1);
+    expect(panel?.querySelector(`.config-row[data-key="${key}"]`)).not.toBeNull();
+  }
+  expect(panel?.querySelector<HTMLSelectElement>('#config-SLACK_ENABLED')?.value).toBe('false');
+  expect(panel?.querySelector<HTMLSelectElement>('#config-SLACK_WATCH_ENABLED')?.value).toBe('false');
 });
