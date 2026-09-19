@@ -10,10 +10,44 @@ interface RunsViewOpts {
   selectedRepo: string | null;
   themeId: string;
   runs: RunSummary[];
+  history?: RunHistoryState;
+}
+
+export interface RunHistoryState {
+  total: number;
+  offset: number;
+  limit: number;
+  loading: boolean;
+  error: string | null;
 }
 
 function paneHref(pane: string, repo: string | null, pr?: number | null, prRepo?: string | null): string {
   return routeHref({ view: 'runs', pane, repo, pr, prRepo });
+}
+
+export function renderRunHistory(runs: RunSummary[], selectedRepo: string | null, history: RunHistoryState): string {
+  const visible = (Array.isArray(runs) ? runs : []).filter(run => run && typeof run.id === 'string' && run.id
+    && typeof run.repo === 'string' && (!selectedRepo || run.repo === selectedRepo))
+    .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
+  const range = visible.length ? `${history.offset + 1}–${Math.min(history.offset + visible.length, history.total)} of ${history.total}` : `0 of ${history.total}`;
+  const unavailable = history.loading || Boolean(history.error);
+  const content = history.error
+    ? `<li class="empty-note runs-history-error" role="alert">${esc(history.error)} <button type="button" data-runs-retry${history.loading ? ' disabled' : ''}>Try again</button></li>`
+    : visible.length ? visible.map(run => renderVoyage(run, undefined, selectedRepo)).join('')
+      : `<li class="empty-note">${history.loading ? `Loading ${term('runs').toLowerCase()}…` : term('noRuns')}</li>`;
+  return `<section class="panel runs-recent-panel" data-pane="recent" aria-busy="${history.loading}">
+      <div class="panel-head">
+        <span class="panel-title">${term('allRuns')}</span>
+        <span class="panel-count mono">${history.total}</span>
+        <a class="app-link runs-pane-link" href="${esc(paneHref('recent', selectedRepo))}" aria-label="Link to ${term('allRuns')}">Section link</a>
+      </div>
+      <ul class="recent-runs-list lane-list">${content}</ul>
+      <nav class="runs-pagination" aria-label="${term('runs')} pages" tabindex="-1">
+        <span class="runs-page-range mono" role="status">${history.loading ? 'Loading…' : history.error ? 'History unavailable' : range}</span>
+        <button type="button" data-runs-page="previous"${unavailable || history.offset <= 0 ? ' disabled' : ''}>Previous</button>
+        <button type="button" data-runs-page="next"${unavailable || history.offset + history.limit >= history.total ? ' disabled' : ''}>Next</button>
+      </nav>
+    </section>`;
 }
 
 export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
@@ -43,14 +77,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
       </div>
       <div class="pr-lookup-result">${panel}</div>
     </section>
-    <section class="panel runs-recent-panel" data-pane="recent">
-      <div class="panel-head">
-        <span class="panel-title">${term('recentRuns')}</span>
-        <span class="panel-count mono">${runs.length}</span>
-        <a class="app-link runs-pane-link" href="${esc(paneHref('recent', opts.selectedRepo))}" aria-label="Link to ${term('recentRuns')}">Section link</a>
-      </div>
-      <ul class="recent-runs-list lane-list">${runs.length ? runs.map(run => renderVoyage(run, undefined, opts.selectedRepo)).join('') : `<li class="empty-note">${term('noRuns')}</li>`}</ul>
-    </section>
+    ${renderRunHistory(runs, opts.selectedRepo, opts.history ?? { total: runs.length, offset: 0, limit: 25, loading: false, error: null })}
     <div class="runs-drawer-slot" data-pane="tasks"></div>
 `);
 }

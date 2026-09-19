@@ -6,6 +6,17 @@ const summary = { window: { from: '2026-01-01', to: '2026-01-30' }, repo: null, 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('outcomeClient', () => {
+  it('validates estimate amounts, coverage and source metadata without changing reported spend', async () => {
+    const costEstimate = { estimatedUnreportedCostUsd: 1.25, estimatedUsageEvents: 1, unreportedUsageEvents: 2,
+      runsWithoutUsage: 0, ratesAsOf: '2026-09-19', rateSource: 'https://developers.openai.com/api/docs/pricing' };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...summary, costEstimate }))));
+    await expect(fetchOutcomes(null, 7)).resolves.toMatchObject({ observedCostUsd: null, costEstimate });
+    for (const patch of [{ estimatedUnreportedCostUsd: -1 }, { estimatedUsageEvents: 3 }, { unreportedUsageEvents: 1.5 },
+      { estimatedUnreportedCostUsd: null }, { runsWithoutUsage: -1 }, { ratesAsOf: null }]) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...summary, costEstimate: { ...costEstimate, ...patch } }))));
+      await expect(fetchOutcomes(null, 7)).rejects.toThrow('invalid');
+    }
+  });
   it('scopes and validates summary requests', async () => {
     const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

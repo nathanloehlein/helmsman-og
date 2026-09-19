@@ -430,6 +430,24 @@ describe('renderDashboard', () => {
     expect(emptyNote).not.toBeNull();
   });
 
+  it('limits recent finished runs to the newest ten and links to scoped history', () => {
+    const el = root();
+    const runs: RunSummary[] = Array.from({ length: 15 }, (_, index) => ({
+      id: `run-${index}`, ticketId: 'freeform', repo: 'org/alpha', status: 'succeeded', attempt: 1,
+      prNumber: null, startedAt: new Date(NOW.getTime() + index * 1000).toISOString(), costUsd: null,
+    }));
+    runs.push({ ...runs[0]!, id: 'queued', status: 'queued', startedAt: '2099-01-01' },
+      { ...runs[0]!, id: 'other', repo: 'org/beta', startedAt: '2099-01-01' },
+      { ...runs[0]!, id: 'bad-date', startedAt: 'invalid' });
+    renderDashboard(el, snapshot(), NOW, [], ['org/alpha', 'org/beta'], 'org/alpha', runs);
+    expect([...el.querySelectorAll('.recent-run')].map(row => row.getAttribute('data-runid')))
+      .toEqual(Array.from({ length: 10 }, (_, index) => `run-${14 - index}`));
+    const link = el.querySelector('.runs-pagination a');
+    expect(link?.textContent).toBe(`${term('allRuns')} →`);
+    expect(link?.getAttribute('href')).toBe('/runs?repo=org%2Falpha&pane=recent');
+    expect(runs[0]?.id).toBe('run-0');
+  });
+
   it('renders a config row per key, marks overridden keys, and never renders a secret value', () => {
     const el: HTMLDivElement = root();
     const uiConfig: UiConfig = {

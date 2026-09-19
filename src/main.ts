@@ -15,7 +15,8 @@ import { renderSlack } from './renderSlack';
 import { requestSlackReview, SlackReviewRequestError, type SlackReviewResult } from './data/slackReview';
 import './style.css';
 import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
-import { renderRunsView } from './renderRuns';
+import { renderRunsView, renderRunHistory, type RunHistoryState } from './renderRuns';
+import { fetchRunHistory, RUN_HISTORY_PAGE_SIZE } from './data/runHistory';
 import { fetchOutcomes, saveOutcomeAssessment, OUTCOME_WINDOWS, type OutcomeWindow } from './data/outcomeClient';
 import { renderOutcomesView, type OutcomesViewState } from './renderOutcomes';
 import { mountCampaigns } from './renderCampaigns';
@@ -140,6 +141,10 @@ export class DashboardView {
   private hasContext: boolean = false;
   private selectedRepo: string | null = loadRepoScope();
   private runs: RunSummary[] = [];
+  private historyRuns: RunSummary[] = [];
+  private runHistory: RunHistoryState = { total: 0, offset: 0, limit: RUN_HISTORY_PAGE_SIZE, loading: true, error: null };
+  private runHistorySeq = 0;
+  private runHistoryPending: { repo: string | null; offset: number; promise: Promise<void> } | null = null;
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private uiConfig: UiConfig = { config: {}, overridden: [] };
@@ -459,6 +464,7 @@ export class DashboardView {
     if (this.refreshTimer !== null) clearInterval(this.refreshTimer);
     this.refreshTimer = null;
     ++this.routeSeq;
+    ++this.runHistorySeq;
     ++this.refreshSeq;
     ++this.prViewSeq;
     ++this.reviewRequestsSeq;
@@ -500,6 +506,11 @@ export class DashboardView {
       route = { ...route, view: 'config', pane: null };
     }
     const seq = ++this.routeSeq;
+    if (this.view === 'runs' && route.view !== 'runs') {
+      ++this.runHistorySeq;
+      this.runHistoryPending = null;
+      this.runHistory.loading = false;
+    }
     ++this.prViewSeq;
     this.stopCmuxScreenPoll();
     this.stopCapture();
@@ -507,6 +518,10 @@ export class DashboardView {
     const scope = route.repo;
     const scopeChanged = this.selectedRepo !== scope;
     if (scopeChanged) {
+      ++this.runHistorySeq;
+      this.runHistoryPending = null;
+      this.historyRuns = [];
+      this.runHistory = { total: 0, offset: 0, limit: RUN_HISTORY_PAGE_SIZE, loading: true, error: null };
       this.snapshot = null;
       this.snapshotRepo = undefined;
       this.dashboardRepo = undefined;
@@ -557,10 +572,12 @@ export class DashboardView {
     if (scopeChanged) this.paintSlack();
     if (scopeChanged || route.view === 'dashboard' || route.view === 'prs') await this.refresh(false);
     if (seq !== this.routeSeq) return;
+    let historyLoad: Promise<void> | undefined;
     if (route.view === 'triage') await this.loadTriage();
     else if (route.view === 'todos') await this.loadTodos();
     else if (route.view === 'bugs') await this.loadBugs();
     else if (route.view === 'outcomes') await this.loadOutcomes();
+    else if (route.view === 'runs') historyLoad = this.loadRunHistory();
     else if (route.view === 'config') {
       const config = await getConfig();
       if (seq !== this.routeSeq) return;
@@ -599,6 +616,7 @@ export class DashboardView {
     this.renderRunDrawer();
     this.rehomeRunDrawer();
     this.focusRoute();
+    await historyLoad;
   }
 
   private focusRoute(): void {
@@ -741,18 +759,65 @@ export class DashboardView {
       void this.loadLocalGit();
     } else if (this.view === 'todos' && localDue) {
       await this.loadTodos();
-    } else if (this.view === 'runs') {
-      const recent = this.root.querySelector('[data-pane=recent]');
-      if (recent) {
-        const template = document.createElement('template');
-        template.innerHTML = renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.runs });
-        const next = template.content.querySelector('[data-pane=recent]');
-        if (next) recent.replaceWith(next);
-      }
+    } else if (this.view === 'runs' && localDue && this.contentView === 'runs') {
+      await this.loadRunHistory();
     } else if (this.view === 'outcomes' && localDue && !this.outcomesEditing && !this.outcomesSavingRunId) {
       void this.loadOutcomes();
     }
     this.paintRunRetries();
+  }
+
+  private loadRunHistory(offset = this.runHistory.offset): Promise<void> {
+    const repo = this.selectedRepo;
+    if (this.runHistoryPending?.repo === repo && this.runHistoryPending.offset === offset) return this.runHistoryPending.promise;
+    const seq = ++this.runHistorySeq;
+    if (offset !== this.runHistory.offset) this.historyRuns = [];
+    this.runHistory = { ...this.runHistory, offset, loading: true, error: null };
+    this.paintRunHistory();
+    const current = () => !this.destroyed && this.view === 'runs' && seq === this.runHistorySeq && repo === this.selectedRepo;
+    const promise = (async () => {
+      try {
+        let page = await fetchRunHistory(repo, offset);
+        if (!current()) return;
+        if (page.offset > 0 && page.offset >= page.total) {
+          const lastOffset = Math.max(0, Math.ceil(page.total / RUN_HISTORY_PAGE_SIZE) - 1) * RUN_HISTORY_PAGE_SIZE;
+          this.historyRuns = [];
+          this.runHistory = { ...this.runHistory, offset: lastOffset, total: page.total };
+          this.paintRunHistory();
+          page = await fetchRunHistory(repo, lastOffset);
+          if (!current()) return;
+        }
+        this.historyRuns = page.runs;
+        this.runHistory = { total: page.total, offset: page.offset, limit: page.limit, loading: false, error: null };
+      } catch (error: unknown) {
+        if (!current()) return;
+        this.runHistory = { ...this.runHistory, loading: false, error: error instanceof Error ? error.message : 'Could not load history.' };
+      }
+      if (current()) this.paintRunHistory();
+    })().finally(() => {
+      if (this.runHistoryPending?.promise === promise) this.runHistoryPending = null;
+    });
+    this.runHistoryPending = { repo, offset, promise };
+    return promise;
+  }
+
+  private paintRunHistory(): void {
+    if (this.view !== 'runs') return;
+    const panel = this.root.querySelector('[data-pane=recent]');
+    if (!panel) return;
+    const focused = document.activeElement;
+    const focusInside = focused instanceof HTMLElement && panel.contains(focused);
+    const direction = focusInside ? focused.dataset.runsPage : undefined;
+    const retry = focusInside && focused.hasAttribute('data-runs-retry');
+    const template = document.createElement('template');
+    template.innerHTML = renderRunHistory(this.historyRuns, this.selectedRepo, this.runHistory);
+    const next = template.content.firstElementChild;
+    if (next) panel.replaceWith(next);
+    this.paintRunRetries();
+    if (focusInside) {
+      const selector = direction === 'previous' || direction === 'next' ? `[data-runs-page="${direction}"]:not(:disabled)` : retry ? '[data-runs-retry]:not(:disabled)' : '.runs-pagination';
+      (next?.querySelector<HTMLElement>(selector) ?? next?.querySelector<HTMLElement>('.runs-pagination'))?.focus({ preventScroll: true });
+    }
   }
 
   private paintLocalRuns(): void {
@@ -888,7 +953,7 @@ export class DashboardView {
       return;
     }
     if (this.view === 'runs') {
-      this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.runs }));
+      this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.historyRuns, history: this.runHistory }));
       this.bindHeadControls();
       this.rehomeRunDrawer();
       return;
@@ -2039,6 +2104,16 @@ export class DashboardView {
     const todoButton = target.closest<HTMLButtonElement>('[data-todo-edit], [data-todo-delete], [data-todo-confirm-delete], [data-todo-cancel-delete], [data-todo-launch], [data-todo-cancel], [data-todo-new], [data-todo-refresh], [data-todo-auto-claim]');
     if (todoButton && this.view === 'todos') {
       if (!todoButton.disabled) void this.handleTodoAction(todoButton);
+      return;
+    }
+
+    const historyButton = target.closest<HTMLButtonElement>('[data-runs-page], [data-runs-retry]');
+    if (historyButton && this.view === 'runs') {
+      if (historyButton.disabled || this.runHistory.loading) return;
+      const direction = historyButton.dataset.runsPage;
+      if (historyButton.hasAttribute('data-runs-retry')) void this.loadRunHistory();
+      else if (direction === 'previous' && this.runHistory.offset > 0) void this.loadRunHistory(Math.max(0, this.runHistory.offset - RUN_HISTORY_PAGE_SIZE));
+      else if (direction === 'next' && this.runHistory.offset + RUN_HISTORY_PAGE_SIZE < this.runHistory.total) void this.loadRunHistory(this.runHistory.offset + RUN_HISTORY_PAGE_SIZE);
       return;
     }
 

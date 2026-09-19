@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -194,8 +194,8 @@ describe('local Git mutations', () => {
     const wrapperDir = join(root, 'git-wrapper');
     await mkdir(wrapperDir);
     await writeFile(join(wrapperDir, 'git'), `#!/bin/sh
-if [ "$3" = "update-ref" ] && [ "$4" = "--no-deref" ] && [ "$5" = "-d" ]; then
-  "$HELMSMAN_TEST_GIT_BIN" -C "$2" update-ref "$6" "$HELMSMAN_TEST_REPLACEMENT"
+if [ "$3" = "update-ref" ] && [ "$4" = "--no-deref" ] && [ "$5" = "--stdin" ]; then
+  "$HELMSMAN_TEST_GIT_BIN" -C "$2" update-ref refs/heads/feature/race "$HELMSMAN_TEST_REPLACEMENT"
 fi
 exec "$HELMSMAN_TEST_GIT_BIN" "$@"
 `, { mode: 0o755 });
@@ -240,17 +240,19 @@ exec "$HELMSMAN_TEST_GIT_BIN" "$@"
     const wrapperDir = join(root, 'git-wrapper');
     await mkdir(wrapperDir);
     await writeFile(join(wrapperDir, 'git'), `#!/bin/sh
-if [ "$3" = "update-ref" ] && [ "$4" = "--no-deref" ] && [ "$5" = "-d" ]; then
-  "$HELMSMAN_TEST_GIT_BIN" -C "$2" symbolic-ref "$6" refs/heads/main
+if [ "$3" = "update-ref" ] && [ "$4" = "--no-deref" ] && [ "$5" = "--stdin" ]; then
+  "$HELMSMAN_TEST_GIT_BIN" -C "$2" symbolic-ref refs/heads/feature/race refs/heads/main || exit 1
+  "$HELMSMAN_TEST_GIT_BIN" -C "$2" symbolic-ref refs/heads/feature/race > "$HELMSMAN_TEST_ALIAS_MARKER"
 fi
 exec "$HELMSMAN_TEST_GIT_BIN" "$@"
 `, { mode: 0o755 });
-    const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN };
-    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit });
+    const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN, HELMSMAN_TEST_ALIAS_MARKER: process.env.HELMSMAN_TEST_ALIAS_MARKER };
+    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_ALIAS_MARKER: join(root, 'alias-injected') });
     try {
       await mutate({ action: 'delete-branch', branch: 'feature/race', expectedCommit, force: true });
       expect((await git('rev-parse', 'refs/heads/main')).trim()).toBe(expectedCommit);
       expect(await sha()).toBe(expectedCommit);
+      expect((await readFile(join(root, 'alias-injected'), 'utf8')).trim()).toBe('refs/heads/main');
     } finally {
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
@@ -436,6 +438,66 @@ describe('bulk branch cleanup', () => {
     expect(await git('config', '--list')).not.toContain('branch.feature/two.');
   });
 
+  it('releases HEAD locks after cleaning branches with attached, detached and missing worktrees', async () => {
+    await git('branch', 'feature/remove');
+    const attached = join(root, 'attached with spaces');
+    const detached = join(root, 'detached with spaces');
+    const missing = join(root, 'missing worktree');
+    await git('worktree', 'add', '-b', 'feature/keep', attached);
+    await git('worktree', 'add', '--detach', detached);
+    await git('worktree', 'add', '--detach', missing);
+    await rm(missing, { recursive: true, force: true });
+    await git('checkout', '--detach');
+    const result = await mutate(confirm((await preview()).json.cleanup!));
+    expect(result.status).toBe(200);
+    expect(result.json.branches.map(branch => branch.name)).toEqual(['feature/keep', 'main']);
+    await git('checkout', 'main');
+    await run('git', ['-C', attached, 'checkout', '--detach']);
+    await run('git', ['-C', detached, 'checkout', 'feature/keep']);
+  });
+
+  it.skipIf(!hasShebangShims).each(['exit', 'timeout'])('aborts deletion and releases other locks on a prepared worktree guard %s', async failure => {
+    await git('branch', 'feature/one');
+    await git('branch', 'feature/two');
+    const linked = join(root, 'guarded');
+    await git('worktree', 'add', '--detach', linked);
+    const cleanup = (await preview()).json.cleanup!;
+    const realGit = (await run('which', ['git'], { encoding: 'utf8' })).stdout.trim();
+    const wrapperDir = join(root, 'guard-git-wrapper');
+    await mkdir(wrapperDir);
+    await writeFile(join(wrapperDir, 'git'), `#!/bin/sh
+if [ "$3" = "update-ref" ] && [ "$5" = "--stdin" ]; then
+  if [ "$1" = "--git-dir" ]; then
+    echo "$$" > "$HELMSMAN_TEST_GUARD_PID"
+  else
+    if [ "$HELMSMAN_TEST_GUARD_FAILURE" = "timeout" ]; then
+      sleep 11
+    else
+      kill -TERM "$(cat "$HELMSMAN_TEST_GUARD_PID")"
+      sleep 0.2
+    fi
+  fi
+fi
+exec "$HELMSMAN_TEST_GIT_BIN" "$@"
+`, { mode: 0o755 });
+    const previous = { PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN, HELMSMAN_TEST_GUARD_PID: process.env.HELMSMAN_TEST_GUARD_PID, HELMSMAN_TEST_GUARD_FAILURE: process.env.HELMSMAN_TEST_GUARD_FAILURE };
+    Object.assign(process.env, { PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit, HELMSMAN_TEST_GUARD_PID: join(root, 'guard.pid'), HELMSMAN_TEST_GUARD_FAILURE: failure });
+    try {
+      expect((await mutate(confirm(cleanup))).status).toBe(409);
+      for (const branch of ['feature/one', 'feature/two']) {
+        expect((await git('rev-parse', `refs/heads/${branch}`)).trim()).toBe(cleanup.expectedHead);
+      }
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    await run('git', ['-C', linked, 'checkout', '--detach']);
+    const retried = await mutate(confirm(cleanup));
+    expect(retried.status, retried.json.error ?? undefined).toBe(200);
+  });
+
   it('rejects stale commits and changed HEAD before deleting any branch', async () => {
     await git('branch', 'feature/one');
     await git('branch', 'feature/two');
@@ -460,6 +522,48 @@ describe('bulk branch cleanup', () => {
     await git('worktree', 'add', join(root, 'new-worktree'), 'feature/one');
     expect((await mutate(confirm(cleanup))).status).toBe(409);
     expect((await git('show-ref', '--verify', 'refs/heads/feature/one')).trim()).not.toBe('');
+  });
+
+  it.skipIf(!hasShebangShims).each(['primary', 'linked', 'new'] as const)('preserves all branches when a %s worktree checks out a target during cleanup', async kind => {
+    await git('branch', 'feature/one');
+    await git('branch', 'feature/two');
+    const linked = join(root, 'racing-worktree');
+    if (kind === 'linked') await git('worktree', 'add', '--detach', linked);
+    const cleanup = (await preview()).json.cleanup!;
+    const realGit = (await run('which', ['git'], { encoding: 'utf8' })).stdout.trim();
+    const wrapperDir = join(root, 'checkout-git-wrapper');
+    await mkdir(wrapperDir);
+    await writeFile(join(wrapperDir, 'git'), `#!/bin/sh
+if [ "$3" = "update-ref" ] && [ "$5" = "--stdin" ]; then
+  if [ "$HELMSMAN_TEST_CHECKOUT_KIND" = "new" ]; then
+    "$HELMSMAN_TEST_GIT_BIN" -C "$2" worktree add "$HELMSMAN_TEST_CHECKOUT_PATH" feature/two || exit 1
+  else
+    "$HELMSMAN_TEST_GIT_BIN" -C "$HELMSMAN_TEST_CHECKOUT_PATH" checkout feature/two || exit 1
+  fi
+fi
+exec "$HELMSMAN_TEST_GIT_BIN" "$@"
+`, { mode: 0o755 });
+    const previous = {
+      PATH: process.env.PATH, HELMSMAN_TEST_GIT_BIN: process.env.HELMSMAN_TEST_GIT_BIN,
+      HELMSMAN_TEST_CHECKOUT_KIND: process.env.HELMSMAN_TEST_CHECKOUT_KIND,
+      HELMSMAN_TEST_CHECKOUT_PATH: process.env.HELMSMAN_TEST_CHECKOUT_PATH,
+    };
+    Object.assign(process.env, {
+      PATH: prependPath(wrapperDir), HELMSMAN_TEST_GIT_BIN: realGit,
+      HELMSMAN_TEST_CHECKOUT_KIND: kind, HELMSMAN_TEST_CHECKOUT_PATH: kind === 'primary' ? checkout : linked,
+    });
+    try {
+      expect((await mutate(confirm(cleanup))).status).toBe(409);
+      for (const branch of ['feature/one', 'feature/two']) {
+        expect((await git('rev-parse', `refs/heads/${branch}`)).trim()).toBe(cleanup.expectedHead);
+      }
+      expect((await run(realGit, ['-C', kind === 'primary' ? checkout : linked, 'symbolic-ref', 'HEAD'], { encoding: 'utf8' })).stdout.trim()).toBe('refs/heads/feature/two');
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it('rejects malformed, duplicate, empty, and injected bulk requests', async () => {

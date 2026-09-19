@@ -9,3 +9,9 @@
 .runs-intro p { max-width: 75ch; margin: 0 0 18px; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
 .runs-lookup-help { margin: 12px 14px 8px; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
 .runs-lookup-label { display: block; margin: 0 14px; font-size: 12px; }
+.runs-recent-panel .panel-head { flex-wrap: wrap; }
+.runs-pagination { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line-faint); flex-wrap: wrap; }
+.runs-page-range { margin-right: auto; color: var(--text-dim); font-size: 12px; }
+.runs-pagination button, .runs-history-error button { padding: 6px 10px; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 4px; cursor: pointer; }
+.runs-pagination button:disabled, .runs-history-error button:disabled { opacity: .45; cursor: default; }
+.runs-history-error button { margin-left: 8px; }

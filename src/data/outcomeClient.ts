@@ -9,12 +9,29 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function validSummary(value: unknown): value is OutcomeSummary {
   const source = record(value);
+  const validEstimate = (value: unknown): boolean => {
+    if (value === undefined) return true;
+    const estimate = record(value);
+    if (!estimate) return false;
+    const amount = estimate.estimatedUnreportedCostUsd;
+    const estimated = estimate.estimatedUsageEvents;
+    const unreported = estimate.unreportedUsageEvents;
+    return (amount === null || typeof amount === 'number' && Number.isFinite(amount) && amount >= 0)
+      && typeof estimated === 'number' && Number.isSafeInteger(estimated) && estimated >= 0
+      && typeof unreported === 'number' && Number.isSafeInteger(unreported) && unreported >= estimated
+      && (estimated === 0 ? amount === null : amount !== null);
+  };
   const validObservedCost = (item: unknown): boolean => {
     const data = record(item);
-    return data !== null && (data.observedCostUsd === null || typeof data.observedCostUsd === 'number'
+    return data !== null && validEstimate(data.costEstimate) && (data.observedCostUsd === null || typeof data.observedCostUsd === 'number'
       && Number.isFinite(data.observedCostUsd) && data.observedCostUsd >= 0);
   };
   return source !== null && typeof source.runs === 'number' && record(source.execution) !== null
+    && (source.costEstimate === undefined || (() => {
+      const estimate = record(source.costEstimate);
+      return estimate !== null && typeof estimate.runsWithoutUsage === 'number' && Number.isSafeInteger(estimate.runsWithoutUsage)
+        && estimate.runsWithoutUsage >= 0 && typeof estimate.rateSource === 'string' && typeof estimate.ratesAsOf === 'string';
+    })())
     && record(source.assessments) !== null && record(source.outcomes) !== null
     && validObservedCost(source) && Array.isArray(source.daily) && source.daily.every(validObservedCost)
     && Array.isArray(source.recentRuns) && source.recentRuns.every(validObservedCost);

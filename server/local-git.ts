@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { access, realpath } from 'node:fs/promises';
+import { setMaxListeners } from 'node:events';
+import { access, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { LocalGitResponse } from '../src/data/localGit';
@@ -39,16 +40,82 @@ async function git(path: string, args: string[], timeout = 10_000): Promise<stri
   return result.stdout;
 }
 
-function deleteBranchRefs(path: string, branches: { branch: string; expectedCommit: string }[]): Promise<void> {
-  const input = ['start', ...branches.map(branch => `delete refs/heads/${branch.branch} ${branch.expectedCommit}`), 'prepare', 'commit', ''].join('\n');
-  return new Promise((resolve, reject) => {
-    const child = execFile('git', ['-C', path, 'update-ref', '--no-deref', '--stdin'], {
-      encoding: 'utf8', timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
-    }, (error) => error ? reject(error) : resolve());
-    child.stdin?.on('error', reject);
-    child.stdin?.end(input);
+class BranchCleanupConflict extends Error {}
+
+async function linkedWorktreeGitDirs(path: string): Promise<string[]> {
+  const common = (await git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
+  const directory = join(common, 'worktrees');
+  const entries = await readdir(directory, { withFileTypes: true }).catch(error => {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
   });
+  return entries.filter(entry => entry.isDirectory()).map(entry => join(directory, entry.name)).sort();
+}
+
+function preparedRefTransaction(
+  location: string[], commands: string[], whilePrepared: () => Promise<void>, finish: 'commit' | 'abort', controller: AbortController,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let checking = false;
+    let finishing = false;
+    let output = '';
+    let checkError: unknown;
+    const child = execFile('git', [...location, 'update-ref', '--no-deref', '--stdin'], {
+      encoding: 'utf8', signal: controller.signal, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+    }, (error, _stdout, stderr) => {
+      const failure = checkError ?? (controller.signal.aborted ? controller.signal.reason : error ? Object.assign(error, { stderr }) : !finishing ? new BranchCleanupConflict('Git released a cleanup lock before deletion completed. Refresh and try again.') : null);
+      if (failure) { controller.abort(failure); reject(failure); }
+      else resolve();
+    });
+    child.stdout?.on('data', (data: string | Buffer) => {
+      output += data.toString();
+      if (checking || !/prepare: ok\r?\n/.test(output)) return;
+      checking = true;
+      void whilePrepared().then(() => {
+        controller.signal.throwIfAborted();
+        finishing = true;
+        child.stdin?.end(`${finish}\n`);
+      }).catch(error => {
+        checkError = error;
+        finishing = true;
+        child.stdin?.end('abort\n');
+      });
+    });
+    child.stdin?.on('error', error => { controller.abort(error); reject(error); });
+    child.stdin?.write(['start', ...commands, 'prepare', ''].join('\n'));
+  });
+}
+
+async function deleteBranchRefs(path: string, branches: { branch: string; expectedCommit: string }[], expectedHead?: string): Promise<void> {
+  const gitDirs = await linkedWorktreeGitDirs(path);
+  const head = (await git(path, ['rev-parse', '--verify', 'HEAD'])).trim();
+  const linkedHeads = await Promise.all(gitDirs.map(async gitDir => ({
+    gitDir, commit: (await git(path, [`--git-dir=${gitDir}`, 'rev-parse', '--verify', 'HEAD'])).trim(),
+  })));
+  const controller = new AbortController();
+  setMaxListeners(linkedHeads.length + 2, controller.signal);
+  const verifyOwnership = async () => {
+    const latestDirs = await linkedWorktreeGitDirs(path);
+    const trees = parseWorktrees(await git(path, ['worktree', 'list', '--porcelain', '-z']));
+    if (latestDirs.length !== gitDirs.length || latestDirs.some((dir, index) => dir !== gitDirs[index])
+      || trees.some(tree => branches.some(branch => tree.branch === branch.branch))) {
+      throw new BranchCleanupConflict('Worktree ownership changed. Refresh and preview branch cleanup again.');
+    }
+    if (expectedHead && head !== expectedHead) throw new BranchCleanupConflict('Current HEAD changed. Preview branch cleanup again.');
+  };
+  const deleteRefs = () => preparedRefTransaction(['-C', path], [
+    `verify HEAD ${head}`,
+    ...branches.map(branch => `delete refs/heads/${branch.branch} ${branch.expectedCommit}`),
+  ], verifyOwnership, 'commit', controller);
+  const lockLinkedHead = async (index: number): Promise<void> => {
+    const linked = linkedHeads[index];
+    if (!linked) return deleteRefs();
+    await preparedRefTransaction(['--git-dir', linked.gitDir], [`verify HEAD ${linked.commit}`], () => lockLinkedHead(index + 1), 'abort', controller);
+  };
+  const deadline = setTimeout(() => controller.abort(new BranchCleanupConflict('Branch cleanup timed out. Refresh and try again.')), 10_000);
+  try { await lockLinkedHead(0); }
+  finally { clearTimeout(deadline); controller.abort(); }
 }
 
 async function cleanupPreview(path: string, branches: Branch[], force: boolean): Promise<BranchCleanup> {
@@ -262,7 +329,7 @@ export async function mutateLocalGit(
             || (branch.upstreamStatus !== 'none' && branch.upstreamStatus !== 'gone')) return fail(409, `Branch ${target.branch} changed or is no longer safe to delete. Preview cleanup again.`);
         }
         if ((await git(path, ['rev-parse', '--verify', 'HEAD'])).trim() !== action.expectedHead) return fail(409, 'Current HEAD changed. Preview branch cleanup again.');
-        await deleteBranchRefs(path, action.branches);
+        await deleteBranchRefs(path, action.branches, action.expectedHead);
         let metadataIncomplete = false;
         try {
           const config = await git(path, ['config', '--null', '--list']);
@@ -301,7 +368,7 @@ export async function mutateLocalGit(
         const trees = parseWorktrees(await git(path, ['worktree', 'list', '--porcelain', '-z']));
         await activePaths(options);
         if (trees.some(tree => tree.branch === action.branch)) return fail(409, 'Branch is checked out in a worktree.');
-        await git(path, ['update-ref', '--no-deref', '-d', `refs/heads/${action.branch}`, action.expectedCommit]);
+        await deleteBranchRefs(path, [{ branch: action.branch, expectedCommit: action.expectedCommit }]);
         const config = await git(path, ['config', '--null', '--list']);
         if (config.split('\0').some(entry => entry.split('\n')[0]?.startsWith(`branch.${action.branch}.`))) {
           await git(path, ['config', '--remove-section', `branch.${action.branch}`]);
@@ -335,7 +402,7 @@ export async function mutateLocalGit(
     } catch (error) {
       const refreshed = await getLocalGit(agentsRoot, repo, configuredRepos, options);
       if (action.action === 'refresh-remotes') return { status: 409, json: { ...refreshed.json, error: 'Unable to refresh remotes. Check network access and Git authentication.' } };
-      const details = error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string' ? error.stderr.trim().slice(0, 1500) : '';
+      const details = error instanceof BranchCleanupConflict ? error.message : error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string' ? error.stderr.trim().slice(0, 1500) : '';
       return { status: 409, json: { ...refreshed.json, error: details || 'Local Git action failed. Refresh and try again.' } };
     }
   });

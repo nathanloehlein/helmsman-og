@@ -18,6 +18,11 @@ async function setup(path = '/helm?repo=org/a', degraded: string[] = []) {
     if (url.pathname === '/api/context') return json({ repos: ['org/a', 'org/b'], jiraBaseUrl: null });
     if (url.pathname === '/api/dashboard') return json({ snapshot, degraded, repos: ['org/a', 'org/b'], selectedRepo: url.searchParams.get('repo'), jiraBaseUrl: null });
     if (url.pathname === '/api/agents') return json({ runs, autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+    if (url.pathname === '/api/runs') {
+      const filtered = runs.filter(run => !url.searchParams.get('repo') || run.repo === url.searchParams.get('repo'));
+      const offset = Number(url.searchParams.get('offset'));
+      return json({ runs: filtered.slice(offset, offset + 25), total: filtered.length, limit: 25, offset });
+    }
     if (url.pathname === '/api/config') return json({ config: { MAX_ATTEMPTS: '1' }, overridden: [] });
     if (url.pathname === '/api/slack') return json({ health: { enabled: false, status: 'disabled', channelName: 'airo-editing', intervalMs: 300_000, lastSuccessAt: null, error: null }, notifications: [] });
     if (url.pathname === '/api/pr/open' || url.pathname === '/api/pr/review-requests') return json({ prs: [], degraded: false, truncated: false });

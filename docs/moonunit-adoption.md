@@ -8,7 +8,7 @@ The recommendations were implemented on `feat/moonunit-adoption` and merged into
 
 | Feature | What it adds to Helmsman |
 |---|---|
-| Costs & Outcomes | Tracks reported costs, tokens, duration and PR outcomes; missing prices remain unknown. |
+| Costs & Outcomes | Tracks reported costs, tokens, duration and PR outcomes; separately estimates unpriced Codex usage using published Standard API rates. |
 | Batch campaigns | Imports CSV/JSONL tasks with a preview, concurrency controls, pause/stop and failed-item retry. |
 | Agent Questions | Lets an agent request a human decision during a run and receive an answer in the UI. Agents are instructed to wait before dependent work; unresolved required questions block successful completion and publication. |
 | Reproducible runs | Freezes workflow settings and required skills, saves immutable artifacts, and verifies saved evidence before continuing. |
@@ -21,7 +21,7 @@ See the updated [voyage flowchart](helmsman-process.html) for how these features
 ## Required capabilities
 
 - [x] Structured Codex JSON events; malformed/null fields guarded; raw fallback and PR discovery preserved.
-- [x] Provider usage accounting with idempotent ingestion and unknown costs distinguished from zero; no invented model prices.
+- [x] Provider usage accounting with idempotent ingestion and unknown costs distinguished from zero; no invented model prices. Unpriced Astra, Sol and Terra token records can also receive a separate Standard short-context API baseline estimate.
 - [x] Bounded GitHub/Jira HTTP error parsing with size limits, deadlines, and safe fallbacks.
 - [x] Dedicated Costs & Outcomes tab, header galleon scope, date window, costs/coverage, tokens, durations, unique PR review/publication/merge metrics, failure stages and correction rounds.
 - [x] Persistent outcome evidence distinct from process success and mandatory review gates; explicit complete/partial/failed/not-assessed evaluation state.
@@ -65,7 +65,7 @@ See the updated [voyage flowchart](helmsman-process.html) for how these features
 |---|---|
 | Structured events, usage, lifecycle | `agents/codex-stream.ts`, `agents/claude-stream.ts`, `run-telemetry.ts`, `log-tail.ts`; parser, replay and UTF-8 tests |
 | Bounded errors | `server/http-failure.ts`; GitHub/Jira integration; stalled cancellation regression |
-| Costs & Outcomes | `outcomes.ts`, `outcome-service.ts`, router, `renderOutcomes.ts`; complete/partial pricing coverage, evidence validation, scope and client tests |
+| Costs & Outcomes | `outcomes.ts`, `outcome-service.ts`, router, `renderOutcomes.ts`; `cost-estimates.ts`; reported costs and separate baseline estimates with record coverage, evidence validation, scope and client tests |
 | Immutable artifacts, frozen workflows, skills | `artifacts.ts`, `workflow-snapshots.ts`, `skills-preflight.ts`, `prepare-run.ts`, runtime/resume hooks; hashes, symlinks, exclusive writes and drift tests |
 | Durable claims and campaigns | `campaigns.ts`, `campaign-service.ts`, `campaign-dispatcher.ts`, `created-pr-reviews.ts`; CAS, stale-claim, dedup, preview/confirm tests |
 | Human clarification and contacts | `clarifications.ts`, `clarification-runtime.ts`, `contact-policy.ts`, Jira hints, local page and publication gates; expiry/ownership/blocking integration tests |
@@ -77,7 +77,7 @@ See the updated [voyage flowchart](helmsman-process.html) for how these features
 
 - Development used worktree `helmsman-moonunit-adoption`, branch `feat/moonunit-adoption`, before merging into `master`.
 - Codex stream + HTTP errors: 112 focused adapter/GitHub/Jira tests passed at first integration.
-- Persistent usage, outcomes, API routes, evidence assessments and Costs & Outcomes UI implemented. Byte-offset replay is idempotent, split UTF-8 log records are preserved, unknown costs stay unknown.
+- Persistent usage, outcomes, API routes, evidence assessments and Costs & Outcomes UI implemented. Byte-offset replay is idempotent, split UTF-8 log records are preserved, unreported billed costs stay unknown; eligible Codex usage receives a separately labeled API estimate.
 - Campaign import/service/dispatcher/UI and durable created-PR review claims implemented; campaign scope and preview/confirm tested without launching external work.
 - Clarification store, local UI, JSONL relay, required-answer publication gates and orphan cleanup implemented. Expired questions never imply an answer.
 - Immutable report artifacts, workflow snapshots, required skill hashes and cross-platform private provisioning integrated with runtime/retry/resume.
@@ -86,3 +86,9 @@ See the updated [voyage flowchart](helmsman-process.html) for how these features
 - Final full suite: 146 files / 2,248 tests passed. Final recovery/output-reader and UI polish then passed `npm run build` and 107 focused tests. Build emits an existing Vite config-loader compatibility warning; no build or TypeScript errors.
 - Final browser screenshots inspected: Costs & Outcomes, campaigns and clarifications. Post-commit Senior Software Architect review found and fixed Claude beta-request forwarding, stale automatic outcome evidence after resume, and unpinned known Codex defaults. Final fixes pass the build and 91 focused tests. A real pinned Claude container reached a mocked upstream with its beta flags and host credential substitution verified; no provider request was made.
 - Integration into `master`: TypeScript/Vite build and full suite passed (149 files / 2,286 tests), including the newer Slack master toggle and grouped settings.
+
+## Token-based spend estimates
+
+Costs & Outcomes estimates unreported Codex usage for exact model IDs `gpt-6-astra`, `gpt-5.6-sol` and `gpt-5.6-terra` when input, cached-input and output counts are all available. It uses [OpenAI Standard short-context API rates](https://developers.openai.com/api/docs/pricing), checked September 19, 2026. Cached input is removed from ordinary input before applying its separate rate. Already-priced usage is never estimated again; duplicate events remain deduplicated.
+
+These estimates are separate from reported spend, fully priced coverage, per-PR costs and budget enforcement. The UI shows estimated versus unpriced usage records and runs without usage records. Missing model identity or token counts remain unknown. Service tier, per-request context size and cache-write usage are not recorded, so actual charges can differ; subscription usage is not a token-based invoice. Claude fallback needs cache-write and actual per-model usage data before it can be estimated safely. Historical usage is valued with this dated rate card, not reconstructed historical billing.

@@ -196,6 +196,11 @@ and notifications update every 30 seconds while visible. Config does not repeate
 reload settings or scan local worktrees. The selected cmux screen refreshes every two
 seconds only while its page is visible.
 
+Helm shows the latest 10 completed voyages in the current scope. **All voyages**
+opens the full history, with 25 entries per page and Previous/Next controls.
+Changing galleons resets history to page one; polling keeps the current page.
+Paging preserves the PR lookup draft and any open voyage logs.
+
 The server shares GitHub list and review-history reads across tabs for five minutes,
 coalesces concurrent requests, and pauses rate-limited reads until GitHub's reset.
 Review preflight, PR details, diffs, and publication checks always use fresh requests.
@@ -625,6 +630,20 @@ lists each candidate and explains protected skips; confirmation deletes
 the exact reviewed names and commits atomically. Any changed branch or HEAD requires a
 new preview. Use **Check remotes** first to refresh deleted-upstream information.
 Current, default, and checked-out branches remain protected in either mode.
+
+Single and bulk branch deletion hold Git's HEAD locks for existing worktrees while
+rechecking checkout ownership and committing the expected-commit ref transaction.
+This also protects detached worktrees that switch to a target branch at the same
+commit. A failed guard or a shared ten-second transaction deadline cancels the
+operation and releases its locks. The implementation uses ordinary `update-ref`
+transactions and does not require the newer `symref-verify` command.
+
+Git does not provide a transaction covering registration of new worktrees. External
+worktrees created after the final ownership check, concurrent pruning/replacement of
+worktree metadata, and tools that bypass Git's locks remain outside this guarantee.
+Avoid creating or pruning worktrees in another tool while cleanup runs. Regression
+tests cover checkout races, new worktrees detected before the final check, changed
+refs, detached and missing worktrees, failed guards, deadlines, and lock release.
 
 `GET /api/usage/external` exposes actual server HTTP request counts by service,
 including lifetime and rolling five-minute totals, errors, and rate-limit responses.

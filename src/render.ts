@@ -379,11 +379,11 @@ export function renderDashboard(
   jiraEnabled: boolean = true,
 ): void {
   const queue = sortByPriority(data.queue);
-  const scopedRuns: RunSummary[] = selectedRepo
-    ? runs.filter((r) => r.repo === selectedRepo)
-    : runs;
+  const scopedRuns = (Array.isArray(runs) ? runs : []).filter(run => run && typeof run.id === 'string'
+    && typeof run.repo === 'string' && (!selectedRepo || run.repo === selectedRepo));
   const activeRuns: RunSummary[] = scopedRuns.filter((r) => r.status === 'running');
-  const terminalRuns: RunSummary[] = scopedRuns.filter((r) => r.status !== 'running');
+  const terminalRuns: RunSummary[] = scopedRuns.filter((r) => r.status !== 'running' && r.status !== 'queued')
+    .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0)).slice(0, 10);
   const underway = Array.isArray(data.underway) ? data.underway.filter(ticket => ticket && ticket.status !== 'done') : [];
   const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
   const underwayItems = underwayKnown && underway.length
@@ -520,7 +520,7 @@ export function renderDashboard(
     recent: {
       lamp: 'idle',
       count: terminalRuns.length,
-      body: `<ul class="recent-runs-list lane-list">${recentRunItems}</ul>`,
+      body: `<ul class="recent-runs-list lane-list">${recentRunItems}</ul><div class="runs-pagination"><a class="app-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, pane: 'recent' }))}">${term('allRuns')} →</a></div>`,
     },
     repoprs: {
       lamp: repoPrCount ? 'queued' : 'idle',

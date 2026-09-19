@@ -36,6 +36,11 @@ async function setup(path = `/runs?run=${FIRST}`, runs = [run(FIRST), run(SECOND
     if (url.pathname === '/api/context') return json({ repos: ['org/repo'], jiraBaseUrl: null, jiraEnabled: true });
     if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/repo'], selectedRepo: null, jiraBaseUrl: null });
     if (url.pathname === '/api/agents') return json({ runs, autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+    if (url.pathname === '/api/runs') {
+      const filtered = runs.filter(run => !url.searchParams.get('repo') || run.repo === url.searchParams.get('repo'));
+      const offset = Number(url.searchParams.get('offset'));
+      return json({ runs: filtered.slice(offset, offset + 25), total: filtered.length, limit: 25, offset });
+    }
     if (url.pathname.startsWith('/api/agents/')) {
       const detail = details.get(url.pathname.split('/').at(-1) ?? '');
       return detail ? json(detail) : new Response(null, { status: 404 });

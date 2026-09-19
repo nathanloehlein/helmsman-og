@@ -35,7 +35,14 @@ export interface OutcomePullRequest {
   availability?: 'known' | 'stale' | 'unavailable';
 }
 
+export interface UsageCostEstimate {
+  estimatedUnreportedCostUsd: number | null;
+  estimatedUsageEvents: number;
+  unreportedUsageEvents: number;
+}
+
 export interface OutcomeDay {
+  costEstimate?: UsageCostEstimate;
   date: string;
   runs: number;
   succeeded: number;
@@ -48,6 +55,7 @@ export interface OutcomeDay {
 }
 
 export interface OutcomeRun {
+  costEstimate?: UsageCostEstimate;
   runId: string;
   repo: string;
   status: 'running' | 'succeeded' | 'failed' | 'stopped';
@@ -60,6 +68,7 @@ export interface OutcomeRun {
 }
 
 export interface OutcomeSummary {
+  costEstimate?: UsageCostEstimate & { runsWithoutUsage: number; rateSource: string; ratesAsOf: string };
   window: { from: string; to: string };
   repo: string | null;
   runs: number;

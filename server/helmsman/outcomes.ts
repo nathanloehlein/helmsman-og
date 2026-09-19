@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { COST_ESTIMATE_DATE, COST_ESTIMATE_SOURCE, summarizeCostEstimates } from './cost-estimates';
 import { isGithubRepo } from '../pr-lists';
 import type { RunRow } from './db';
 import {
@@ -214,6 +215,9 @@ export function aggregateOutcomes(input: AggregateOutcomesInput): OutcomeSummary
   const usageByRun = new Map<string, ProviderUsage[]>();
   for (const item of events.values()) usageByRun.set(item.runId, [...(usageByRun.get(item.runId) ?? []), item]);
   const result: OutcomeSummary = {
+    costEstimate: { ...summarizeCostEstimates([...events.values()]),
+      runsWithoutUsage: [...selected.keys()].filter(id => !usageByRun.has(id)).length,
+      rateSource: COST_ESTIMATE_SOURCE, ratesAsOf: COST_ESTIMATE_DATE },
     window: { from, to }, repo: input.repo ?? null, runs: selected.size,
     execution: { running: 0, succeeded: 0, failed: 0, stopped: 0 },
     assessments: { complete: 0, partial: 0, failed: 0, 'not-assessed': 0 },
@@ -238,6 +242,7 @@ export function aggregateOutcomes(input: AggregateOutcomesInput): OutcomeSummary
   const allRuns: OutcomeRun[] = [];
   for (const run of selected.values()) {
     const reports = usageByRun.get(run.id) ?? [];
+    const costEstimate = summarizeCostEstimates(reports);
     const cost = reports.length
       ? reports.every(item => item.costUsd !== null) ? sum(reports.map(item => item.costUsd!)) : null
       : typeof run.costUsd === 'number' && Number.isFinite(run.costUsd) && run.costUsd >= 0 ? run.costUsd : null;
@@ -255,7 +260,15 @@ export function aggregateOutcomes(input: AggregateOutcomesInput): OutcomeSummary
     }
     if (durationMs !== null) durations.push(durationMs);
     const day = days.get(new Date(run.startedAt).toISOString().slice(0, 10));
-    if (day) { day.runs++; day[run.status]++; }
+    if (day) {
+      day.runs++; day[run.status]++;
+      day.costEstimate ??= { estimatedUnreportedCostUsd: null, estimatedUsageEvents: 0, unreportedUsageEvents: 0 };
+      day.costEstimate.estimatedUsageEvents += costEstimate.estimatedUsageEvents;
+      day.costEstimate.unreportedUsageEvents += costEstimate.unreportedUsageEvents;
+      if (costEstimate.estimatedUnreportedCostUsd !== null) {
+        day.costEstimate.estimatedUnreportedCostUsd = (day.costEstimate.estimatedUnreportedCostUsd ?? 0) + costEstimate.estimatedUnreportedCostUsd;
+      }
+    }
     if (cost !== null) {
       costs.push(cost);
       if (day) { day.knownCostUsd = (day.knownCostUsd ?? 0) + cost; day.runsWithKnownCost++; }
@@ -265,7 +278,7 @@ export function aggregateOutcomes(input: AggregateOutcomesInput): OutcomeSummary
       if (day) day.observedCostUsd = (day.observedCostUsd ?? 0) + observedCost;
     }
     allRuns.push({ runId: run.id, repo: run.repo, status: run.status, prNumber: run.prNumber,
-      startedAt: run.startedAt, durationMs, costUsd: cost, observedCostUsd: observedCost, assessment: report });
+      startedAt: run.startedAt, durationMs, costUsd: cost, observedCostUsd: observedCost, costEstimate, assessment: report });
   }
   const linkedPrs = new Set(allRuns.flatMap(run => Number.isSafeInteger(run.prNumber) && run.prNumber! > 0 ? [prKey(run.repo, run.prNumber!)] : []));
   const prs = new Map<string, OutcomePullRequest>();

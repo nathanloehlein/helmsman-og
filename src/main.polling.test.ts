@@ -17,6 +17,11 @@ async function setup(path = '/helm?repo=org/a', runs: RunSummary[] = [], context
     if (url.pathname === '/api/context') return contextAvailable ? json({ repos: ['org/a'], jiraBaseUrl: null }) : new Response(null, { status: 404 });
     if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/a'], selectedRepo: url.searchParams.get('repo'), jiraBaseUrl: null });
     if (url.pathname === '/api/agents') return json({ runs, autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
+    if (url.pathname === '/api/runs') {
+      const filtered = runs.filter(run => !url.searchParams.get('repo') || run.repo === url.searchParams.get('repo'));
+      const offset = Number(url.searchParams.get('offset'));
+      return json({ runs: filtered.slice(offset, offset + 25), total: filtered.length, limit: 25, offset });
+    }
     if (url.pathname === '/api/config') return json({ config: {}, overridden: [] });
     if (url.pathname === '/api/pr/open' || url.pathname === '/api/pr/review-requests') return json({ prs: [], degraded: false, truncated: false });
     return new Response(null, { status: 404 });

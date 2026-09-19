@@ -247,6 +247,21 @@ describe('outcome aggregation', () => {
     expect(result.knownCostUsd).toBe(105);
   });
 
+  it('estimates only deduplicated unreported usage while preserving reported cost, scope and coverage', () => {
+    const estimated = usage({ model: 'gpt-6-astra', inputTokens: 1_000_000, cachedInputTokens: 200_000, outputTokens: 100_000 });
+    const result = aggregateOutcomes({ runs: [run('one', { costUsd: 999, prNumber: 1 }), run('two')],
+      usage: [estimated, estimated, usage({ eventId: 'reported', costUsd: 2 }), usage({ eventId: 'unknown', model: null }),
+        usage({ runId: 'outside', costUsd: 500 })], pullRequests: [pr()], from, to });
+    expect(result.costEstimate).toMatchObject({ estimatedUnreportedCostUsd: 13.2, estimatedUsageEvents: 1,
+      unreportedUsageEvents: 2, runsWithoutUsage: 1, ratesAsOf: '2026-09-19', rateSource: 'https://developers.openai.com/api/docs/pricing' });
+    expect(result.observedCostUsd).toBe(2);
+    expect(result.knownCostUsd).toBeNull();
+    expect(result.runsWithKnownCost).toBe(0);
+    expect(result.costPerMergedPrUsd).toBeNull();
+    expect(result.daily[0]?.costEstimate).toMatchObject({ estimatedUnreportedCostUsd: 13.2, estimatedUsageEvents: 1, unreportedUsageEvents: 2 });
+    expect(result.recentRuns.find(run => run.runId === 'one')?.costEstimate?.estimatedUnreportedCostUsd).toBe(13.2);
+  });
+
   it.each([{ from: to, to: from }, { from: '2026-02-31T00:00:00Z', to },
     { from: '2024-01-01T00:00:00Z', to }, { from: '2026-09-01', to },
   ])('rejects invalid/unbounded windows %j', window => {

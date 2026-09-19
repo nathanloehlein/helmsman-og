@@ -1517,6 +1517,9 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const response: DashboardResponse = await buildResponse();
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url: string = String(input);
+      if (url.includes('/api/runs?')) {
+        return new Response(JSON.stringify({ runs: [runningRun('run-a', 'TICK-A'), runningRun('run-b', 'TICK-B')], total: 2, limit: 25, offset: 0 }));
+      }
       if (url.includes('/api/agents')) {
         return {
           ok: true,
@@ -1535,6 +1538,7 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     expect(rows.length).toBe(2);
     rows[0].click();
     await vi.waitFor(() => expect(root.querySelector('[data-page="runs"]')).not.toBeNull());
+    await vi.waitFor(() => expect(root.querySelector('.recent-run[data-runid="run-b"]')).not.toBeNull());
     root.querySelector<HTMLElement>('.recent-run[data-runid="run-b"]')!.click();
 
     await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
@@ -1554,6 +1558,9 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const response: DashboardResponse = await buildResponse();
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url: string = String(input);
+      if (url.includes('/api/runs?')) {
+        return new Response(JSON.stringify({ runs: [runningRun('run-a', 'TICK-A'), runningRun('run-b', 'TICK-B')], total: 2, limit: 25, offset: 0 }));
+      }
       if (url.includes('/api/agents')) {
         return {
           ok: true,
@@ -1571,6 +1578,7 @@ describe('DashboardView tabbed runs drawer, config, and repo scope', () => {
     const rows: NodeListOf<HTMLElement> = root.querySelectorAll<HTMLElement>('.agent-row');
     rows[0].click();
     await vi.waitFor(() => expect(root.querySelector('[data-page="runs"]')).not.toBeNull());
+    await vi.waitFor(() => expect(root.querySelector('.recent-run[data-runid="run-b"]')).not.toBeNull());
     root.querySelector<HTMLElement>('.recent-run[data-runid="run-b"]')!.click();
     await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
 

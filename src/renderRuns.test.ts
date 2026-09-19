@@ -3,7 +3,7 @@ import { setPirateMode } from './logic/terminology';
 import type { RunSummary } from './data/agents';
 import { DEFAULT_THEME_ID } from './data/themes';
 import type { PrViewState } from './render';
-import { renderRunsView } from './renderRuns';
+import { renderRunHistory, renderRunsView, type RunHistoryState } from './renderRuns';
 
 const state: PrViewState = { repo: null, number: null, pr: null, diff: null, loading: false };
 const opts = { repos: ['org/alpha'], selectedRepo: null, themeId: DEFAULT_THEME_ID, runs: [] as RunSummary[] };
@@ -27,7 +27,7 @@ describe('renderRunsView', () => {
     setPirateMode(pirate);
     const el = mount(renderRunsView(state, opts));
     expect(el.querySelector('[data-pane=newrun] .panel-title')?.textContent).toBe(pirate ? 'Review or update a bounty' : 'Review or update a PR');
-    expect(el.querySelector('[data-pane=recent] .panel-title')?.textContent).toBe(pirate ? 'Recent voyages' : 'Recent runs');
+    expect(el.querySelector('[data-pane=recent] .panel-title')?.textContent).toBe(pirate ? 'All voyages' : 'All runs');
     expect(el.querySelector('.pr-lookup-go')?.textContent).toBe(pirate ? 'Load Bounty' : 'Load PR');
     expect(el.querySelector('label[for="runs-pr-lookup"]')?.textContent).toBe(pirate ? 'Bounty URL or owner/repo#number' : 'PR URL or owner/repo#number');
     expect(el.querySelector('[data-pane=recent] .empty-note')?.textContent).toBe(pirate ? 'No past voyages.' : 'No past runs.');
@@ -172,5 +172,56 @@ describe('renderRunsView', () => {
     expect(el.querySelector('img, script')).toBeNull();
     expect(el.querySelector('.recent-run a')?.getAttribute('href')).toBe('/runs');
     expect(el.querySelector('.voyage-identity')?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});
+
+describe('renderRunHistory', () => {
+  const history: RunHistoryState = { total: 60, limit: 25, offset: 25, loading: false, error: null };
+
+  it('shows the full count and middle-page range with previous and next actions', () => {
+    const runs = Array.from({ length: 25 }, (_, index) => run({ id: `run-${index}` }));
+    const el = mount(renderRunHistory(runs, 'org/alpha', history));
+    expect(el.querySelector('.panel-count')?.textContent).toBe('60');
+    expect(el.querySelector('.runs-page-range')?.textContent).toBe('26–50 of 60');
+    expect(el.querySelectorAll('button:disabled')).toHaveLength(0);
+    expect(el.querySelector('.runs-pagination')?.getAttribute('tabindex')).toBe('-1');
+    expect(el.querySelector('[data-pane=recent]')?.getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('disables previous on the first page and next on the last page', () => {
+    const first = mount(renderRunHistory([run()], null, { ...history, offset: 0 }));
+    expect(first.querySelector<HTMLButtonElement>('[data-runs-page=previous]')?.disabled).toBe(true);
+    expect(first.querySelector<HTMLButtonElement>('[data-runs-page=next]')?.disabled).toBe(false);
+    const last = mount(renderRunHistory([run()], null, { ...history, total: 26 }));
+    expect(last.querySelector('.runs-page-range')?.textContent).toBe('26–26 of 26');
+    expect(last.querySelector<HTMLButtonElement>('[data-runs-page=previous]')?.disabled).toBe(false);
+    expect(last.querySelector<HTMLButtonElement>('[data-runs-page=next]')?.disabled).toBe(true);
+  });
+
+  it('announces loading, disables pagination, and keeps existing rows during refresh', () => {
+    const el = mount(renderRunHistory([run()], null, { ...history, loading: true }));
+    expect(el.querySelector('[data-pane=recent]')?.getAttribute('aria-busy')).toBe('true');
+    expect(el.querySelector('.runs-page-range[role=status]')?.textContent).toBe('Loading…');
+    expect(el.querySelectorAll('.recent-run')).toHaveLength(1);
+    expect(el.querySelectorAll('button:disabled')).toHaveLength(2);
+    const initial = mount(renderRunHistory([], null, { ...history, loading: true }));
+    expect(initial.querySelector('.empty-note')?.textContent).toBe('Loading voyages…');
+  });
+
+  it('shows a retryable escaped error without presenting stale rows or an empty-state claim', () => {
+    const el = mount(renderRunHistory([run()], null, { ...history, error: '<img src=x> unavailable' }));
+    expect(el.querySelector('[role=alert]')?.textContent).toContain('<img src=x> unavailable');
+    expect(el.querySelector('img, .recent-run')).toBeNull();
+    expect(el.querySelector<HTMLButtonElement>('[data-runs-retry]')?.disabled).toBe(false);
+    expect(el.querySelectorAll('[data-runs-page]:disabled')).toHaveLength(2);
+    expect(el.querySelector('.runs-page-range')?.textContent).toBe('History unavailable');
+  });
+
+  it('shows a successful empty history with both controls disabled', () => {
+    const el = mount(renderRunHistory([], null, { ...history, total: 0, offset: 0 }));
+    expect(el.querySelector('.empty-note')?.textContent).toBe('No past voyages.');
+    expect(el.querySelector('.runs-page-range')?.textContent).toBe('0 of 0');
+    expect(el.querySelectorAll('button:disabled')).toHaveLength(2);
+    expect(el.querySelector('[data-runs-retry]')).toBeNull();
   });
 });

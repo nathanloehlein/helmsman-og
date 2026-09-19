@@ -48,6 +48,7 @@ import { getLocalGit, mutateLocalGit } from '../local-git';
 import type { PrFileDiff } from '../../src/types';
 import { openTodoStore, TodoConflictError } from './todos';
 import { todoTask, reconcileTodoRuns } from './todo-source';
+import { repositoryScope } from './repository-scope';
 import { AutoClaimScheduler, type BacklogItem } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
 import { fetchQueueIssues } from '../jira';
@@ -288,7 +289,7 @@ async function resumeVoyage(runId: string): Promise<void> {
   const row = db.getRun(runId);
   if (!row) throw new ResumeError('Voyage not found.');
   const cfg = configStore.current();
-  const repos = [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
+  const repos = repositoryScope(cfg, todos.list());
   if (!repos.some(repo => repo.toLowerCase() === row.repo.toLowerCase())) throw new ResumeError('Configure this galleon before continuing the voyage.');
   const gate = pm.canStart(row.repo);
   if (!gate.ok) throw new ResumeError(gate.reason ?? 'Cannot continue this voyage while another voyage is active.');
@@ -716,7 +717,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       context: () => {
         const cfg = configStore.current();
         return {
-          repos: [...new Set([...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : []), ...(!cfg.jiraEnabled ? todos.list().map(todo => todo.repo) : [])])].sort(),
+          repos: repositoryScope(cfg, todos.list()),
           jiraEnabled: cfg.jiraEnabled,
           jiraBaseUrl: cfg.jira?.baseUrl ?? null,
         };
@@ -763,20 +764,20 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       },
       reviewRequestedPrs: (repo) => {
         const cfg: AppConfig = configStore.current();
-        const repos: string[] = [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
+        const repos = repositoryScope(cfg, todos.list());
         return fetchReviewRequestedPrs(cfg.github, repos, repo);
       },
       repoOpenPrs: (repo) => fetchRepoOpenPrs(configStore.current().github, repo),
       localGit: (repo) => {
         const cfg = configStore.current();
-        const repos = [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
+        const repos = repositoryScope(cfg, todos.list());
         return getLocalGit(AGENTS_ROOT, repo, repos, {
           activeWorktreePaths: () => db.activeRuns().flatMap(run => run.worktreePath ? [run.worktreePath] : []),
         });
       },
       localGitAction: (repo, body) => {
         const cfg = configStore.current();
-        const repos = [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
+        const repos = repositoryScope(cfg, todos.list());
         return mutateLocalGit(AGENTS_ROOT, repo, repos, body, {
           activeWorktreePaths: () => db.activeRuns().flatMap(run => run.worktreePath ? [run.worktreePath] : []),
         });
