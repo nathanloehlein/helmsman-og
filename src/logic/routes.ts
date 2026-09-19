@@ -48,6 +48,18 @@ function positiveInteger(value: string | null): number | null {
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
+/**
+ * A surface ref reaches us from the URL, so it is validated before it can be
+ * put back on the wire. Two terminal bridges produce two shapes:
+ *   - cmux: `surface:<n>`, 1-based
+ *   - wezterm: a bare pane id, 0-based
+ */
+function isSurfaceRef(value: string | null): boolean {
+  if (!value) return false;
+  if (value.startsWith('surface:')) return positiveInteger(value.slice(8)) !== null;
+  return /^\d+$/.test(value) && Number.isSafeInteger(Number(value));
+}
+
 export function parseRoute(url: URL): AppRoute {
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   const view = pathname === '/pr' ? 'prs'
@@ -73,8 +85,7 @@ export function parseRoute(url: URL): AppRoute {
     run: run && /^[a-z\d_-]{1,128}$/i.test(run) ? run : null,
     mode: (view === 'runs' || view === 'prs') && (mode === 'review' || mode === 'rerun') ? mode : null,
     ticket: ticket && /^[a-z][a-z\d_]{0,49}-[1-9]\d{0,14}$/i.test(ticket) ? ticket.toUpperCase() : null,
-    surface: view === 'cmux' && surface?.startsWith('surface:') && positiveInteger(surface.slice(8))
-      ? surface : null,
+    surface: view === 'cmux' && isSurfaceRef(surface) ? surface : null,
   };
 }
 

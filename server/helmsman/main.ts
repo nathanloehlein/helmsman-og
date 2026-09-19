@@ -17,7 +17,7 @@ import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
 import { resumeFailedPrePrRun, ResumeError } from './resume';
-import { hasCmux, pickHost, type RunHost } from './run-host';
+import { hasCmux, hasWezTerm, pickHost, type HostRef, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
@@ -36,7 +36,8 @@ import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store'
 import { fetchQueueIssues } from '../jira';
 import { jiraTask } from './jira-task';
 import { launchIntentJson, RetryError, type LaunchIntent } from './retry';
-import { createBridge } from './cmux/bridge';
+import { createBridge, type Bridge } from './cmux/bridge';
+import { createWezTermBridge } from './wezterm/bridge';
 import { openSlackStore } from './slack/store';
 import { openVoyageNotifications } from './voyage-notifications';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
@@ -82,7 +83,11 @@ const slackReviewRequester = openSlackReviewRequester(dbPath, {
   },
 });
 const startupCfg: AppConfig = configStore.current();
-const cmux = createBridge();
+// cmux is macOS-only; wezterm is the cross-platform terminal driving the same
+// panel. TERM_BRIDGE forces one, otherwise take whichever suits the platform.
+const termBridge: string = process.env.TERM_BRIDGE ?? (process.platform === 'win32' ? 'wezterm' : 'cmux');
+const cmux: Bridge = termBridge === 'wezterm' ? createWezTermBridge() : createBridge();
+process.stdout.write(`terminal bridge: ${termBridge}\n`);
 const cmuxClients = new Set<ServerResponse>();
 let cmuxWatchOff: (() => void) | null = null;
 function ensureCmuxWatch(): void {
@@ -92,8 +97,10 @@ function ensureCmuxWatch(): void {
   });
 }
 
-const preferCmux: boolean = process.env.RUN_HOST === 'cmux';
-const host: RunHost = await pickHost({ hasCmux, wrapperPath: WRAPPER, preferCmux });
+// RUN_HOST opts a run into a visible terminal instead of a detached process.
+const RUN_HOSTS: ReadonlyArray<HostRef['kind']> = ['cmux', 'wezterm', 'detached'];
+const runHost = RUN_HOSTS.find((k) => k === process.env.RUN_HOST) ?? null;
+const host: RunHost = await pickHost({ hasCmux, hasWezTerm, wrapperPath: WRAPPER, prefer: runHost });
 process.stdout.write(`run host: ${host.kind}\n`);
 
 function adapterFor(id: string, cfg: AppConfig): AgentAdapter {

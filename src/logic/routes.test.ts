@@ -118,6 +118,15 @@ describe('routes', () => {
     expect(parse('/terminal?surface=surface%3A9007199254740992').surface).toBeNull();
   });
 
+  it('accepts bare wezterm pane ids, which are 0-based', () => {
+    expect(parse('/cmux?surface=0').surface).toBe('0');
+    expect(parse('/cmux?surface=7').surface).toBe('7');
+    expect(parse('/runs?surface=7').surface).toBeNull();
+    expect(parse('/cmux?surface=9007199254740992').surface).toBeNull();
+    expect(parse('/cmux?surface=-1').surface).toBeNull();
+    expect(parse('/cmux?surface=1;rm').surface).toBeNull();
+  });
+
   it('serializes canonical paths and encoded parameters', () => {
     expect(routeHref({ view: 'dashboard' })).toBe('/helm');
     expect(routeHref({ view: 'prs', repo: 'owner/my.repo', pane: 'diff', pr: 42 }))

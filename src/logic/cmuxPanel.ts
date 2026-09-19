@@ -1,3 +1,5 @@
+import { providerFromTitle } from './agentProvider';
+
 export interface CmuxTabView {
   windowRef: string;
   workspaceRef: string;
@@ -22,5 +24,7 @@ export function isPolling(state: PanelState): boolean {
 }
 
 export function providerOf(tab: CmuxTabView): string | null {
-  return tab.type === 'agent-session' ? 'claude' : null;
+  const fromTitle = providerFromTitle(tab.surfaceTitle);
+  if (tab.type === 'agent-session') return fromTitle ?? 'claude';
+  return fromTitle;
 }
