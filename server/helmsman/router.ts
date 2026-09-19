@@ -11,6 +11,10 @@ import type { SlackState } from '../../src/data/slack';
 import type { GithubProfile } from '../../src/data/profile';
 import { retryIntent, RetryError, type LaunchIntent } from './retry';
 import { ResumeError } from './resume';
+import type { OutcomeService } from './outcome-service';
+import { OutcomeValidationError } from './outcomes';
+import type { CampaignService } from './campaign-service';
+import { ClarificationValidationError, type ClarificationStore } from './clarifications';
 
 export interface ApiResult {
   status: number;
@@ -50,6 +54,10 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  clarificationGate?: (runId: string) => boolean;
+  outcomes?: OutcomeService;
+  campaigns?: CampaignService;
+  clarifications?: ClarificationStore;
   resumeRun?: (runId: string) => Promise<void>;
   githubProfile?: () => Promise<GithubProfile>;
   slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
@@ -97,6 +105,58 @@ export async function handleApi(
   _body: unknown,
   deps: RouterDeps,
 ): Promise<ApiResult | null> {
+  const clarificationGate = path.match(/^\/api\/runs\/([a-z\d_-]{1,128})\/clarification-gate$/i);
+  if (clarificationGate && method === 'GET') {
+    try { return { status: 200, json: { ready: deps.clarificationGate?.(clarificationGate[1]!) === true } }; }
+    catch { return { status: 200, json: { ready: false } }; }
+  }
+  if (path.startsWith('/api/campaigns') && deps.campaigns) return deps.campaigns.handle(path, method, query, _body);
+  if (path.startsWith('/api/clarifications') || path === '/api/trusted-contacts') {
+    const store = deps.clarifications;
+    if (!store) return { status: 503, json: { error: 'Clarifications unavailable' } };
+    try {
+      store.timeoutDue(); store.cleanupOrphans();
+      const repo = query.get('repo');
+      if (repo !== null && !isGithubRepo(repo)) throw new ClarificationValidationError('Invalid galleon');
+      if (path === '/api/clarifications' && method === 'POST') {
+        if (!_body || typeof _body !== 'object' || !('runId' in _body) || typeof _body.runId !== 'string') throw new ClarificationValidationError('Provide a run ID');
+        const run = deps.db.getRun(_body.runId);
+        if (!run || repo && run.repo.toLowerCase() !== repo.toLowerCase()) throw new ClarificationValidationError('Run is not in the selected galleon');
+        const { runId, ...record } = _body;
+        return { status: 201, json: store.ingestQuestion(runId, { ...record, kind: 'question' }) };
+      }
+      if (path === '/api/clarifications' && method === 'GET') return { status: 200, json: { clarifications: store.list(repo) } };
+      if (path === '/api/trusted-contacts' && method === 'GET') return { status: 200, json: { contacts: store.contacts() } };
+      if (path === '/api/trusted-contacts' && method === 'POST') return { status: 201, json: store.saveContact(_body) };
+      const answer = path.match(/^\/api\/clarifications\/([a-z\d_-]{1,128})\/answer$/i);
+      if (answer && method === 'POST') {
+        const question = store.list(repo).find(question => question.id === answer[1]);
+        if (!question) return { status: 404, json: { error: 'Clarification not found in selected galleon' } };
+        return { status: 200, json: store.answer(question.id, _body) };
+      }
+      return { status: 404, json: { error: 'Clarification route not found' } };
+    } catch (error) {
+      if (error instanceof ClarificationValidationError) return { status: 400, json: { error: error.message } };
+      throw error;
+    }
+  }
+  if (path === '/api/outcomes' && method === 'GET') {
+    if (!deps.outcomes) return { status: 503, json: { error: 'Outcomes unavailable.' } };
+    try { return { status: 200, json: await deps.outcomes.summary(query) }; }
+    catch (error) {
+      if (error instanceof OutcomeValidationError) return { status: 400, json: { error: error.message } };
+      throw error;
+    }
+  }
+  const assessmentMatch = path.match(/^\/api\/outcomes\/([a-z\d_-]{1,128})\/assessment$/i);
+  if (assessmentMatch && method === 'PUT') {
+    if (!deps.outcomes) return { status: 503, json: { error: 'Outcomes unavailable.' } };
+    try { return { status: 200, json: deps.outcomes.assessment(assessmentMatch[1], _body) }; }
+    catch (error) {
+      if (error instanceof OutcomeValidationError) return { status: 400, json: { error: error.message } };
+      throw error;
+    }
+  }
   if (path === '/api/slack/review-request' && method === 'POST') {
     if (!deps.slackReviewRequest) return { status: 503, json: { error: 'Slack review requests are unavailable.' } };
     try {

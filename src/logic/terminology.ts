@@ -27,6 +27,9 @@ export const TERMINOLOGY = {
   run: { plain: 'Run', pirate: 'Voyage' },
   runs: { plain: 'Runs', pirate: 'Voyages' },
   dashboard: { plain: 'Dashboard', pirate: 'Helm' },
+  costsOutcomes: { plain: 'Costs & Outcomes', pirate: 'Booty & Bearings' },
+  campaigns: { plain: 'Campaigns', pirate: 'Fleet Campaigns' },
+  clarifications: { plain: 'Clarifications', pirate: 'Course Questions' },
   systemStatus: { plain: 'System status', pirate: 'Fleet status' },
   mineRunning: { plain: 'Mine · running', pirate: 'Mine · underway' },
   unavailableRunningTickets: { plain: 'Assigned tickets unavailable.', pirate: 'Underway tickets unavailable.' },
@@ -96,6 +99,9 @@ export type TermKey = keyof typeof TERMINOLOGY;
 
 export const TERMINOLOGY_REFERENCE_KEYS = [
   'dashboard', 'run', 'runs', 'repository', 'repositories', 'crew', 'agent', 'agents',
+  'costsOutcomes',
+  'campaigns',
+  'clarifications',
   'agentTasks', 'activeAgents', 'running', 'systemStatus', 'shipped', 'activity',
   'success', 'failed', 'tokens', 'start', 'review', 'reviews', 'pr', 'prs',
   'launchTicket', 'greeting',

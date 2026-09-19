@@ -1106,7 +1106,7 @@ describe('renderDashboard helm rack', () => {
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
     expect(el.querySelector('.helm-head .nameplate')).not.toBeNull();
-    expect(el.querySelectorAll('a.page-tab[href]')).toHaveLength(7);
+    expect(el.querySelectorAll('a.page-tab[href]')).toHaveLength(10);
     expect(el.querySelector('.page-tab[data-view="runs"]')?.getAttribute('href')).toBe('/runs');
     expect(el.querySelector('.page-tab[data-view="config"]')).not.toBeNull();
     expect(el.querySelector('.page-tab[data-view="prs"]')).not.toBeNull();

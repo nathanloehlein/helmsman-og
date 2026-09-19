@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb, type Db, type RunRow } from './db';
 import { inspectPrePrContinuation, resumeFailedPrePrRun } from './resume';
 import type { LaunchSpec, RunHost } from './run-host';
+import { createRunArtifactStore } from './artifacts';
 
 const fixtures: { root: string; db: Db }[] = [];
 afterEach(() => { for (const { root, db } of fixtures.splice(0)) { db.close(); rmSync(root, { recursive: true, force: true }); } });
@@ -113,5 +114,13 @@ describe('same-voyage pre-PR continuation', () => {
     expect(JSON.parse(readFileSync(f.row.specPath!, 'utf8'))).toEqual(f.spec);
     expect(readFileSync(f.row.exitPath!, 'utf8')).toBe('1');
     expect(readFileSync(f.row.logPath!, 'utf8')).toBe('original log\n');
+  });
+
+  it('rejects a report altered after an immutable artifact was recorded, while legacy reports remain resumable', async () => {
+    const f = fixture();
+    const reportPath = join(f.artifacts, 'review-2-codex.json');
+    await createRunArtifactStore(join(f.deps.runsDir, '.artifacts')).write({ runId: f.row.id, stage: 'review', round: 2, reviewer: 'codex' }, readFileSync(reportPath));
+    writeFileSync(reportPath, '{"tampered":true}');
+    await expect(inspectPrePrContinuation(f.row, f.deps.runsDir)).rejects.toThrow('changed after');
   });
 });

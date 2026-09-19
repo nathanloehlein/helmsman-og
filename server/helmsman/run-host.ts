@@ -16,7 +16,8 @@ export interface LaunchSpec {
 export type HostRef =
   | { kind: 'detached'; pid: number }
   | { kind: 'cmux'; workspace: string }
-  | { kind: 'wezterm'; paneId: string; socket?: string | null };
+  | { kind: 'wezterm'; paneId: string; socket?: string | null }
+  | { kind: 'docker'; containerId: string };
 
 export interface RunHost {
   kind: HostRef['kind'];
@@ -225,12 +226,18 @@ export const hasCmux = async (run: ArgvRunner = defaultRun): Promise<boolean> =>
 export interface PickHostDeps {
   hasCmux: () => Promise<boolean>;
   hasWezTerm?: () => Promise<boolean>;
+  hasDocker?: () => Promise<boolean>;
+  dockerHost?: () => RunHost;
   wrapperPath: string;
   /** RUN_HOST. Anything else, or a terminal that isn't there, means detached. */
   prefer: HostRef['kind'] | null;
 }
 
 export async function pickHost(deps: PickHostDeps): Promise<RunHost> {
+  if (deps.prefer === 'docker') {
+    if (!deps.hasDocker || !deps.dockerHost || !await deps.hasDocker()) throw new Error('Docker execution was requested but Docker Engine is unavailable');
+    return deps.dockerHost();
+  }
   if (deps.prefer === 'cmux' && (await deps.hasCmux())) return cmuxHost(deps.wrapperPath);
   if (deps.prefer === 'wezterm' && (await (deps.hasWezTerm ?? hasWezTerm)())) return weztermHost(deps.wrapperPath);
   return detachedHost(deps.wrapperPath);

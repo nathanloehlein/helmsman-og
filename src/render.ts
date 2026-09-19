@@ -231,6 +231,9 @@ const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'cmux', label: 'Terminal' },
   { view: 'bugs', label: 'Bugs' },
   { view: 'runs', get label() { return term('runs'); } },
+  { view: 'outcomes', get label() { return term('costsOutcomes'); } },
+  { view: 'campaigns', get label() { return term('campaigns'); } },
+  { view: 'clarifications', get label() { return term('clarifications'); } },
   { view: 'config', label: 'Config' },
 ];
 

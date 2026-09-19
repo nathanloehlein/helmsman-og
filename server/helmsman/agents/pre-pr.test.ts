@@ -41,4 +41,13 @@ describe('durable pre-PR adapter', () => {
     expect(adapter.parseLine(JSON.stringify({ __helmsmanPrePr: 1, kind: 'result', text: 'Opened PR #42', prNumber: 42, costUsd: 1 }))).toEqual({ kind: 'result', text: 'Opened PR #42', prNumber: 42, costUsd: 1 });
     expect(adapter.parseLine(JSON.stringify({ __helmsmanPrePr: 1, kind: 'result', text: 'invalid', prNumber: -1, costUsd: -1 }))).toEqual({ kind: 'result', text: 'invalid' });
   });
+
+  it('preserves validated usage and structured stage telemetry only', () => {
+    const adapter = prePrAdapter(codexAdapter, '/tmp');
+    expect(adapter.parseLine(JSON.stringify({ __helmsmanPrePr: 1, kind: 'usage', text: 'usage', eventId: 'turn-1',
+      usage: { inputTokens: 2, outputTokens: 3 }, provider: 'codex', model: 'gpt-6-astra', effort: 'high', stage: 'review', round: 2 })))
+      .toMatchObject({ kind: 'usage', eventId: 'turn-1', usage: { inputTokens: 2, outputTokens: 3 }, provider: 'codex', model: 'gpt-6-astra', stage: 'review', round: 2 });
+    expect(adapter.parseLine(JSON.stringify({ __helmsmanPrePr: 1, kind: 'usage', text: 'bad', usage: { inputTokens: -1 } })))
+      .toEqual({ kind: 'log', text: JSON.stringify({ __helmsmanPrePr: 1, kind: 'usage', text: 'bad', usage: { inputTokens: -1 } }) });
+  });
 });

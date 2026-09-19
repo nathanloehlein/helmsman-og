@@ -3,6 +3,7 @@ import { cachedGithubRead } from './github-read-cache';
 import type { GithubPr, PrReviewDecision } from './types';
 import type { PrFileDiff } from '../src/types';
 import { REQUIRED_PR_APPROVALS } from '../src/logic/prReviews';
+import { readHttpFailure } from './http-failure';
 
 interface SearchItem {
   number: number;
@@ -280,7 +281,7 @@ async function searchAuthoredPrs(github: GithubConfig): Promise<GithubPr[]> {
   url.searchParams.set('per_page', '8');
 
   const res: Response = await cachedGithubRead(github, url);
-  if (!res.ok) throw new Error(`GitHub ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`GitHub ${res.status}: ${await readHttpFailure(res)}`);
   const body: { items?: SearchItem[] } = await res.json();
   const items: SearchItem[] = body.items ?? [];
 

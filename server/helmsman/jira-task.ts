@@ -45,11 +45,19 @@ export async function jiraTask(
   if (Buffer.byteLength(JSON.stringify(jiraContext), 'utf8') > 64 * 1024) {
     throw new Error(`Cannot load requirements for ${input.ticketId}: Jira requirements snapshot exceeds the 64 KiB limit. Reduce the issue description, acceptance criteria, or attachment list and retry. No agent was started.`);
   }
+  const personId = (value: unknown): string | undefined => {
+    const person = record(value);
+    const id = person?.accountId ?? person?.emailAddress;
+    return typeof id === 'string' && id.trim() && id.length <= 320 ? id.trim() : undefined;
+  };
+  const assigneeId = personId(fields.assignee);
+  const reporterId = personId(fields.reporter);
   return {
     ticketId: input.ticketId,
     title: input.title ?? fields.summary,
     repo: input.repo,
     jiraBaseUrl: jira.baseUrl,
     jiraContext,
+    ...(assigneeId || reporterId ? { contactHints: { assigneeId, reporterId } } : {}),
   };
 }

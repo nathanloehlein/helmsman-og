@@ -1,0 +1,11 @@
+.clarification-page { display: grid; gap: 16px; padding: 1rem; }
+.clarification-list { display: grid; gap: 12px; }
+.clarification-card { display: grid; gap: 8px; }
+.clarification-card form, .clarification-create, .trusted-contact-form { display: grid; gap: 8px; }
+.clarification-meta { color: var(--text-dim); font-size: .9rem; }
+.clarification-state { font-weight: 700; }
+.clarification-page .panel { padding: 1rem; }
+.clarification-page label { display: grid; gap: .3rem; }
+.clarification-page label:has(input[type="checkbox"]) { display: flex; align-items: center; }
+.clarification-page input:not([type="checkbox"]), .clarification-page textarea, .clarification-page select { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: .55rem; }
+.clarification-page input:focus-visible, .clarification-page textarea:focus-visible, .clarification-page select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

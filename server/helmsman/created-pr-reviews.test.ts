@@ -199,6 +199,54 @@ describe('created PR review queue', () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
+  it('claims persistently so independent queues do not dispatch the same request', async () => {
+    const { queue, options, fetchPr, launch, store } = setup();
+    const id = queue.enqueue(input);
+    let resolve!: (value: unknown) => void;
+    fetchPr.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const first = queue.poll();
+    await createCreatedPrReviews(options).poll();
+    expect(fetchPr).toHaveBeenCalledTimes(1);
+    expect(store.dispatchClaims('helmsman-created-prs')).toHaveLength(1);
+    resolve({ headSha, state: 'open', draft: false });
+    await first;
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(store.getNotification(id)?.status).toBe('launched');
+    expect(store.dispatchClaims('helmsman-created-prs')).toEqual([]);
+  });
+
+  it('reconciles stale claims against the stable run ID before allowing another launch', async () => {
+    const { queue, options, runs, store, launch, fetchPr } = setup();
+    const id = queue.enqueue(input);
+    expect(store.claimDispatch(id, 'old-owner', '2026-09-17T11:00:00.000Z')).toBe(true);
+    expect(store.claimDispatch(id, 'other-owner', '2026-09-17T12:00:00.000Z')).toBe(false);
+    expect(store.releaseDispatch(id, 'wrong-owner')).toBe(false);
+    runs.set(`created-${id}`, row(`created-${id}`, 'running'));
+    await createCreatedPrReviews(options).poll();
+    expect(store.getNotification(id)?.status).toBe('launched');
+    expect(launch).not.toHaveBeenCalled();
+    expect(fetchPr).not.toHaveBeenCalled();
+    expect(store.dispatchClaims('helmsman-created-prs')).toEqual([]);
+  });
+
+  it('reclaims an abandoned stale claim when no run was recorded', async () => {
+    const { queue, options, store, launch } = setup();
+    const id = queue.enqueue(input);
+    store.claimDispatch(id, 'old-owner', '2026-09-17T11:00:00.000Z');
+    await createCreatedPrReviews(options).poll();
+    expect(launch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ runId: `created-${id}` }));
+  });
+
+  it('recovers a launch whose acknowledgement failed after the process became active', async () => {
+    const { queue, store, launch, active } = setup();
+    const id = queue.enqueue(input);
+    launch.mockImplementation(({ runId }: { runId: string }) => { active.add(runId); throw new Error('Lost acknowledgement'); });
+    await queue.poll();
+    await queue.poll();
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(store.getNotification(id)?.status).toBe('launched');
+  });
+
   it.each([{ parentRunId: '../bad' }, { parentRunId: '' }, { repo: 'invalid' }, { prNumber: 0 }, { prNumber: 1.5 }])('rejects invalid request input: %o', change => {
     const { queue, store } = setup();
     expect(() => queue.enqueue({ ...input, ...change })).toThrow('Invalid created PR review request');

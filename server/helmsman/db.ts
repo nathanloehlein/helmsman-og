@@ -42,6 +42,7 @@ export interface Db {
   updateRun(id: string, patch: Partial<RunRow>): void;
   getRun(id: string): RunRow | null;
   listRuns(limit: number): RunRow[];
+  runsInWindow(from: string, to: string, repo?: string | null): RunRow[];
   runPage(limit: number, offset: number, repo?: string | null): RunPage;
   activeRuns(): RunRow[];
   reattachableRuns(): RunRow[];
@@ -101,6 +102,13 @@ export function openDb(path: string): Db {
     },
     listRuns(limit: number): RunRow[] {
       return sql.prepare('SELECT * FROM runs ORDER BY startedAt DESC, rowid ASC LIMIT ?').all(limit) as RunRow[];
+    },
+    runsInWindow(from, to, repo = null) {
+      if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
+        || Date.parse(to) - Date.parse(from) > 366 * 86_400_000) throw new RangeError('Invalid history window');
+      return sql.prepare(`SELECT * FROM runs WHERE julianday(startedAt) >= julianday(@from) AND julianday(startedAt) < julianday(@to)
+        ${repo === null ? '' : 'AND repo = @repo COLLATE NOCASE'} ORDER BY startedAt DESC, id DESC`)
+        .all({ from, to, ...(repo === null ? {} : { repo }) }) as RunRow[];
     },
     runPage: sql.transaction((limit: number, offset: number, repo: string | null = null): RunPage => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) {

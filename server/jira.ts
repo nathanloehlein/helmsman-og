@@ -11,6 +11,7 @@ import {
   buildResolved90Jql,
 } from './config';
 import type { JiraHistory, JiraIssue } from './types';
+import { readHttpFailure } from './http-failure';
 
 export interface TriageGroups {
   unassignedBacklog: JiraIssue[];
@@ -51,7 +52,7 @@ async function search(jira: JiraConfig, jql: string): Promise<JiraIssue[]> {
   const res: Response = await fetch(url, {
     headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
   });
-  if (!res.ok) throw new Error(`Jira ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Jira ${res.status}: ${await readHttpFailure(res)}`);
   const body: { issues?: JiraIssue[] } = await res.json();
   return body.issues ?? [];
 }
@@ -64,7 +65,7 @@ async function fetchChangelog(jira: JiraConfig, key: string): Promise<JiraHistor
   const res: Response = await fetch(url, {
     headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
   });
-  if (!res.ok) throw new Error(`Jira ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Jira ${res.status}: ${await readHttpFailure(res)}`);
   const body: { changelog?: { histories?: JiraHistory[] } } = await res.json();
   return body.changelog?.histories ?? [];
 }
@@ -148,7 +149,7 @@ export async function verifyJiraAuth(jira: JiraConfig): Promise<void> {
   const res: Response = await fetch(url, {
     headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
   });
-  if (!res.ok) throw new Error(`Jira auth ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Jira auth ${res.status}: ${await readHttpFailure(res)}`);
 }
 
 export async function fetchApproxCount(jira: JiraConfig, jql: string): Promise<number> {
@@ -162,7 +163,7 @@ export async function fetchApproxCount(jira: JiraConfig, jql: string): Promise<n
     },
     body: JSON.stringify({ jql }),
   });
-  if (!res.ok) throw new Error(`Jira ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Jira ${res.status}: ${await readHttpFailure(res)}`);
   const body: { count?: number } = await res.json();
   return body.count ?? 0;
 }
@@ -175,7 +176,7 @@ async function searchBugs(jira: JiraConfig, jql: string, maxResults: number): Pr
   const res: Response = await fetch(url, {
     headers: { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json' },
   });
-  if (!res.ok) throw new Error(`Jira ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`Jira ${res.status}: ${await readHttpFailure(res)}`);
   const body: { issues?: BugIssue[] } = await res.json();
   return body.issues ?? [];
 }

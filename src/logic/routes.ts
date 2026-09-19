@@ -1,4 +1,4 @@
-export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'config' | 'runs' | 'todos';
+export type PageView = 'dashboard' | 'triage' | 'cmux' | 'bugs' | 'prs' | 'config' | 'runs' | 'todos' | 'outcomes' | 'campaigns' | 'clarifications';
 
 export interface AppRoute {
   view: PageView;
@@ -21,6 +21,9 @@ const paths: Record<PageView, string> = {
   config: '/config',
   runs: '/runs',
   todos: '/todos',
+  outcomes: '/outcomes',
+  campaigns: '/campaigns',
+  clarifications: '/clarifications',
 };
 
 const panes: Record<PageView, readonly string[]> = {
@@ -32,6 +35,9 @@ const panes: Record<PageView, readonly string[]> = {
   config: ['local-git'],
   runs: ['recent', 'newrun', 'tasks'],
   todos: ['list', 'new'],
+  outcomes: ['summary', 'history'],
+  campaigns: [],
+  clarifications: [],
 };
 
 function validRepo(value: string | null): string | null {

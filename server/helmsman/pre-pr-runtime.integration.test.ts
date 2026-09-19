@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
 import { chmod, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -300,15 +301,23 @@ describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', 
     const existingBody = `${content}\n\n_Helmsman PR author · model: old-model · effort: low_`;
     const env = await fixture('existing', undefined, { existingBody, body: 'Do not replace the human description.' });
     try {
+      let prePrResume: AgentTask['prePrResume'];
       for (let attempt = 0; attempt < 2; attempt++) {
-        const result = await env.run();
+        const result = await env.run({ prePrResume });
         expect(result.code, result.output).toBe(0);
         const prs = JSON.parse(await readFile(env.state, 'utf8'));
         expect(prs[0]?.body).toBe(`${content}\n\n_Helmsman · author-model - med_`);
+        const artifactDir = join(env.root, 'runs', 'author.pre-pr');
+        const report = JSON.parse(await readFile(join(artifactDir, 'review-1-codex.json'), 'utf8'));
+        prePrResume = { baseSha: report.baseSha, headSha: report.headSha, branch: 'voyage/test', round: 1,
+          metadataPath: join(artifactDir, 'implement-0.json'), reviewerReports: {
+            codex: join(artifactDir, 'review-1-codex.json'), 'claude-code': join(artifactDir, 'review-1-claude-code.json'),
+          } };
       }
       const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
       expect(steps.filter(step => step.stage === 'edit-pr')).toHaveLength(1);
       expect(steps.filter(step => step.stage === 'publish')).toHaveLength(0);
+      expect(steps.filter(step => step.stage === 'implement')).toHaveLength(1);
     } finally { await rm(env.root, { recursive: true, force: true }); }
   }, 30_000);
 
@@ -344,6 +353,9 @@ describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', 
       const events = result.output.trim().split('\n').map(line => JSON.parse(line));
       expect(events.filter(event => event.prNumber !== undefined)).toEqual([expect.objectContaining({ kind: 'result', prNumber: 42 })]);
       expect(events.reduce((sum, event) => sum + (event.costUsd ?? 0), 0)).toBe(2);
+      expect(events).toContainEqual(expect.objectContaining({ provider: 'codex', model: 'author-model', effort: 'medium', stage: 'implement', round: 0 }));
+      expect(events).toContainEqual(expect.objectContaining({ provider: 'claude-code', stage: 'review', round: 2 }));
+      expect(events).toContainEqual(expect.objectContaining({ provider: 'codex', stage: 'fix', round: 1 }));
       const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
       expect(steps.map(step => step.stage)).toEqual(['implement', 'review', 'review', 'fix', 'review', 'review', 'push', 'publish']);
       expect(steps.filter(step => step.stage === 'review').map(step => step.id)).toEqual(['codex', 'claude', 'codex', 'claude']);
@@ -355,6 +367,29 @@ describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', 
       const status = await exec(GIT, ['status', '--porcelain'], { cwd: env.cwd });
       expect(status.stdout).toBe('');
     } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it.each([false, true])('blocks unanswered clarification before %s push or PR creation', async firstGateReady => {
+    const env = await fixture('named-remote');
+    let checks = 0;
+    const server = createServer((_req, res) => {
+      checks++;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ready: firstGateReady && checks === 1 }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing test gate address');
+      const result = await env.run({ clarification: { questionsPath: join(env.root, 'questions'), answersPath: join(env.root, 'answers'),
+        gateUrl: `http://127.0.0.1:${address.port}/api/runs/author/clarification-gate` } });
+      expect(result.code, result.output).toBe(1);
+      expect(result.output).toContain('Clarification publication gate did not pass');
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.filter(step => step.stage === 'push')).toHaveLength(firstGateReady ? 1 : 0);
+      expect(steps.some(step => step.stage === 'publish' || step.stage === 'edit-pr')).toBe(false);
+      await expect(readFile(env.state)).rejects.toThrow();
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(env.root, { recursive: true, force: true }); }
   }, 30_000);
 
   it('publishes to the uniquely matching named remote when origin points elsewhere', async () => {
@@ -378,7 +413,11 @@ describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', 
       expect(await readFile(join(env.cwd, 'code.txt'), 'utf8')).toContain('initial');
       if (mode === 'unavailable') expect(result.output).toContain('writer CLI is unavailable');
       if (mode === 'modified') expect(result.output).toContain('modified its immutable worktree');
-      if (mode === 'auth') expect(result.output).toContain('exited 7');
+      if (mode === 'auth') {
+        expect(result.output).toContain('exited 7');
+        const events = result.output.trim().split('\n').map(line => JSON.parse(line));
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'error', provider: 'claude-code', stage: 'review', round: 1 }));
+      }
       if (mode === 'remote-moved') expect(result.output).toContain('Remote branch does not match the approved revision');
       if (mode === 'ticket-title') expect(result.output).toContain('PR title must include the Jira ticket ID');
     } finally { await rm(env.root, { recursive: true, force: true }); }

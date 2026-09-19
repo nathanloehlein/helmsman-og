@@ -1,0 +1,24 @@
+.campaign-page { padding: 1rem; }
+.campaign-layout { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(0, 3fr); gap: 1rem; align-items: start; }
+.campaign-panel { padding: 1rem; margin-bottom: 1rem; }
+.campaign-page fieldset { border: 0; padding: 0; display: grid; gap: .8rem; min-width: 0; }
+.campaign-page label { display: grid; gap: .3rem; }
+.campaign-page input, .campaign-page select, .campaign-page textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: .55rem; }
+.campaign-page button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .65rem; cursor: pointer; }
+.campaign-page button:hover, .campaign-page button[aria-pressed="true"] { border-color: var(--accent); }
+.campaign-page button:disabled { opacity: .5; cursor: default; }
+.campaign-list { list-style: none; padding: 0; display: grid; gap: .7rem; }
+.campaign-list small, .campaign-page td small { display: block; margin-top: .3rem; overflow-wrap: anywhere; }
+.campaign-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+.campaign-hint { font-size: .8rem; color: var(--text-dim); }
+.campaign-state { font-size: .8rem; font-weight: normal; }
+.campaign-error { color: var(--bad); overflow-wrap: anywhere; }
+.campaign-preview, .campaign-confirm { border: 1px solid var(--accent); padding: .8rem; margin: 1rem 0; }
+.campaign-preview ol { max-height: 24rem; overflow: auto; padding-left: 1.5rem; }
+.campaign-preview li { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: .6rem; }
+.campaign-table-wrap { overflow: auto; margin-top: 1rem; }
+.campaign-page table { border-collapse: collapse; width: 100%; text-align: left; }
+.campaign-page th, .campaign-page td { padding: .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.campaign-page button:focus-visible, .campaign-page input:focus-visible, .campaign-page select:focus-visible, .campaign-page textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.campaign-page td:first-child { min-width: 10rem; max-width: 30rem; overflow-wrap: anywhere; }
+@media (max-width: 850px) { .campaign-layout { grid-template-columns: 1fr; } }
