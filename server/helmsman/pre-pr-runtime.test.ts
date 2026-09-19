@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { canCreateFileSymlink, hasProcessGroups } from '../test-support/platform';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { executePrePrStage, githubRepository, localReviewScope, parsePrMetadata, readPrePrReport } from './pre-pr-runtime';
+import { assertClarificationReady, executePrePrStage, githubRepository, localReviewScope, parsePrMetadata, readPrePrReport, stageEventEmitter } from './pre-pr-runtime';
 import type { AgentAdapter, AgentEvent } from './agents/adapter';
 
 const task = { ticketId: 'T-1', title: 'Task', repo: 'org/repo', jiraBaseUrl: '' };
@@ -12,6 +12,41 @@ const adapter = (script: string): AgentAdapter => ({ id: 'test', buildCommand: (
   parseLine: line => JSON.parse(line) as AgentEvent });
 
 describe('pre-PR runtime boundaries', () => {
+  it.each([['codex', 3], ['claude-code', 2]] as const)('uses %s cost semantics and trusted stage metadata', (provider, total) => {
+    const events: AgentEvent[] = [];
+    const forward = stageEventEmitter(provider, { ...task, model: 'review-model', effort: 'high',
+      prePr: { stage: 'review', baseSha: 'a'.repeat(40), reportPath: '/report', round: 2 } }, event => events.push(event));
+    for (const costUsd of [0, 1, 2]) forward({ kind: 'usage', text: 'Usage', costUsd, provider: 'spoofed', stage: 'implement', round: 0 });
+    expect(events.reduce((sum, event) => sum + (event.costUsd ?? 0), 0)).toBe(total);
+    expect(events[0]?.costUsd).toBe(0);
+    expect(events.every(event => event.provider === provider && event.model === 'review-model' && event.effort === 'high'
+      && event.stage === 'review' && event.round === 2)).toBe(true);
+  });
+
+  it('requires an explicit matching local gate for tasks using clarification and permits legacy tasks', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: async () => ({ ready: true }) } as Response);
+    await assertClarificationReady(task, 'run-1', fetcher);
+    expect(fetcher).not.toHaveBeenCalled();
+    for (const gateUrl of [undefined, 'https://example.com/api/runs/run-1/clarification-gate', 'http://localhost:8787/api/runs/other/clarification-gate']) {
+      await expect(assertClarificationReady({ ...task, clarification: { questionsPath: '/q', answersPath: '/a', gateUrl } }, 'run-1', fetcher)).rejects.toThrow('publication blocked');
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    await assertClarificationReady({ ...task, clarification: { questionsPath: '/q', answersPath: '/a', gateUrl: 'http://127.0.0.1:8787/api/runs/run-1/clarification-gate' } }, 'run-1', fetcher);
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error', signal: expect.any(AbortSignal) });
+  });
+
+  it('requires a bearer capability for the Docker host gate', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: async () => ({ ready: true }) } as Response);
+    const clarification = { questionsPath: '/q', answersPath: '/a', gateUrl: 'http://host.docker.internal:8790/clarification-gate' };
+    await expect(assertClarificationReady({ ...task, clarification }, 'run-1', fetcher)).rejects.toThrow('publication blocked');
+    await assertClarificationReady({ ...task, clarification: { ...clarification, gateToken: 'a'.repeat(64) } }, 'run-1', fetcher);
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: `Bearer ${'a'.repeat(64)}` });
+  });
+
+  it.each([null, {}, { ready: false }, { ready: 'true' }])('fails closed for unready/malformed clarification gate %j', async body => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: async () => body } as Response);
+    await expect(assertClarificationReady({ ...task, clarification: { questionsPath: '/q', answersPath: '/a', gateUrl: 'http://127.0.0.1:8787/api/runs/run-1/clarification-gate' } }, 'run-1', fetcher)).rejects.toThrow('publication blocked');
+  });
   it('validates origin identity for GitHub HTTPS and SSH only', () => {
     for (const remote of ['https://github.com/Org/repo.git', 'git@github.com:Org/repo.git', 'ssh://git@github.com/Org/repo']) {
       expect(githubRepository(remote)).toBe('org/repo');

@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue, type PrePrSettings } from '../../src/logic/prePrSettings';
 import type { AgentTask } from './agents/adapter';
 import { codexAdapter } from './agents/codex';
@@ -13,6 +13,7 @@ import type { Db, RunRow } from './db';
 import type { HostRef, RunHost } from './run-host';
 import { parsePrMetadata, readPrePrReport } from './pre-pr-runtime';
 import { parsePrePrReview, PrePrSummaryTooLongError } from './pre-pr-workflow';
+import { createRunArtifactStore } from './artifacts';
 
 const exec = promisify(execFile);
 
@@ -20,6 +21,20 @@ export class ResumeError extends Error {}
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+async function verifyArtifactIfPresent(runsDir: string, runId: string, identity: { stage: string; round: number; reviewer?: string }, path: string): Promise<void> {
+  const store = createRunArtifactStore(join(runsDir, '.artifacts'));
+  let manifest;
+  try { manifest = await store.manifest({ runId, ...identity }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new ResumeError('The immutable report manifest could not be verified.');
+  }
+  await store.verify({ runId, ...identity });
+  const bytes = await readFile(path);
+  const actual = createHash('sha256').update(bytes).digest('hex');
+  if (actual !== manifest.sha256 || bytes.byteLength !== manifest.bytes) throw new ResumeError('A report changed after its immutable artifact was recorded.');
 }
 
 export async function inspectPrePrContinuation(row: RunRow, runsDir: string) {
@@ -84,6 +99,7 @@ export async function inspectPrePrContinuation(row: RunRow, runsDir: string) {
   let baseSha = '';
   for (const reviewer of reviewers) {
     const path = join(artifactDir, `review-${round}-${reviewer}.json`);
+    await verifyArtifactIfPresent(runsDir, row.id, { stage: 'review', round, reviewer }, path);
     const value = await readPrePrReport(path);
     const raw = record(value);
     if (!baseSha && typeof raw?.baseSha === 'string') baseSha = raw.baseSha;
@@ -94,12 +110,13 @@ export async function inspectPrePrContinuation(row: RunRow, runsDir: string) {
   await git(['merge-base', '--is-ancestor', baseSha, headSha]);
   if (baseSha === headSha) throw new ResumeError('The checkpoint contains no committed implementation.');
   const metadataPath = join(artifactDir, round === 1 ? 'implement-0.json' : `fix-${round - 1}.json`);
+  await verifyArtifactIfPresent(runsDir, row.id, { stage: round === 1 ? 'implement' : 'fix', round: round === 1 ? 0 : round - 1 }, metadataPath);
   parsePrMetadata(await readPrePrReport(metadataPath), task as unknown as AgentTask);
   const resumedTask: AgentTask = { ...task as unknown as AgentTask, prePrResume: { baseSha, headSha, branch, round, reviewerReports, metadataPath } };
   return { task: resumedTask, settings, writerId, cwd: row.worktreePath, logPath, exitPath, specPath, logSize };
 }
 
-export async function resumeFailedPrePrRun(row: RunRow, deps: { db: Db; host: RunHost; runsDir: string; now(): string; isStopped?(): boolean }): Promise<RunRow> {
+export async function resumeFailedPrePrRun(row: RunRow, deps: { db: Db; host: RunHost; runsDir: string; now(): string; isStopped?(): boolean; prepareTask?(task: AgentTask): Promise<AgentTask> }): Promise<RunRow> {
   let checkpoint: Awaited<ReturnType<typeof inspectPrePrContinuation>>;
   try { checkpoint = await inspectPrePrContinuation(row, deps.runsDir); }
   catch (error) {
@@ -118,6 +135,7 @@ export async function resumeFailedPrePrRun(row: RunRow, deps: { db: Db; host: Ru
   if (!current || current.status !== 'failed' || current.attempt !== row.attempt || current.taskJson !== row.taskJson) {
     throw new ResumeError('The voyage changed while its checkpoint was being verified.');
   }
+  if (deps.prepareTask) checkpoint.task = await deps.prepareTask(checkpoint.task);
   const adapter = prePrAdapter(checkpoint.writerId === 'codex' ? codexAdapter : claudeCodeAdapter, resolve(deps.runsDir), checkpoint.settings);
   const command = adapter.buildCommand(checkpoint.task);
   const archive = join(resolve(deps.runsDir), `${row.id}.attempt-${row.attempt}-${randomUUID()}`);

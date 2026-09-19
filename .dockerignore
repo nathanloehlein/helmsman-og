@@ -1,0 +1,11 @@
+.git
+node_modules
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+.helmsman-runs
+.helmsman-docker-workspaces
+dist
+coverage
+.DS_Store

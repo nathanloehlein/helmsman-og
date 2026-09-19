@@ -20,6 +20,7 @@ describe('codexArgs', () => {
     const args = codexArgs(task());
     expect(args[0]).toBe('exec');
     expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
+    expect(args).toContain('--json');
     expect(args).toContain('-m');
     expect(args[args.indexOf('-m') + 1]).toBe('gpt-6-astra');
     expect(args).toContain('-c');
@@ -91,6 +92,37 @@ describe('codexAdapter', () => {
   it('parseLine returns a plain log event when there is no PR number', () => {
     const event = codexAdapter.parseLine('just some output');
     expect(event).toEqual({ kind: 'log', text: 'just some output' });
+  });
+
+  it('parses JSON agent messages, commands, errors, and usage', () => {
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'item.completed', item: {
+      id: 'message-1', type: 'agent_message', text: 'opened https://github.com/o/r/pull/8',
+    } }))).toEqual({ kind: 'result', text: 'opened https://github.com/o/r/pull/8', eventId: 'message-1', prNumber: 8 });
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'item.completed', item: {
+      id: 'command-1', type: 'command_execution', command: 'pnpm test',
+    } }))).toEqual({ kind: 'tool', text: 'pnpm test', eventId: 'command-1' });
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'turn.completed', turn_id: 'turn-1', usage: {
+      input_tokens: 12, cached_input_tokens: 4, output_tokens: 8, total_tokens: 20, cost_usd: 0.0125,
+    } }))).toEqual({ kind: 'usage', text: 'Codex turn completed', eventId: 'turn-1', usage: {
+      inputTokens: 12, cachedInputTokens: 4, outputTokens: 8, totalTokens: 20,
+    }, costUsd: 0.0125 });
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'turn.failed', turn_id: 'turn-2', error: { message: 'quota exceeded' } })))
+      .toEqual({ kind: 'error', text: 'quota exceeded', eventId: 'turn-2' });
+  });
+
+  it('falls back to raw logs for malformed or unsupported JSON events', () => {
+    expect(codexAdapter.parseLine('{bad json')).toEqual({ kind: 'log', text: '{bad json' });
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'item.completed', item: null })))
+      .toEqual({ kind: 'log', text: JSON.stringify({ type: 'item.completed', item: null }) });
+  });
+
+  it('rejects invalid token counts and missing event values', () => {
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'turn.completed', usage: {
+      input_tokens: -1, output_tokens: Infinity,
+    } }))).toEqual({ kind: 'log', text: JSON.stringify({ type: 'turn.completed', usage: { input_tokens: -1, output_tokens: null } }) });
+    expect(codexAdapter.parseLine(JSON.stringify({ type: 'item.completed', item: {
+      type: 'agent_message', text: null,
+    } }))).toEqual({ kind: 'log', text: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: null } }) });
   });
 
   it('parseLine returns null for a blank line', () => {

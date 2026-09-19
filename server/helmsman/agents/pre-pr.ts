@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { normalizePrePrSettings, type PrePrSettings } from '../../../src/logic/prePrSettings';
 import type { AgentAdapter, AgentEvent, AgentEventKind } from './adapter';
 
-const KINDS = new Set<AgentEventKind>(['phase', 'tool', 'log', 'result', 'error', 'review-verdict', 'run-complete']);
+const KINDS = new Set<AgentEventKind>(['phase', 'tool', 'log', 'result', 'usage', 'error', 'review-verdict', 'run-complete']);
 const PREFIX = 'pre-pr:';
 
 export function isPrePrAdapter(id: string): boolean {
@@ -29,6 +29,16 @@ export function prePrAdapter(writer: AgentAdapter, runsDir: string, settings?: P
         if (value && typeof value === 'object' && '__helmsmanPrePr' in value && value.__helmsmanPrePr === 1
           && 'kind' in value && KINDS.has(value.kind as AgentEventKind) && 'text' in value && typeof value.text === 'string') {
           const event: AgentEvent = { kind: value.kind as AgentEventKind, text: value.text };
+          if ('eventId' in value && typeof value.eventId === 'string' && value.eventId.length <= 256) event.eventId = value.eventId;
+          if ('usage' in value && value.usage && typeof value.usage === 'object' && !Array.isArray(value.usage)) {
+            const usage = value.usage as Record<string, unknown>;
+            const fields = ['inputTokens', 'cachedInputTokens', 'outputTokens', 'totalTokens'] as const;
+            if (fields.some(field => usage[field] !== undefined && (!Number.isSafeInteger(usage[field]) || Number(usage[field]) < 0))) return { kind: 'log', text: line };
+            event.usage = Object.fromEntries(fields.filter(field => usage[field] !== undefined).map(field => [field, usage[field]]));
+          }
+          const record = value as Record<string, unknown>;
+          for (const field of ['provider', 'model', 'effort', 'stage'] as const) if (typeof record[field] === 'string' && record[field].length <= 128) event[field] = record[field];
+          if ('round' in value && Number.isSafeInteger(value.round) && Number(value.round) >= 0) event.round = Number(value.round);
           if ('costUsd' in value && typeof value.costUsd === 'number' && Number.isFinite(value.costUsd) && value.costUsd >= 0) event.costUsd = value.costUsd;
           if (event.kind === 'result' && 'prNumber' in value && typeof value.prNumber === 'number'
             && Number.isSafeInteger(value.prNumber) && value.prNumber > 0) event.prNumber = value.prNumber;

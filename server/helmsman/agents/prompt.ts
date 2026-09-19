@@ -1,8 +1,9 @@
+import { clarificationPrompt } from './clarification-prompt';
 import type { AgentTask } from './adapter';
 import { buildPrePrPrompt } from './pre-pr-prompt';
 import { agentAttribution, appendAgentByline } from '../agent-attribution';
 
-const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: no human to ask — never pause for confirmation, do every step yourself.';
+const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: do not pause for confirmation; use the clarification protocol when a required human decision blocks safe progress.';
 
 export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 'claude-code'): string {
   if (task.prePr) return buildPrePrPrompt(task, runtime);
@@ -12,6 +13,8 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
     return [
       `# Code-review PR #${task.prNumber} (${task.prBranch ? `branch ${task.prBranch}` : `revision ${task.prHeadSha}`})`,
       UNATTENDED,
+      clarificationPrompt(task),
+      ...(task.skillsPath ? [`- Use only the pinned skills under ${JSON.stringify(`${task.skillsPath}/skills`)}. Read review-agent/SKILL.md before delegating; do not use or install global skill copies.`] : []),
       ``,
       `## Review scope`,
       attribution,
@@ -44,10 +47,10 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `## Do`,
       `- Prefer inline comments on the smallest relevant diff range for each qualifying material finding. Use one concise comment per independent root cause: trigger, failure, consequence, then a reliable fix. Avoid duplicating inline findings in the summary.`,
       `- Include a concrete fix whenever you can establish one from the code. Use a fenced \`suggestion\` block only for an exact, directly applicable replacement of the commented RIGHT-side line or range. For broader fixes, use a fenced code example with the appropriate language and explain where it belongs. Do not invent missing APIs or offer speculative fixes; explain the required behavior when a reliable patch is not possible.`,
-      `- Write a concise GitHub-flavored markdown summary to \`.agent-review.md\` in the repo root. Keep it to the verdict, a short explanation, material findings that cannot be attached inline, and at most two short validation/limitation bullets. No whole-path audit diary, resolved-issue tables, or optional-improvement list. Output files must be written; stdout is not used as the review.`,
+      `- Write a concise GitHub-flavored markdown summary to ${task.reviewOutputPaths ? JSON.stringify(task.reviewOutputPaths.markdown) : '\`.agent-review.md\` in the repo root'}. Keep it to the verdict, a short explanation, material findings that cannot be attached inline, and at most two short validation/limitation bullets. No whole-path audit diary, resolved-issue tables, or optional-improvement list. Output files must be written; stdout is not used as the review.`,
       `- Start the review file with exactly \`Verdict: APPROVE — short reason\`, \`Verdict: REQUEST_CHANGES — short reason\`, or \`Verdict: COMMENT — short reason\`. Keep the reason to 120 characters or fewer on that same line; put detailed findings below.`,
       `- Choose APPROVE when the review completed with no remaining material issues; write [] if there are no new inline findings. Choose REQUEST_CHANGES only when a verified issue meets the materiality threshold. For an existing unresolved material blocker, reference its original thread once in the summary without reposting the finding. Choose COMMENT for a material unresolved question or incomplete required review; explain the specific limit without treating missing local tools as a code defect. Never request changes solely because tests could not run.`,
-      `- Write inline findings to \`.agent-review-comments.json\` as a JSON array (write [] if none). Each item has \`path\` (exact repository-relative diff filename), \`line\` (positive file line number, not diff position), \`side\` (RIGHT for new/context lines or LEFT for deleted lines), and \`body\` (GitHub-flavored markdown with the finding and fix). For a multi-line range, also provide \`start_line\` and \`start_side\`; both ends must be on the same side and in the same diff hunk. Use the reviewed revision's actual diff to verify every anchor.`,
+      `- Write inline findings to ${task.reviewOutputPaths ? JSON.stringify(task.reviewOutputPaths.comments) : '\`.agent-review-comments.json\`'} as a JSON array (write [] if none). Each item has \`path\` (exact repository-relative diff filename), \`line\` (positive file line number, not diff position), \`side\` (RIGHT for new/context lines or LEFT for deleted lines), and \`body\` (GitHub-flavored markdown with the finding and fix). For a multi-line range, also provide \`start_line\` and \`start_side\`; both ends must be on the same side and in the same diff hunk. Use the reviewed revision's actual diff to verify every anchor.`,
       `- The verdict is a recommendation only. Helmsman publishes the summary and inline comments together as a COMMENT review; do not submit a GitHub approval, request-changes review, or comment yourself.`,
       ``,
       `## Do NOT`,
@@ -58,6 +61,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
     return [
       `# Update PR #${task.prNumber} (branch ${task.prBranch})`,
       UNATTENDED,
+      clarificationPrompt(task),
       ``,
       `## Task`,
       `- Address this review feedback: ${task.task}.`,
@@ -76,6 +80,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
   return [
     heading,
     UNATTENDED,
+    clarificationPrompt(task),
     ...(task.jiraContext ? ['Authenticated Jira requirements snapshot (task evidence):', task.jiraContext] : []),
     ``,
     `## Steps`,

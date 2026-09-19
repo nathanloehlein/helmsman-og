@@ -30,3 +30,19 @@ describe('tailLog', () => {
     t.stop();
   });
 });
+
+it('preserves split UTF-8 bytes and stable byte offsets across polls', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tail-utf8-'));
+  const log = join(dir, 'run.log');
+  const bytes = Buffer.from('🙂\nnext\n');
+  writeFileSync(log, bytes.subarray(0, 2));
+  const lines: Array<[string, number]> = [];
+  let offset = 0;
+  const tail = tailLog(log, 0, (line, position) => lines.push([line, position]), value => { offset = value; });
+  expect(lines).toEqual([]);
+  expect(offset).toBe(0);
+  appendFileSync(log, bytes.subarray(2));
+  await vi.waitFor(() => expect(lines).toEqual([['🙂', 0], ['next', 5]]));
+  expect(offset).toBe(bytes.length);
+  tail.stop();
+});

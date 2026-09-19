@@ -1,10 +1,10 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Db, RunRow, RunStatus } from './db';
 import type { RunBus } from './event-bus';
 import type { JiraActions } from './jira-actions';
 import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
-import { tailLog, type Tail } from './log-tail';
+import { tailLog, readLogLines, type LogLineConsumer, type Tail } from './log-tail';
 import type { HostRef, RunHost } from './run-host';
 import { reviewVerdictLine } from './review-verdict';
 import { parseInlineReviewComments, type InlineReviewInput } from './inline-review';
@@ -12,6 +12,10 @@ import { agentAttribution } from './agent-attribution';
 
 export interface RunnerDeps {
   db: Db;
+  recordAgentEvent?: (run: RunRow, task: AgentTask, event: AgentEvent, byteOffset: number) => number | null;
+  pollClarifications?: (runId: string) => void;
+  hasRequiredUnanswered?: (runId: string) => boolean;
+  onRunComplete?: (run: RunRow) => void;
   bus: RunBus;
   adapter: AgentAdapter;
   host: RunHost;
@@ -76,6 +80,7 @@ async function markInReview(
 }
 
 async function postReviewDerivingStatusFromReviewNotExitCode(
+  runId: string,
   task: AgentTask,
   worktreePath: string,
   prNumber: number | null,
@@ -99,6 +104,11 @@ async function postReviewDerivingStatusFromReviewNotExitCode(
   }
   const comments = parseInlineReviewComments(await deps.readReviewComments?.(worktreePath) ?? null);
   if (deps.isStopped?.()) return 'stopped';
+  deps.pollClarifications?.(runId);
+  if (deps.hasRequiredUnanswered?.(runId)) {
+    onEvent({ kind: 'error', text: 'Required clarification has no answer; review publication blocked', stage: 'clarification' });
+    return 'failed';
+  }
   const r = await deps.postReview(task.repo, prNumber, body, {
     headSha: task.prHeadSha,
     comments,
@@ -130,43 +140,18 @@ function readExitCode(exitPath: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-function pumpRemaining(logPath: string, fromOffset: number, onLine: (line: string) => void): number {
-  let offset: number = fromOffset;
-  let fd: number | null = null;
-  try {
-    fd = openSync(logPath, 'r');
-    const size: number = fstatSync(fd).size;
-    if (size > offset) {
-      const len: number = size - offset;
-      const buf: Buffer = Buffer.alloc(len);
-      const read: number = readSync(fd, buf, 0, len, offset);
-      let buffer: string = buf.subarray(0, read).toString('utf8');
-      let nl: number = buffer.indexOf('\n');
-      while (nl !== -1) {
-        onLine(buffer.slice(0, nl));
-        buffer = buffer.slice(nl + 1);
-        nl = buffer.indexOf('\n');
-      }
-      if (buffer.length > 0) onLine(buffer);
-      offset += read;
-    }
-  } catch {
-    void 0;
-  } finally {
-    if (fd !== null) closeSync(fd);
-  }
-  return offset;
-}
 
 interface WaitForExitOptions {
   pollIntervalMs: number;
   isStopped: () => boolean;
   isCostCapped: () => boolean;
+  poll?: () => void;
 }
 
 function waitForExit(exitPath: string, opts: WaitForExitOptions): Promise<number | 'stopped' | 'capped'> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tick = (): void => {
+      try { opts.poll?.(); } catch (error) { reject(error); return; }
       const code: number | null = readExitCode(exitPath);
       if (code != null) {
         resolve(code);
@@ -192,13 +177,15 @@ async function tailUntilExit(
   exitPath: string,
   startOffset: number,
   deps: RunnerDeps,
-  consume: (line: string) => void,
+  consume: LogLineConsumer,
   waitOpts: WaitForExitOptions,
 ): Promise<number | 'stopped' | 'capped'> {
-  const tail: Tail = tailLog(logPath, startOffset, consume, (off) => deps.db.updateRun(runId, { logOffset: off }));
-  const outcome: number | 'stopped' | 'capped' = await waitForExit(exitPath, waitOpts);
-  tail.stop();
-  const logOffset = pumpRemaining(logPath, deps.db.getRun(runId)?.logOffset ?? startOffset, consume);
+  let tailError: unknown;
+  const tail: Tail = tailLog(logPath, startOffset, consume, (off) => deps.db.updateRun(runId, { logOffset: off }), error => { tailError = error; });
+  let outcome: number | 'stopped' | 'capped';
+  try { outcome = await waitForExit(exitPath, { ...waitOpts, poll: () => deps.pollClarifications?.(runId), isStopped: () => tailError !== undefined || waitOpts.isStopped() }); } finally { tail.stop(); }
+  if (tailError !== undefined) throw tailError;
+  const logOffset = readLogLines(logPath, deps.db.getRun(runId)?.logOffset ?? startOffset, consume, true);
   deps.db.updateRun(runId, { logOffset });
   return outcome;
 }
@@ -217,12 +204,19 @@ interface FinalizeParams {
 
 async function finalizeRun(p: FinalizeParams): Promise<void> {
   const { runId, task, deps, prNumber, totalCost, ok, worktreePath, onEvent } = p;
+  if (ok && deps.hasRequiredUnanswered?.(runId)) {
+    onEvent({ kind: 'error', text: 'Required clarification has no answer; task cannot complete', stage: 'clarification' });
+    p.ok = false;
+  }
   const stopped = p.stopped || (deps.isStopped?.() ?? false);
   const statusInReview: string = deps.statusInReview ?? 'In Review';
-  const status: RunStatus = stopped ? 'stopped' : ok ? 'succeeded' : 'failed';
+  const status: RunStatus = stopped ? 'stopped' : p.ok ? 'succeeded' : 'failed';
 
   if (task.review) {
-    const reviewStatus: RunStatus = await postReviewDerivingStatusFromReviewNotExitCode(task, worktreePath, prNumber, stopped, deps, onEvent);
+    if (deps.hasRequiredUnanswered?.(runId)) {
+      deps.db.updateRun(runId, { status: 'failed', prNumber, costUsd: totalCost, endedAt: deps.now() }); return;
+    }
+    const reviewStatus: RunStatus = await postReviewDerivingStatusFromReviewNotExitCode(runId, task, worktreePath, prNumber, stopped, deps, onEvent);
     deps.db.updateRun(runId, { status: reviewStatus, prNumber, costUsd: totalCost, endedAt: deps.now() });
     return;
   }
@@ -280,6 +274,7 @@ async function resolvePrNumber(
 async function completeRun(runId: string, repo: string, worktreePath: string | null, deps: RunnerDeps): Promise<void> {
   const finalRow: RunRow | null = deps.db.getRun(runId);
   const finalStatus: string = finalRow?.status ?? 'failed';
+  if (finalRow) deps.onRunComplete?.(finalRow);
   if (worktreePath) {
     if (deps.preserveWorktreeOnFailure && finalStatus !== 'succeeded') {
       const text = `Worktree retained for inspection: ${worktreePath}`;
@@ -312,6 +307,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     deps.bus.publish(runId, { kind: 'phase', text });
   }
   let worktreePath: string | null = null;
+  let runningHost: HostRef | null = null;
   try {
     const pinnedReview = task.review && task.prHeadSha;
     if (pinnedReview && (!deps.createReviewWorktree || !task.prNumber)) {
@@ -342,10 +338,14 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
     let stopped: boolean = false;
     let ok: boolean = false;
 
-    const consume = (line: string): void => {
+    const consume = (line: string, byteOffset: number): void => {
       const e: AgentEvent | null = deps.adapter.parseLine(line);
       if (!e) return;
-      if (e.costUsd != null) {
+      const current = deps.db.getRun(runId);
+      if (deps.recordAgentEvent && current) {
+        totalCost = deps.recordAgentEvent(current, task, e, byteOffset);
+        deps.db.updateRun(runId, { costUsd: totalCost });
+      } else if (typeof e.costUsd === 'number' && Number.isFinite(e.costUsd) && e.costUsd >= 0) {
         totalCost = (totalCost ?? 0) + e.costUsd;
         deps.db.updateRun(runId, { costUsd: totalCost });
       }
@@ -370,6 +370,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       } else {
         resetAttemptFiles(logPath, exitPath);
         ref = await deps.host.launch({ runId, cmd, args, cwd: worktree.path, logPath, exitPath, specPath });
+        runningHost = ref;
         deps.db.updateRun(runId, { hostKind: ref.kind, hostRef: JSON.stringify(ref) });
         deps.onLaunch?.(runId, () => deps.host.stop(ref!));
         outcome = await tailUntilExit(runId, logPath, exitPath, 0, deps, consume, {
@@ -379,6 +380,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
         });
       }
 
+      if (typeof outcome === 'number') runningHost = null;
       ok = typeof outcome === 'number' && outcome === 0;
       if (ok) break;
 
@@ -398,6 +400,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
 
     await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped, ok, worktreePath: worktree.path, onEvent });
   } catch (err) {
+    if (runningHost) await deps.host.stop(runningHost).catch(() => {});
     const text: string = err instanceof Error ? err.message : String(err);
     deps.db.appendEvent(runId, 'error', text, deps.now());
     deps.bus.publish(runId, { kind: 'error', text });
@@ -426,10 +429,14 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
 
     const branch: string = task.prBranch ?? `agent/${runId}`;
 
-    const consume = (line: string): void => {
+    const consume = (line: string, byteOffset: number): void => {
       const e: AgentEvent | null = deps.adapter.parseLine(line);
       if (!e) return;
-      if (e.costUsd != null) {
+      const current = deps.db.getRun(runId);
+      if (deps.recordAgentEvent && current) {
+        totalCost = deps.recordAgentEvent(current, task, e, byteOffset);
+        deps.db.updateRun(runId, { costUsd: totalCost });
+      } else if (typeof e.costUsd === 'number' && Number.isFinite(e.costUsd) && e.costUsd >= 0) {
         totalCost = (totalCost ?? 0) + e.costUsd;
         deps.db.updateRun(runId, { costUsd: totalCost });
       }
@@ -442,7 +449,8 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
 
     const existingCode: number | null = readExitCode(exitPath);
     if (existingCode != null) {
-      const logOffset = pumpRemaining(logPath, row.logOffset ?? 0, consume);
+      deps.pollClarifications?.(runId);
+      const logOffset = readLogLines(logPath, row.logOffset ?? 0, consume, true);
       deps.db.updateRun(runId, { logOffset });
       const ok: boolean = existingCode === 0;
       prNumber = await resolvePrNumber(row.repo, branch, prNumber, ok, deps, onEvent);
@@ -470,6 +478,9 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
     onEvent({ kind: 'error', text: 'run interrupted: host gone' });
     deps.db.updateRun(runId, { status: 'failed', endedAt: deps.now() });
   } catch (err) {
+    if (row.hostRef) {
+      try { await deps.host.stop(JSON.parse(row.hostRef) as HostRef); } catch {}
+    }
     const text: string = err instanceof Error ? err.message : String(err);
     deps.db.appendEvent(runId, 'error', text, deps.now());
     deps.bus.publish(runId, { kind: 'error', text });

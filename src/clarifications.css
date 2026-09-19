@@ -1,0 +1,38 @@
+.clarification-page { display: grid; gap: 24px; padding: 22px; max-width: 1100px; margin-inline: auto; }
+.clarification-page h1 { margin: 0 0 8px; font: 700 22px var(--mono); }
+.clarification-page h2 { margin: 0; font: 700 16px var(--mono); }
+.clarification-page h3 { margin: 0; font-size: 17px; line-height: 1.5; }
+.clarification-page p { margin: 0; max-width: 72ch; line-height: 1.6; }
+.clarification-heading, .clarification-section-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 16px; }
+.clarification-heading > div { flex: 1 1 400px; }
+.clarification-heading button { flex: 0 0 auto; }
+.clarification-list { display: grid; gap: 16px; }
+.clarification-card { display: grid; gap: 12px; padding-block: 20px; border-top: 1px solid var(--line); min-width: 0; }
+.clarification-card h3, .clarification-answer, .clarification-contacts { overflow-wrap: anywhere; white-space: pre-wrap; }
+.clarification-card form, .trusted-contact-form { display: grid; gap: 12px; }
+.clarification-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--text-dim); font-size: 12px; overflow-wrap: anywhere; }
+.clarification-state { color: var(--accent); font-weight: 700; }
+.clarification-help { color: var(--text-dim); font-size: 13px; }
+.clarification-empty { display: grid; gap: 8px; padding: 24px 0; border-top: 1px solid var(--line); }
+.clarification-empty p { color: var(--text-dim); }
+.clarification-page label { display: grid; gap: 6px; }
+.clarification-page label:has(input[type="checkbox"]) { display: flex; align-items: center; }
+.clarification-page input:not([type="checkbox"]), .clarification-page textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.clarification-page textarea { resize: vertical; min-height: 90px; }
+.clarification-page :is(input, textarea, button, summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.clarification-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.clarification-actions button { width: auto; }
+.clarification-page button { min-height: 36px; cursor: pointer; }
+.clarification-page button:disabled { cursor: wait; opacity: .6; }
+.clarification-form-error, .clarification-error { color: var(--bad); }
+.clarification-notice { color: var(--text); }
+.clarification-answer strong { display: block; margin-bottom: 6px; }
+.clarification-settings, .clarification-history { border-top: 1px solid var(--line); padding-top: 16px; }
+.clarification-page summary { cursor: pointer; color: var(--text-dim); padding-block: 8px; }
+.clarification-page summary:hover { color: var(--text); }
+.clarification-settings[open] > :not(summary) { margin-top: 16px; }
+.clarification-contacts { padding-left: 20px; line-height: 1.6; }
+@media (max-width: 600px) {
+  .clarification-page { padding: 16px; gap: 20px; }
+  .clarification-heading button, .clarification-actions button { width: 100%; min-height: 44px; }
+}

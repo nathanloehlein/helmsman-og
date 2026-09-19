@@ -153,7 +153,7 @@ describe('renderLocalGit', () => {
     ] });
     expect(root.querySelector('.local-git-gone')?.textContent).toBe('Remote branch gone');
     expect(root.textContent).toContain('No upstream configured');
-    expect(root.textContent).toContain('Check remotes fetches and prunes');
+    expect(root.textContent).toContain('Fetch remote status updates tracking information');
   });
 
   it('shows deletion safeguards and disables actions while pending', () => {

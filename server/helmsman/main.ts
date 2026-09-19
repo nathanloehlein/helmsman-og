@@ -10,6 +10,20 @@ import { buildTriageResponse } from '../triage-endpoint';
 import { buildBugsResponse } from '../bugs-endpoint';
 import type { AppConfig } from '../config';
 import { openDb } from './db';
+import { openOutcomeStore } from './outcomes';
+import { openRunTelemetry } from './run-telemetry';
+import { prepareExecution } from './prepare-run';
+import { openWebhookIntake, parseWebhookRoutes, WebhookError } from './webhooks';
+import { openWorkflowStore } from './workflow-snapshots';
+import { openCampaignStore } from './campaigns';
+import { createCampaignDispatcher } from './campaign-dispatcher';
+import { createCampaignService } from './campaign-service';
+import { openClarificationStore } from './clarifications';
+import { createScopedGateway } from './scoped-gateway';
+import { createDockerWorkspace, removeDockerWorkspace } from './docker-workspace';
+import { dockerHost, dockerRun, hasDocker } from './docker-host';
+import { createClarificationRuntime, clarificationPaths } from './clarification-runtime';
+import { createOutcomeService } from './outcome-service';
 import { recoverRuns } from './recovery';
 import { handleApi } from './router';
 import { ProcessManager } from './process-manager';
@@ -17,11 +31,14 @@ import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
 import { resumeFailedPrePrRun, ResumeError } from './resume';
-import { hasCmux, hasWezTerm, pickHost, type HostRef, type RunHost } from './run-host';
+import { hasCmux, hasWezTerm, pickHost, detachedHost, type HostRef, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
 import { isPrePrAdapter, prePrAdapter } from './agents/pre-pr';
+import { dockerReviewAdapter } from './agents/docker-review';
+import { restoreRunAdapter } from './agents/restore';
+import { readReviewArtifact } from './review-artifacts';
 import { createWorktree, createWorktreeFromBranch, createReviewWorktree, discoverRepoDirs, listAgentWorktrees, removeWorktree, removeWorktreeAt, repoBasename, sweepOrphanedWorktrees } from './worktree';
 import { makeLiveJiraActions, type JiraActions } from './jira-actions';
 import { findPrNumberByBranch, fetchPrStatus, fetchPrDiff, submitReview as ghSubmitReview, requestCopilotReview as ghRequestCopilotReview, type PrStatus } from '../github';
@@ -74,6 +91,16 @@ const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-ru
 mkdirSync(RUNS_DIR, { recursive: true });
 const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
+const outcomeStore = openOutcomeStore(dbPath);
+const runTelemetry = openRunTelemetry(dbPath, outcomeStore);
+const workflows = openWorkflowStore(dbPath);
+const clarifications = openClarificationStore(dbPath, { getRun: id => db.getRun(id) });
+const clarificationRuntime = createClarificationRuntime(clarifications, RUNS_DIR);
+clarifications.cleanupOrphans();
+const outcomes = createOutcomeService({ db, store: outcomeStore, fetchPr: (repo, number) => {
+  const github = configStore.current().github;
+  return github ? fetchPrStatus(github, repo, number) : Promise.resolve(null);
+} });
 const slackReviewRequester = openSlackReviewRequester(dbPath, {
   settings: () => slackReviewSettings(configStore.effectiveEnv()),
   send: input => createSlackBrowserReviewSender(slackSettings(configStore.effectiveEnv())).send(input),
@@ -98,16 +125,67 @@ function ensureCmuxWatch(): void {
 }
 
 // RUN_HOST opts a run into a visible terminal instead of a detached process.
-const RUN_HOSTS: ReadonlyArray<HostRef['kind']> = ['cmux', 'wezterm', 'detached'];
+const RUN_HOSTS: ReadonlyArray<HostRef['kind']> = ['cmux', 'wezterm', 'detached', 'docker'];
 const runHost = RUN_HOSTS.find((k) => k === process.env.RUN_HOST) ?? null;
-const host: RunHost = await pickHost({ hasCmux, hasWezTerm, wrapperPath: WRAPPER, prefer: runHost });
-process.stdout.write(`run host: ${host.kind}\n`);
+const DOCKER_WORKSPACES = join(AGENTS_ROOT, '.helmsman-docker-workspaces');
+const gatewayPort = Number(process.env.HELMSMAN_GATEWAY_PORT ?? '8790');
+const gatewayUrl = `http://host.docker.internal:${gatewayPort}`;
+const gateway = createScopedGateway({ path: dbPath, openaiKey: () => process.env.OPENAI_API_KEY,
+  anthropicKey: () => process.env.ANTHROPIC_API_KEY, githubKey: () => configStore.current().github?.token,
+  active: runId => db.getRun(runId)?.status === 'running',
+  scope: runId => {
+    const run = db.getRun(runId);
+    if (!run) return null;
+    const task = run.taskJson ? JSON.parse(run.taskJson) as AgentTask : null;
+    return { repo: run.repo, branch: task?.prBranch ?? `agent/${runId}`, readOnly: Boolean(task?.review) };
+  },
+  clarificationReady: runId => { clarificationRuntime.poll(runId); return !clarificationRuntime.hasUnanswered(runId); },
+});
+if (runHost === 'docker') {
+  if (!process.env.HELMSMAN_DOCKER_IMAGE) throw new Error('Set HELMSMAN_DOCKER_IMAGE to a built Helmsman runtime image before selecting Docker');
+  if (!Number.isSafeInteger(gatewayPort) || gatewayPort < 1024 || gatewayPort > 65535) throw new Error('Invalid scoped gateway port');
+  const gatewayServer = gateway.server();
+  await new Promise<void>((resolve, reject) => { gatewayServer.once('error', reject); gatewayServer.listen(gatewayPort, '0.0.0.0', resolve); });
+}
+const selectedHost = await pickHost({ hasCmux, hasWezTerm, hasDocker, wrapperPath: WRAPPER, prefer: runHost,
+  dockerHost: () => dockerHost({ image: process.env.HELMSMAN_DOCKER_IMAGE ?? '', runtimeRoot: RUNS_DIR, wrapperPath: WRAPPER, run: dockerRun, enabled: true }) });
+const localHost = detachedHost(WRAPPER);
+const host: RunHost = selectedHost.kind === 'docker' ? {
+  kind: 'docker',
+  launch: spec => spec.args.some(arg => arg.endsWith('/pre-pr-cli.ts') || arg.endsWith('/docker-review-cli.ts')) ? localHost.launch(spec) : selectedHost.launch(spec),
+  isAlive: ref => ref.kind === 'detached' ? localHost.isAlive(ref) : selectedHost.isAlive(ref),
+  stop: async ref => {
+    await (ref.kind === 'detached' ? localHost.stop(ref) : selectedHost.stop(ref));
+    const run = db.activeRuns().find(row => row.hostRef === JSON.stringify(ref));
+    if (run) await stopDockerStages(run.id);
+  },
+} : selectedHost;
+async function stopDockerStages(runId: string): Promise<void> {
+  if (!/^[a-z\d_-]{1,128}$/i.test(runId)) return;
+  try {
+    const result = await dockerRun(['docker', 'ps', '-aq', '--filter', `label=helmsman.runId=${runId}`]);
+    const ids = result.stdout.trim().split(/\s+/).filter(id => /^[a-f\d]{12,64}$/.test(id));
+    if (ids.length) await dockerRun(['docker', 'rm', '-f', ...ids]);
+    const networks = await dockerRun(['docker', 'network', 'ls', '-q', '--filter', `label=helmsman.runId=${runId}`]);
+    const networkIds = networks.stdout.trim().split(/\s+/).filter(id => /^[a-f\d]{12,64}$/.test(id));
+    if (networkIds.length) await dockerRun(['docker', 'network', 'rm', ...networkIds]);
+  } catch (error) { process.stderr.write(`Docker stage cleanup failed: ${String(error)}\n`); }
+}
+async function standaloneWorkspace(repo: string, runId: string, mode: 'fresh' | 'review' | 'branch',
+  create: () => Promise<{ path: string; branch: string }>, headSha?: string): Promise<{ path: string; branch: string }> {
+  const source = await create();
+  if (host.kind !== 'docker') return source;
+  try {
+    return await createDockerWorkspace({ source: source.path, root: DOCKER_WORKSPACES, runId, mode,
+      branch: source.branch, ...(headSha ? { headSha } : {}) });
+  } finally { await removeWorktree(AGENTS_ROOT, repo, source.path); }
+}
 
-function adapterFor(id: string, cfg: AppConfig): AgentAdapter {
-  if (isPrePrAdapter(id)) return prePrAdapter(id === 'pre-pr:claude-code' ? claudeCodeAdapter : codexAdapter, RUNS_DIR);
-  if (id === 'command') return commandAdapter(cfg.agentCmd ?? '');
-  if (id === 'claude-code') return claudeCodeAdapter;
-  return codexAdapter;
+process.stdout.write(`run host: ${host.kind}\n`);
+if (host.kind === 'docker') {
+  for (const row of db.listRuns(1000)) {
+    if (row.status !== 'running' && row.taskJson?.includes('dockerExecution')) void stopDockerStages(row.id);
+  }
 }
 
 function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDeps, 'adapter' | 'genId' | 'onLaunch' | 'isStopped'> {
@@ -116,10 +194,14 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
     bus,
     host,
     runsDir: RUNS_DIR,
-    createWorktree: (repo: string, id: string) => createWorktree(AGENTS_ROOT, repo, id),
-    createWorktreeFromBranch: (repo: string, id: string, branch: string) => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch),
-    createReviewWorktree: (repo, id, number, headSha) => createReviewWorktree(AGENTS_ROOT, repo, id, number, headSha),
-    removeWorktree: (repo: string, path: string) => removeWorktree(AGENTS_ROOT, repo, path),
+    recordAgentEvent: runTelemetry.record,
+    pollClarifications: clarificationRuntime.poll,
+    hasRequiredUnanswered: clarificationRuntime.hasUnanswered,
+    onRunComplete: run => { runTelemetry.complete(run); clarificationRuntime.complete(run.id); gateway.revokeRun(run.id); if (host.kind === 'docker') void stopDockerStages(run.id); },
+    createWorktree: (repo: string, id: string) => standaloneWorkspace(repo, id, 'fresh', () => createWorktree(AGENTS_ROOT, repo, id)),
+    createWorktreeFromBranch: (repo: string, id: string, branch: string) => standaloneWorkspace(repo, id, 'branch', () => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch)),
+    createReviewWorktree: (repo, id, number, headSha) => standaloneWorkspace(repo, id, 'review', () => createReviewWorktree(AGENTS_ROOT, repo, id, number, headSha), headSha),
+    removeWorktree: (repo: string, path: string) => path.startsWith(`${DOCKER_WORKSPACES}/`) ? removeDockerWorkspace(DOCKER_WORKSPACES, path) : removeWorktree(AGENTS_ROOT, repo, path),
     now: () => new Date().toISOString(),
     jira,
     botAccountId: cfg.botAccountId ?? undefined,
@@ -129,13 +211,8 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
       cfg.github ? findPrNumberByBranch(cfg.github, repo, branch) : Promise.resolve(null),
     maxAttempts: cfg.maxAttempts,
     maxCostUsd: cfg.maxCostUsd,
-    readReview: (worktreePath: string) =>
-      readFile(join(worktreePath, '.agent-review.md'), 'utf8').catch((): null => null),
-    readReviewComments: (worktreePath: string) =>
-      readFile(join(worktreePath, '.agent-review-comments.json'), 'utf8').catch((error: unknown): null => {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
-        throw error;
-      }),
+    readReview: worktreePath => readReviewArtifact(worktreePath, '.agent-review.md'),
+    readReviewComments: worktreePath => readReviewArtifact(worktreePath, '.agent-review-comments.json'),
     postReview: (repo, prNumber, reviewBody, input) => {
       const g: AppConfig['github'] = configStore.current().github;
       return g
@@ -183,13 +260,14 @@ function pollCreatedPrReviews(): Promise<void> {
 function dispatchReattach(row: RunRow, control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null }): Promise<void> {
   const cfg: AppConfig = configStore.current();
   const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
+  const adapter = restoreRunAdapter(row, { runsDir: RUNS_DIR, agentCmd: cfg.agentCmd });
   pm.add(row.id, row.repo, () => {
     control.stopped = true;
     void control.stop?.();
   });
   const deps: RunnerDeps = {
     ...baseRunnerDeps(cfg, jira),
-    adapter: adapterFor(row.adapter, cfg),
+    adapter,
     preserveWorktreeOnFailure: isPrePrAdapter(row.adapter),
     genId: () => row.id,
     onLaunch: (_runId: string, stop: () => Promise<void>) => {
@@ -220,7 +298,16 @@ async function resumeVoyage(runId: string): Promise<void> {
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(row.id, row.repo, () => { control.stopped = true; void control.stop?.(); });
   try {
-    const resumed = await resumeFailedPrePrRun(row, { db, host, runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped });
+    const resumed = await resumeFailedPrePrRun(row, { db, host: host.kind === 'docker' && row.hostKind === 'detached' ? { ...host, kind: 'detached' } : host,
+      runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped,
+      prepareTask: async task => {
+        const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task, provider: row.adapter === 'pre-pr:codex' ? 'codex' : 'claude-code', workflow: 'coding', reviewSettings: cfg.prePr, model: task.model, effort: task.effort });
+        if (prepared.task.dockerExecution) {
+          if (host.kind !== 'docker') throw new ResumeError('Select the Docker host before continuing an isolated voyage.');
+          prepared.task.dockerExecution = { ...prepared.task.dockerExecution, capability: gateway.issue(runId, 86_400_000).token };
+        }
+        return prepared.task;
+      } });
     void dispatchReattach(resumed, control).catch(error => { process.stderr.write(`Voyage continuation failed: ${String(error)}\n`); });
   } catch (error) {
     pm.remove(row.id);
@@ -260,11 +347,20 @@ void recoverRuns(db, { reattach: (row: RunRow) => dispatchReattach(row) })
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
 
-function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf?: string }): string {
+function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf?: string; workflowRef?: string }): string {
+  if (body.workflowRef) {
+    const expected = body.mode === 'review' ? 'review@1' : 'coding@1';
+    if (body.workflowRef !== expected) throw new Error('Workflow is unavailable or does not match the task mode');
+  }
   const runId: string = body.runId ?? randomUUID();
   if (db.getRun(runId) || pm.hasRun(runId)) return runId;
+  const capacity = pm.canStart(body.repo);
+  if (!capacity.ok) throw new Error(capacity.reason ?? 'Cannot launch while another voyage is active');
   const cfg: AppConfig = configStore.current();
-  const adapterId = body.adapter ?? cfg.agentAdapter;
+  const priorRun = body.retryOf ? db.getRun(body.retryOf) : null;
+  const adapterId = priorRun?.adapter.replace(/^pre-pr:/, '') ?? body.adapter ?? cfg.agentAdapter;
+  const priorTask = priorRun?.taskJson ? JSON.parse(priorRun.taskJson) as AgentTask | null : null;
+  if (priorTask && Boolean(priorTask.dockerExecution) !== (host.kind === 'docker')) throw new RetryError('Retry requires the original local or Docker execution mode.');
   if (body.retryOf && adapterId === 'command' && !cfg.agentCmd) throw new RetryError('The original command agent is no longer configured. Configure it before retrying.');
   let localTodo = body.mode === 'todo' && body.todoId ? todos.get(body.todoId) : null;
   if (body.mode === 'todo') {
@@ -299,7 +395,10 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
   void (async (): Promise<void> => {
     try {
       let taskObj: AgentTask;
-      if (localTodo) {
+      if (priorTask) {
+        if (priorTask.repo.toLowerCase() !== body.repo.toLowerCase()) throw new RetryError('Saved task belongs to another galleon.');
+        taskObj = { ...priorTask, prePrResume: undefined };
+      } else if (localTodo) {
         taskObj = todoTask(localTodo);
       } else if (body.mode === 'rerun') {
         const pr: PrStatus | null =
@@ -360,7 +459,26 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
       }
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;
-      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, cfg.prePr) : adapter;
+      if (body.retryOf) {
+        const previous = db.getRun(body.retryOf);
+        const priorTask = previous?.taskJson ? JSON.parse(previous.taskJson) as Partial<AgentTask> | null : null;
+        if (priorTask?.workflowSnapshotId) taskObj.workflowSnapshotId = priorTask.workflowSnapshotId;
+      }
+      if (host.kind === 'docker') {
+        if (taskObj.prBranch && !taskObj.review) throw new Error('Docker branch reruns require host publication support; use the trusted local run host for this mode.');
+        if (adapter.id === 'codex' && !process.env.OPENAI_API_KEY || adapter.id === 'claude-code' && !process.env.ANTHROPIC_API_KEY) throw new Error('Configure the writer provider API key on the host before Docker execution.');
+        if (!taskObj.review && cfg.prePr.reviewerCount > 1 && (!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)) throw new Error('Docker dual review requires both provider API keys on the host.');
+        const image = priorTask?.dockerExecution?.image ?? (await dockerRun(['docker', 'image', 'inspect', '--format', '{{.Id}}', process.env.HELMSMAN_DOCKER_IMAGE!])).stdout.trim();
+        if (!/^sha256:[a-f\d]{64}$/.test(image)) throw new Error('Docker image identity could not be pinned');
+        const capability = gateway.issue(runId, 86_400_000);
+        taskObj.dockerExecution = { image, gatewayUrl, capability: capability.token, runId };
+      }
+      taskObj.clarification = { ...clarificationPaths(RUNS_DIR, runId), gateUrl: `http://127.0.0.1:${PORT}/api/runs/${runId}/clarification-gate` };
+      const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task: taskObj,
+        provider: adapter.id === 'codex' ? 'codex' : adapter.id === 'claude-code' ? 'claude-code' : undefined, workflow: taskObj.review ? 'review' : 'coding', reviewSettings: cfg.prePr, model: taskObj.model, effort: taskObj.effort,
+        skills: adapter.id === 'codex' && taskObj.review || !taskObj.review && !taskObj.prBranch && (adapter.id === 'codex' || cfg.prePr.reviewerCount > 1) ? ['review-agent'] : [] });
+      taskObj = prepared.task;
+      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, prepared.reviewSettings) : taskObj.review && taskObj.dockerExecution ? dockerReviewAdapter(adapter) : adapter;
       await startRun(taskObj, {
         ...baseRunnerDeps(cfg, jira),
         launchJson,
@@ -387,7 +505,12 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
       bus.publish(runId, { kind: 'error', text: message });
       bus.publish(runId, { kind: 'run-complete', text: 'failed' });
     } finally {
-      const status = db.getRun(runId)?.status;
+      const finalRun = db.getRun(runId);
+      if (finalRun?.status === 'failed' && !finalRun.taskJson && !outcomeStore.getAssessment(runId)) {
+        outcomeStore.saveAssessment({ runId, state: 'not-assessed', outcome: 'unknown', summary: 'Launch preflight failed before execution.', evidence: [], failureStage: 'preflight', correctionRounds: null });
+      }
+      if (finalRun?.status !== 'running') gateway.revokeRun(runId);
+      const status = finalRun?.status;
       if (status && status !== 'running') todos.finishRun(runId, status);
       else if (localTodo) todos.finishRun(runId, 'failed');
       pm.remove(runId);
@@ -507,12 +630,43 @@ void pollCreatedPrReviews();
 void pollSlack();
 void pollGithubReviews();
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+const campaignsStore = openCampaignStore(dbPath);
+const configuredRepos = () => { const cfg = configStore.current(); return [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])]; };
+const campaignDispatcher = createCampaignDispatcher({ store: campaignsStore, canStart: repo => pm.canStart(repo).ok,
+  getRun: id => db.getRun(id), stop: id => pm.stop(id),
+  launch: input => launch({ repo: input.repo, mode: input.mode, runId: input.runId, workflowRef: input.workflowRef,
+    ...(input.task === null ? {} : { task: input.task }), ...(input.ticketId === null ? {} : { ticketId: input.ticketId }),
+    ...(input.title === null ? {} : { title: input.title }), ...(input.retryOf ? { retryOf: input.retryOf } : {}) }),
+});
+const campaigns = createCampaignService({ store: campaignsStore, configuredRepos,
+  workflows: () => [{ ref: 'coding@1', name: 'Coding' }], dispatch: () => campaignDispatcher.poll() });
+setInterval(() => { void campaignDispatcher.poll().catch(error => process.stderr.write(`Campaign dispatch failed: ${String(error)}\n`)); }, 5000);
+
+const webhooks = openWebhookIntake(dbPath, {
+  secret: () => process.env.HELMSMAN_WEBHOOK_SECRET,
+  routes: () => parseWebhookRoutes(process.env.HELMSMAN_WEBHOOK_ROUTES),
+  allowedRepos: () => { const cfg = configStore.current(); return [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])]; },
+  canStart: repo => pm.canStart(repo).ok, getRun: id => db.getRun(id), isRunActive: id => pm.hasRun(id), launch,
+});
+setInterval(() => { void webhooks.poll().catch(error => process.stderr.write(`Webhook dispatch failed: ${String(error)}\n`)); }, 5000);
+
+async function readRawBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
-  if (chunks.length === 0) return null;
+  let size = 0;
+  for await (const c of req) {
+    const chunk = Buffer.isBuffer(c) ? c : Buffer.from(c);
+    size += chunk.length;
+    if (size > 2_000_000) throw new WebhookError('Request payload too large', 413);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function readBody(req: IncomingMessage): Promise<unknown> {
+  const raw = await readRawBody(req);
+  if (!raw.length) return null;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(raw.toString('utf8'));
   } catch {
     return null;
   }
@@ -521,6 +675,22 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   void (async () => {
     const url: URL = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+    if (url.pathname === '/api/webhooks/github' && req.method === 'POST') {
+      try {
+        const header = (name: string) => { const value = req.headers[name]; return typeof value === 'string' ? value : undefined; };
+        const result = webhooks.receive(await readRawBody(req), { signature: header('x-hub-signature-256'), delivery: header('x-github-delivery'), event: header('x-github-event') });
+        res.writeHead(202, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result));
+        void webhooks.poll().catch(error => process.stderr.write(`Webhook dispatch failed: ${String(error)}\n`));
+      } catch (error) {
+        res.writeHead(error instanceof WebhookError ? error.status : 500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error instanceof WebhookError ? error.message : 'Webhook intake failed' }));
+      }
+      return;
+    }
+    if (url.pathname === '/api/workflows' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(['coding', 'review'].map(id => workflows.getDefinition(id as 'coding' | 'review')))); return;
+    }
     if (await handleRunLog(req, res, url.pathname, db, bus)) return;
     if (url.pathname === '/api/cmux/events' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -533,6 +703,14 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const hasBody: boolean = req.method === 'POST' || req.method === 'PUT';
     const body: unknown = hasBody ? await readBody(req) : null;
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
+      clarificationGate: runId => {
+        if (db.getRun(runId)?.status !== 'running') return false;
+        clarificationRuntime.poll(runId);
+        return !clarificationRuntime.hasUnanswered(runId);
+      },
+      outcomes,
+      campaigns,
+      clarifications,
       outboundUsage: () => outboundMeter.snapshot(),
       githubProfile: () => fetchGithubProfile(configStore.current().github),
       context: () => {
@@ -651,7 +829,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       res.end(JSON.stringify(api.json));
       return;
     }
-    const isPage = /^\/(?:helm|triage|terminal|cmux|bugs|prs?|runs|config|todos)?\/?$/.test(url.pathname);
+    const isPage = /^\/(?:helm|triage|terminal|cmux|bugs|prs?|runs|config|todos|outcomes|campaigns|clarifications)?\/?$/.test(url.pathname);
     const rel: string = isPage ? '/index.html' : url.pathname;
     const file: string = normalize(join(DIST, rel));
     if (file.startsWith(DIST + sep) && existsSync(file)) {

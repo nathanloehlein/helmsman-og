@@ -23,8 +23,8 @@ function tuningSelects(prefix: string, defaultModel: string = prefix === 'pr' ? 
   const opts = (list: AgentOption[], def: string): string =>
     list.map((o) => `<option value="${esc(o.value)}"${o.value === def ? ' selected' : ''}>${esc(prefix === 'pr' && !o.value ? 'Automatic by complexity' : o.label)}</option>`).join('');
   return `<div class="tuning">
-      <select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS, defaultModel)}</select>
-      <select class="${prefix}-effort tuning-select" aria-label="Effort">${opts(EFFORT_OPTIONS, defaultEffort)}</select>
+      <label class="interface-field">Model<select class="${prefix}-model tuning-select" aria-label="Model">${opts(MODEL_OPTIONS, defaultModel)}</select></label>
+      <label class="interface-field">Reasoning effort<select class="${prefix}-effort tuning-select" aria-label="Reasoning effort">${opts(EFFORT_OPTIONS, defaultEffort)}</select></label>
     </div>`;
 }
 import type { AgentCaps, RunSummary } from './data/agents';
@@ -72,7 +72,7 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
 
 function reviewChip(decision: string): { cls: string; label: string } {
   if (decision === 'APPROVED') return { cls: 'chip-done', label: 'Approved' };
-  if (decision === 'CHANGES_REQUESTED') return { cls: 'chip-blocked', label: 'Changes' };
+  if (decision === 'CHANGES_REQUESTED') return { cls: 'chip-blocked', label: 'Changes requested' };
   return { cls: 'chip-review', label: term('review') };
 }
 
@@ -207,7 +207,7 @@ function buildSparkline(values: number[]): string {
 
   return `
     <svg viewBox="0 0 ${width} 54" width="100%" height="54" preserveAspectRatio="none"
-         role="img" aria-label="Tickets shipped per day, last 7 days">
+         role="img" aria-label="Completed items per day, last 7 days">
       <defs>
         <linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/>
@@ -232,6 +232,9 @@ const PAGE_TABS: { view: PageView; label: string }[] = [
   { view: 'cmux', label: 'Terminal' },
   { view: 'bugs', label: 'Bugs' },
   { view: 'runs', get label() { return term('runs'); } },
+  { view: 'outcomes', get label() { return term('costsOutcomes'); } },
+  { view: 'campaigns', get label() { return term('campaigns'); } },
+  { view: 'clarifications', get label() { return term('clarifications'); } },
   { view: 'config', label: 'Config' },
 ];
 
@@ -482,18 +485,18 @@ export function renderDashboard(
           <div class="newrun-mode-toggle">
             ${jiraEnabled ? `<label class="newrun-mode-label">
               <input type="radio" class="newrun-mode" name="newrun-mode" value="ticket" checked>
-              <span>Ticket</span>
+              <span>Jira ticket</span>
             </label>` : ''}
             <label class="newrun-mode-label">
               <input type="radio" class="newrun-mode" name="newrun-mode" value="freeform"${jiraEnabled ? '' : ' checked'}>
-              <span>Free-form</span>
+              <span>Custom task</span>
             </label>
           </div>
           <div class="newrun-fields">
-            ${jiraEnabled ? `<input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
-            <input class="newrun-title" type="text" placeholder="Title (optional)">` : ''}
-            <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
-            <select class="newrun-repo" aria-label="${term('repository')} for ${term('newRun').toLowerCase()}">${newRunRepoOptions}</select>
+            ${jiraEnabled ? `<label class="interface-field newrun-ticket-field">Jira ticket ID<input class="newrun-ticket" type="text" placeholder="ABC-123"></label>
+            <label class="interface-field newrun-ticket-field">Title (optional)<input class="newrun-title" type="text" placeholder="Short task title"></label>` : ''}
+            <label class="interface-field newrun-task-field">Custom task instructions<textarea class="newrun-task" placeholder="Describe the desired change, constraints, and how to verify it."></textarea></label>
+            <label class="interface-field">${term('repository')}<select class="newrun-repo" aria-label="${term('repository')} for ${term('newRun').toLowerCase()}">${newRunRepoOptions}</select></label>
             ${tuningSelects('newrun')}
             <button class="newrun-launch">${term('launchRun')}</button>
           </div>
@@ -534,7 +537,7 @@ export function renderDashboard(
       count: null,
       body: `
         <div class="throughput">
-          <span class="throughput-label mono">Throughput · 7d</span>
+          <span class="throughput-label mono">Completed · last 7 days</span>
           <div class="spark-wrap">${buildSparkline(data.throughput7d)}</div>
         </div>
         <div class="feed">${activityLines}</div>`,
@@ -661,10 +664,10 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
     : '';
   const canRelaunch: boolean = canRerun && pr.isOwnPr === true;
   const feedback: string = canRelaunch
-    ? `<textarea class="pr-rerun-feedback" aria-label="Feedback for ${term('agents').toLowerCase()} to address" placeholder="Feedback for ${term('agents').toLowerCase()} to address"></textarea>`
+    ? `<label class="interface-field">Changes for the ${term('agents').toLowerCase()} to make<textarea class="pr-rerun-feedback" aria-label="Feedback for ${term('agents').toLowerCase()} to address" placeholder="Describe the changes to make on this branch."></textarea></label>`
     : '';
   const rerun: string = canRerun
-    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Relaunch with feedback</button>' : ''}<button class="pr-review-agent">${term('codeReview')}</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Link to ${term('review').toLowerCase()} ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Link to relaunch ↗</a>` : ''}</div></div>`
+    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Update branch with feedback</button>' : ''}<button class="pr-review-agent">${term('codeReview')}</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Open review setup ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Open branch update setup ↗</a>` : ''}</div></div>`
     : `<div class="pr-no-rerun empty-note">${term('crewUnavailable')}</div>`;
   return `
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">
@@ -697,11 +700,11 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
       </div>
       ${pr.isOwnPr === true && pr.state === 'open' && !pr.merged ? slackReviewButton(pr.repo, pr.number) : ''}
       <div class="pr-review">
-        <textarea class="pr-review-body" placeholder="${term('review')} comment"></textarea>
+        <label class="interface-field">Your GitHub review<textarea class="pr-review-body" placeholder="Explain your approval, requested changes, or comment."></textarea></label>
         <div class="pr-review-actions">
           <button class="pr-approve">Approve</button>
           <button class="pr-request-changes">Request changes</button>
-          <button class="pr-comment">Comment</button>
+          <button class="pr-comment">Post comment</button>
         </div>
       </div>
       ${rerun}
@@ -894,7 +897,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
       <section class="panel pr-lookup-panel">
         <div class="panel-head"><span class="panel-title">${term('reviewPr')}</span></div>
         <div class="pr-lookup-form">
-          <input class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
+          <label class="interface-field">${term('pr')} URL or owner/name#number<input class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" /></label>
           <button class="pr-lookup-go">Load ${term('pr')}</button>
         </div>
         <div class="pr-lookup-result">${panel}</div>
@@ -997,7 +1000,7 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
   const { repos, selectedRepo, jiraBaseUrl, degraded, themeId } = opts;
   const collapsed: Set<string> = opts.collapsed ?? new Set();
   const banner: string = degraded
-    ? '<div class="degraded-banner">Jira unavailable — triage is empty.</div>'
+    ? '<div class="degraded-banner" role="alert">Jira tickets could not be loaded. Check Jira settings in Config, then refresh this page.</div>'
     : '';
   const launchable: boolean = selectedRepo !== null;
   const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, selectedRepo);
@@ -1012,9 +1015,10 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
     mineOpen: filterTriageTickets(groups?.mineOpen, filters, now),
   };
   const isFiltered = filters.priorities.length !== TRIAGE_PRIORITIES.length || filters.days !== 0;
-  const filterEmpty = 'No tickets match these filters.';
+  const filterEmpty = 'No tickets match these filters. Select more priorities or a wider date range.';
   const capped = [groups?.unassignedBacklog, groups?.unassignedTodo, groups?.mineOpen].some(tickets => (tickets?.length ?? 0) >= 100);
   return renderAppShell({ active: 'triage', repos, selectedRepo, themeId, readout: null }, `
+      <header class="page-intro"><h1>Triage</h1><p>Choose a Jira ticket for the ${term('agents').toLowerCase()} to work on. The header ${term('repository').toLowerCase()} is the launch target.</p></header>
       ${banner}
       <div class="panel triage-filters" role="group" aria-label="Filter all triage columns">
         <fieldset class="triage-priorities"><legend>Priority</legend>
@@ -1079,10 +1083,10 @@ function bugCardHtml(card: BugCard): string {
       </div>
       <div class="bug-stats mono">
         <span class="bug-stat"><b>${card.open}</b> Open <em>(${deltaStr} vs prior)</em></span>
-        <span class="bug-stat"><b>${card.completed}</b> Completed</span>
+        <span class="bug-stat"><b>${card.completed}</b> Completed · 7 days</span>
         <span class="bug-stat"><b class="${card.pastSla > 0 ? 'bug-bad' : ''}">${card.pastSla}</b> Past SLA</span>
         <span class="bug-stat">Oldest open ${oldest}</span>
-        <span class="bug-stat">P75 · ${p75} <em>(n=${n})</em></span>
+        <span class="bug-stat" title="75% of sampled bugs resolved in the last 90 days were completed within this duration">Resolution time · P75 ${p75} <em>(${n} sampled)</em></span>
       </div>
       <table class="bug-table">
         <thead><tr><th>Key</th><th>Title</th><th>Priority</th><th>Severity</th><th>SLA</th></tr></thead>
@@ -1103,7 +1107,7 @@ function formatGeneratedAt(generatedAt: string): string {
 
 export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
   const banner: string = res.degraded
-    ? '<div class="degraded-banner">Jira unavailable — bug data is empty.</div>'
+    ? '<div class="degraded-banner" role="alert">Bug data could not be loaded from Jira. Check Jira settings in Config, then refresh this page.</div>'
     : '';
   const cards: string = res.cards.map(bugCardHtml).join('');
   const bugsBody: string =
@@ -1111,6 +1115,7 @@ export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
       ? '<div class="empty-note">No bug data for this scope.</div>'
       : `<div class="bugs-grid">${cards}</div>`;
   return renderAppShell({ active: 'bugs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <header class="page-intro"><h1>Bugs</h1><p>Track open bugs and resolution times. Open a ticket in Jira to investigate or update it.</p></header>
       <div class="bugs-windows mono">
         <span>LATEST 7 DAYS · ${esc(res.latestWindow)}</span>
         <span>PREVIOUS 7 DAYS · ${esc(res.previousWindow)}</span>
@@ -1141,8 +1146,8 @@ function configRowsHtml(uiConfig: UiConfig): string {
         : '';
       return `
       <div class="config-row" data-key="${esc(key)}"${help ? ` title="${esc(help)}"` : ''}>
-        <span class="config-key mono">${esc(key)}${isOverridden ? ' <span class="config-overridden">(overridden)</span>' : ''}${hint}</span>
-        <input class="config-input" type="text" value="${esc(String(value ?? ''))}">
+        <label class="config-key mono" for="config-${esc(key)}">${esc(key)}${isOverridden ? ' <span class="config-overridden">(saved override)</span>' : ''}${hint}</label>
+        <input id="config-${esc(key)}" class="config-input" type="text" value="${esc(String(value ?? ''))}">
         <button class="config-save" data-key="${esc(key)}">Save</button>
         <span class="config-error" role="alert"></span>
       </div>`;
@@ -1182,8 +1187,8 @@ function jiraTokenRowHtml(tokenSet: boolean): string {
     : '<span class="config-secret-status is-unset">not set</span>';
   return `
       <div class="config-row config-secret-row" data-key="JIRA_API_TOKEN">
-        <span class="config-key mono">JIRA_API_TOKEN ${status}<span class="config-hint" tabindex="0" role="img" aria-label="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed." title="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed.">${ICON_INFO}</span></span>
-        <input class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste new token to update">
+        <label class="config-key mono" for="config-JIRA_API_TOKEN">JIRA_API_TOKEN ${status}<span class="config-hint" tabindex="0" role="img" aria-label="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed." title="Write-only. Paste a new Atlassian API token; applies live, no restart. Never displayed.">${ICON_INFO}</span></label>
+        <input id="config-JIRA_API_TOKEN" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste new token to update">
         <button class="config-save" data-key="JIRA_API_TOKEN">Update</button>
         <span class="config-error" role="alert"></span>
       </div>`;
@@ -1195,6 +1200,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
     (theme) => `<option value="${esc(theme.id)}"${theme.id === opts.themeId ? ' selected' : ''}>${esc(theme.label)}</option>`,
   ).join('');
   return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
+      <header class="page-intro"><h1>Config</h1><p>Configure work sources, integrations, and ${term('agent').toLowerCase()} defaults. Save each setting separately.</p></header>
       <section class="panel config-panel" aria-labelledby="work-source-title">
         <div class="panel-head"><span class="panel-title" id="work-source-title">${term('runSource')}</span></div>
         <div class="config-list">
@@ -1246,7 +1252,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">
-        <div class="panel-head"><span class="panel-title">Config</span></div>
+        <div class="panel-head"><span class="panel-title">Runtime settings</span></div>
         <div class="config-warning">Adapter and <span class="mono">AGENT_CMD</span> can run arbitrary commands &mdash; change with care. Auto-claim interval changes apply on restart.</div>
         <div class="config-list">
           ${jiraTokenRowHtml(uiConfig.jiraTokenSet === true)}
@@ -1312,37 +1318,38 @@ export function renderCmuxView(state: CmuxViewState): string {
     themeId: state.themeId,
     readout: null,
   };
+  const intro = '<header class="page-intro"><h1>Terminal</h1><p>View and control an existing terminal session. Text and keys are sent directly to the selected tab.</p></header>';
   if (!state.connected) {
-    return renderAppShell(opts, '<div class="panel empty-note">Terminal not connected. Check that your terminal app is running.</div>');
+    return renderAppShell(opts, `${intro}<div class="panel empty-note">Terminal not connected. Open your configured terminal app, then refresh this page.</div>`);
   }
 
   const list: string = state.tabs.length
     ? state.tabs
         .map(
           (t) => `
-      <button class="cmux-tab${t.surfaceRef === state.selectedSurface ? ' is-selected' : ''}" type="button" data-surface="${esc(t.surfaceRef)}">
+      <button class="cmux-tab${t.surfaceRef === state.selectedSurface ? ' is-selected' : ''}" type="button" data-surface="${esc(t.surfaceRef)}" aria-pressed="${t.surfaceRef === state.selectedSurface}">
         <span class="cmux-tab-title">${esc(t.surfaceTitle)}</span>
         <span class="cmux-tab-meta mono">${esc(t.workspaceTitle)} &middot; ${esc(t.type)}</span>
       </button>`,
         )
         .join('')
-    : '<div class="empty-note">No terminal tabs.</div>';
+    : '<div class="empty-note">No terminal tabs available. Open a terminal tab in your configured terminal app, then refresh this page.</div>';
 
   const selected: CmuxTabView | null = state.tabs.find((t) => t.surfaceRef === state.selectedSurface) ?? null;
 
   const detail: string = selected
     ? `
       <div class="cmux-capture-row">
-        <button class="cmux-capture-toggle${state.isCapturing ? ' is-active' : ''}" type="button" data-cmux-capture aria-pressed="${state.isCapturing ? 'true' : 'false'}">${state.isCapturing ? 'Capturing&hellip;' : 'Capture keyboard'}</button>
-        ${state.isCapturing ? `<span class="cmux-capture-hint">Capturing &mdash; keystrokes sent to ${esc(selected.surfaceTitle)}</span>` : ''}
+        <button class="cmux-capture-toggle${state.isCapturing ? ' is-active' : ''}" type="button" data-cmux-capture aria-pressed="${state.isCapturing ? 'true' : 'false'}">${state.isCapturing ? 'Stop keyboard control' : 'Control with keyboard'}</button>
+        ${state.isCapturing ? `<span class="cmux-capture-hint">Keys go directly to ${esc(selected.surfaceTitle)}. Click Stop keyboard control to release.</span>` : ''}
       </div>
-      <pre class="cmux-screen mono${state.isCapturing ? ' is-capturing' : ''}" tabindex="0">${esc(state.screen)}</pre>
+      <pre class="cmux-screen mono${state.isCapturing ? ' is-capturing' : ''}" tabindex="0" aria-label="Screen output from ${esc(selected.surfaceTitle)}">${esc(state.screen)}</pre>
       <div class="cmux-keypad">
-        ${CMUX_NAV_KEYS.map((k) => `<button class="cmux-keypad-btn" type="button" data-key="${esc(k.key)}">${k.label}</button>`).join('')}
+        ${CMUX_NAV_KEYS.map((k) => `<button class="cmux-keypad-btn" type="button" data-key="${esc(k.key)}" aria-label="Send ${esc(k.key)} key" title="Send ${esc(k.key)} key">${k.label}</button>`).join('')}
       </div>
       <form class="cmux-send">
-        <input class="cmux-input" name="text" placeholder="Send to ${esc(selected.surfaceTitle)}&hellip;" autocomplete="off" />
-        <button type="submit">Send &#9166;</button>
+        <label class="interface-field">Send text to ${esc(selected.surfaceTitle)}<input class="cmux-input" name="text" placeholder="Command or message" autocomplete="off" /></label>
+        <button type="submit">Send + Enter</button>
       </form>
       <div class="cmux-actions">
         ${cmuxActionsFor(selected)
@@ -1355,13 +1362,14 @@ export function renderCmuxView(state: CmuxViewState): string {
   const listCollapsed: boolean = collapsed.has('cmux:list');
   const detailCollapsed: boolean = collapsed.has('cmux:detail');
   return renderAppShell(opts, `
+    ${intro}
     <div class="cmux-body">
       <div class="panel cmux-list${listCollapsed ? ' is-collapsed' : ''}">
-        <div class="panel-head"><span class="panel-title">Tabs</span>${surfaceCollapseBtn('cmux:list', 'Tabs', listCollapsed)}</div>
+        <div class="panel-head"><span class="panel-title">Terminal tabs</span>${surfaceCollapseBtn('cmux:list', 'Terminal tabs', listCollapsed)}</div>
         <div class="cmux-list-body">${list}</div>
       </div>
       <div class="panel cmux-detail${detailCollapsed ? ' is-collapsed' : ''}">
-        <div class="panel-head"><span class="panel-title">Screen</span>${surfaceCollapseBtn('cmux:detail', 'Screen', detailCollapsed)}</div>
+        <div class="panel-head"><span class="panel-title">Terminal screen</span>${surfaceCollapseBtn('cmux:detail', 'Terminal screen', detailCollapsed)}</div>
         <div class="cmux-detail-body">${detail}</div>
       </div>
     </div>

@@ -447,8 +447,8 @@ describe('renderDashboard', () => {
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
     const attemptsRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_MAX_ATTEMPTS"]');
     expect(attemptsRow).not.toBeNull();
-    expect(attemptsRow!.textContent).toContain('overridden');
-    expect(adapterRow!.textContent).not.toContain('overridden');
+    expect(attemptsRow!.textContent).toContain('saved override');
+    expect(adapterRow!.textContent).not.toContain('saved override');
   });
 
   it('groups pre-PR settings in one panel with bounded numeric inputs and defaults', () => {
@@ -1106,7 +1106,7 @@ describe('renderDashboard helm rack', () => {
     renderDashboard(el, snapshot(), NOW);
     expect(el.querySelector('.runs-drawer-slot')).not.toBeNull();
     expect(el.querySelector('.helm-head .nameplate')).not.toBeNull();
-    expect(el.querySelectorAll('a.page-tab[href]')).toHaveLength(7);
+    expect(el.querySelectorAll('a.page-tab[href]')).toHaveLength(10);
     expect(el.querySelector('.page-tab[data-view="runs"]')?.getAttribute('href')).toBe('/runs');
     expect(el.querySelector('.page-tab[data-view="config"]')).not.toBeNull();
     expect(el.querySelector('.page-tab[data-view="prs"]')).not.toBeNull();

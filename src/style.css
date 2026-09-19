@@ -1015,3 +1015,12 @@ select { text-transform: none; }
 @media (max-width: 420px) {
   .helm-greeting { max-width: 150px; font-size: 10px; }
 }
+
+.interface-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 12px; color: var(--text-dim); }
+.interface-field :is(input, textarea, select) { width: 100%; box-sizing: border-box; }
+.tuning > .interface-field, .cmux-send > .interface-field, .pr-lookup-form > .interface-field { flex: 1; }
+.cmux-send, .pr-lookup-form { align-items: end; }
+.page-intro { padding: 16px 14px; }
+.page-intro h1 { margin: 0 0 8px; font: 700 18px var(--mono); }
+.page-intro p { margin: 0; max-width: 72ch; line-height: 1.6; color: var(--text-dim); }
+.newrun-task-field { grid-column: 1 / -1; }

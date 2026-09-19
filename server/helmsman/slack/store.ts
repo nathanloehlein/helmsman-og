@@ -43,6 +43,10 @@ export interface SlackStore {
   getNotification(id: string): SlackNotification | null;
   listNotifications(limit?: number): SlackNotification[];
   markRead(id: string, now: string): boolean;
+  claimDispatch(id: string, token: string, now: string): boolean;
+  dispatchClaims(sourceKey: string): Array<{ notificationId: string; token: string; claimedAt: string }>;
+  ownsDispatch(id: string, token: string): boolean;
+  releaseDispatch(id: string, token: string): boolean;
   close(): void;
 }
 
@@ -62,6 +66,9 @@ export function openSlackStore(path: string): SlackStore {
       runId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, readAt TEXT, error TEXT
     );
     CREATE INDEX IF NOT EXISTS slack_notifications_queue ON slack_notifications(sourceKey, status, createdAt);
+    CREATE TABLE IF NOT EXISTS slack_dispatch_claims (
+      notificationId TEXT PRIMARY KEY, token TEXT NOT NULL, claimedAt TEXT NOT NULL
+    );
   `);
   return {
     ensureSource(key, activatedAt, health) {
@@ -104,6 +111,22 @@ export function openSlackStore(path: string): SlackStore {
     },
     markRead(id, now) {
       return sql.prepare('UPDATE slack_notifications SET readAt = COALESCE(readAt, ?) WHERE id = ?').run(now, id).changes > 0;
+    },
+    claimDispatch(id, token, now) {
+      if (!id || !token || !Number.isFinite(Date.parse(now))) throw new Error('Invalid dispatch claim');
+      return sql.prepare(`INSERT OR IGNORE INTO slack_dispatch_claims (notificationId, token, claimedAt)
+        SELECT id, ?, ? FROM slack_notifications WHERE id = ? AND status = 'queued'`).run(token, now, id).changes > 0;
+    },
+    dispatchClaims(sourceKey) {
+      return sql.prepare(`SELECT claim.notificationId, claim.token, claim.claimedAt FROM slack_dispatch_claims claim
+        JOIN slack_notifications notification ON notification.id = claim.notificationId WHERE notification.sourceKey = ?`)
+        .all(sourceKey) as Array<{ notificationId: string; token: string; claimedAt: string }>;
+    },
+    ownsDispatch(id, token) {
+      return !!sql.prepare('SELECT 1 FROM slack_dispatch_claims WHERE notificationId = ? AND token = ?').get(id, token);
+    },
+    releaseDispatch(id, token) {
+      return sql.prepare('DELETE FROM slack_dispatch_claims WHERE notificationId = ? AND token = ?').run(id, token).changes > 0;
     },
     close() { sql.close(); },
   };

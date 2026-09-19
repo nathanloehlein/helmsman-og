@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isGithubRepo } from '../pr-lists';
 import type { RunRow } from './db';
 import type { RequestedReviewPr } from './github-review-watcher';
@@ -13,6 +13,7 @@ export interface CreatedPrReviewsOptions {
   findExistingReview?: (repo: string, number: number, headSha: string) => string | null;
   launch: (input: { repo: string; prNumber: number; mode: 'review'; runId: string; headSha: string }) => string;
   now?: () => string;
+  claimTtlMs?: number;
 }
 
 export interface CreatedPrReviews {
@@ -51,6 +52,8 @@ export function createCreatedPrReviews(options: CreatedPrReviewsOptions): Create
   const { store } = options;
   const now = options.now ?? (() => new Date().toISOString());
   let pending: Promise<void> | null = null;
+  const claimTtlMs = options.claimTtlMs ?? 300_000;
+  if (!Number.isFinite(claimTtlMs) || claimTtlMs < 1000) throw new Error('Dispatch claim lifetime must be at least one second');
 
   function update(notification: SlackNotification, status: SlackNotification['status'], error: string | null = null): void {
     if (notification.status !== status || notification.error !== error) store.updateNotification(notification.id, status, now(), error);
@@ -66,6 +69,12 @@ export function createCreatedPrReviews(options: CreatedPrReviewsOptions): Create
   }
 
   async function scan(): Promise<void> {
+    for (const claim of store.dispatchClaims(SOURCE)) {
+      const notification = store.getNotification(claim.notificationId);
+      if (!notification) { store.releaseDispatch(claim.notificationId, claim.token); continue; }
+      if (recover(notification) || notification.status !== 'queued') store.releaseDispatch(notification.id, claim.token);
+      else if (Date.parse(now()) - Date.parse(claim.claimedAt) >= claimTtlMs) store.releaseDispatch(notification.id, claim.token);
+    }
     for (const notification of store.launchedNotifications(SOURCE)) {
       if (!recover(notification)) update(notification, 'queued');
     }
@@ -86,33 +95,39 @@ export function createCreatedPrReviews(options: CreatedPrReviewsOptions): Create
         continue;
       }
       if (parent.status !== 'succeeded' || options.isRunActive(parentRunId) || !options.canLaunch(notification.repo)) continue;
-      let pr: RequestedReviewPr | null;
+      const token = randomUUID();
+      if (!store.claimDispatch(notification.id, token, now())) continue;
       try {
-        pr = await options.fetchPr(notification.repo, notification.prNumber);
-        if (!validPr(pr)) throw new Error('Pull request is unavailable; will retry');
-      } catch (error) {
-        update(notification, 'queued', errorMessage(error));
-        continue;
-      }
-      if (pr.state !== 'open' || pr.merged || pr.draft) {
-        update(notification, 'blocked', pr.draft ? 'Pull request is a draft' : 'Pull request is no longer open');
-        continue;
-      }
-      try {
-        const existing = options.findExistingReview?.(notification.repo, notification.prNumber, pr.headSha);
-        if (existing) {
-          store.setNotificationRunId(notification.id, existing);
-          const linked = { ...notification, runId: existing };
-          if (!recover(linked)) update(notification, 'launched');
+        let pr: RequestedReviewPr | null;
+        try {
+          pr = await options.fetchPr(notification.repo, notification.prNumber);
+          if (!validPr(pr)) throw new Error('Pull request is unavailable; will retry');
+        } catch (error) {
+          if (store.ownsDispatch(notification.id, token)) update(notification, 'queued', errorMessage(error));
           continue;
         }
-        if (!options.canLaunch(notification.repo)) continue;
-        const launched = options.launch({ repo: notification.repo, prNumber: notification.prNumber, mode: 'review', runId: notification.runId, headSha: pr.headSha });
-        if (launched !== notification.runId) throw new Error('Launcher returned an unexpected run ID');
-        update(notification, 'launched');
-      } catch (error) {
-        update(notification, 'failed', errorMessage(error));
-      }
+        if (!store.ownsDispatch(notification.id, token)) continue;
+        if (pr.state !== 'open' || pr.merged || pr.draft) {
+          update(notification, 'blocked', pr.draft ? 'Pull request is a draft' : 'Pull request is no longer open');
+          continue;
+        }
+        try {
+          if (recover(notification)) continue;
+          const existing = options.findExistingReview?.(notification.repo, notification.prNumber, pr.headSha);
+          if (existing) {
+            store.setNotificationRunId(notification.id, existing);
+            const linked = { ...notification, runId: existing };
+            if (!recover(linked)) update(notification, 'launched');
+            continue;
+          }
+          if (!options.canLaunch(notification.repo)) continue;
+          const launched = options.launch({ repo: notification.repo, prNumber: notification.prNumber, mode: 'review', runId: notification.runId, headSha: pr.headSha });
+          if (launched !== notification.runId) throw new Error('Launcher returned an unexpected run ID');
+          update(notification, 'launched');
+        } catch (error) {
+          if (!recover(notification)) update(notification, 'failed', errorMessage(error));
+        }
+      } finally { store.releaseDispatch(notification.id, token); }
     }
   }
 

@@ -63,7 +63,7 @@ function renderForm(state: TodosViewState, opts: TodosViewOpts): string {
         <div class="todo-form-row"><label class="todo-field">Priority<select name="priority">${options(TODO_PRIORITIES, draft.priority ?? 'P2', priorities)}</select></label>
         <label class="todo-field">State<select name="state">${TODO_STATES.map(value => `<option value="${value}"${value === (draft.state ?? 'todo') ? ' selected' : ''}${value === 'in_progress' ? ' disabled' : ''}>${stateLabels()[value]}${value === 'in_progress' ? ` · ${term('run').toLowerCase()} managed` : ''}</option>`).join('')}</select></label></div>
         <label class="todo-field">Description<textarea name="description" rows="5" maxlength="20000" placeholder="Describe the problem, expected behavior, and relevant files or context.">${esc(text(draft.description))}</textarea><span class="todo-field-hint">Required to start a ${term('run').toLowerCase()}. You can save a draft first.</span></label>
-        <label class="todo-field">Acceptance criteria<textarea name="acceptanceCriteria" rows="4" maxlength="20000" placeholder="How will we know this is done? Include tests, edge cases, and constraints.">${esc(text(draft.acceptanceCriteria))}</textarea></label>
+        <label class="todo-field">Acceptance criteria (optional)<textarea name="acceptanceCriteria" rows="4" maxlength="20000" placeholder="How will we know this is done? Include tests, edge cases, and constraints.">${esc(text(draft.acceptanceCriteria))}</textarea></label>
         <div class="todo-actions"><button class="todo-button todo-button-primary" type="submit">${selected ? 'Save changes' : 'Add todo'}</button>${selected ? '<button class="todo-button" type="button" data-todo-cancel>Cancel</button>' : ''}</div>
       </fieldset>
     </form>
@@ -87,7 +87,7 @@ function renderItem(item: Todo, state: TodosViewState, selectedRepo: string | nu
       <button class="todo-button todo-button-delete" type="button" data-todo-delete="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Delete</button>
       ${item.runId ? `<a class="app-link todo-run-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, run: item.runId }))}">View ${term('run').toLowerCase()} ↗</a>` : ''}
     </div>
-    ${active ? `<p class="todo-field-hint">${term('run')} in progress. Editing is available when it finishes.</p>` : ''}
+    ${reason ? `<p class="todo-field-hint">${esc(active ? `${term('run')} in progress. Editing is available when it finishes.` : reason)}</p>` : ''}
     ${state.deletingId === item.id ? `<div class="todo-confirmation" role="region" aria-label="Confirm todo deletion"><strong>Delete this todo?</strong><p>This permanently removes the todo. Its ${term('run').toLowerCase()} history is kept.</p><div class="todo-actions"><button class="todo-button todo-button-delete" type="button" data-todo-confirm-delete="${esc(item.id)}"${busy || active ? ' disabled' : ''}>Confirm deletion</button><button class="todo-button" type="button" data-todo-cancel-delete${busy ? ' disabled' : ''}>Keep todo</button></div></div>` : ''}
   </li>`;
 }
@@ -105,8 +105,8 @@ export function renderTodoList(state: TodosViewState, opts: TodosViewOpts): stri
 }
 
 export function renderTodos(state: TodosViewState, opts: TodosViewOpts): string {
-  return `<div class="todos-intro"><h1>Todos</h1><p>Your ${term('run').toLowerCase()} backlog. Add a clear outcome, choose a ${term('repository').toLowerCase()}, and start when ready.</p></div>
-    <div class="todo-auto-claim">${opts.selectedRepo ? `<button class="todo-button" type="button" data-todo-auto-claim aria-pressed="${Boolean(opts.autoClaimEnabled)}"${state.pendingAction ? ' disabled' : ''}>${opts.autoClaimEnabled ? 'Disable' : 'Enable'} auto-claim</button><p>Start ready todos in priority order, one ${term('run').toLowerCase()} per ${term('repository').toLowerCase()}. Resets when server restarts.</p>` : `<p>Select a ${term('repository').toLowerCase()} to enable automatic ${term('runs').toLowerCase()} from its ready todos.</p>`}</div>
+  return `<div class="todos-intro"><h1>Todos</h1><p>Plan tasks for your agents without a Jira ticket. Save a todo, then start a ${term('run').toLowerCase()} when it is ready.</p></div>
+    <div class="todo-auto-claim">${opts.selectedRepo ? `<button class="todo-button" type="button" data-todo-auto-claim aria-pressed="${Boolean(opts.autoClaimEnabled)}"${state.pendingAction ? ' disabled' : ''}>${opts.autoClaimEnabled ? 'Stop automatic starts' : 'Start todos automatically'}</button><p>When enabled, todos in To do with a description start in priority order, one ${term('run').toLowerCase()} per ${term('repository').toLowerCase()}. Resets when server restarts.</p>` : `<p>Select a ${term('repository').toLowerCase()} to enable automatic ${term('runs').toLowerCase()} from its ready todos.</p>`}</div>
     <div data-todo-feedback>${state.error ? `<div class="todo-error" role="alert">${esc(state.error)}</div>` : ''}
     ${state.pendingAction ? `<p class="todo-notice" role="status">${esc(state.pendingAction)}</p>` : ''}</div>
     <div class="todos-layout">${renderForm(state, opts)}<section class="panel todo-backlog" aria-label="Todo backlog" aria-busy="${Boolean(state.loading || state.pendingAction)}">

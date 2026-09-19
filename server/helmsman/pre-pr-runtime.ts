@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, mkdir, mkdtemp, open, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -11,6 +11,8 @@ import { assertReviewSummaryCorrection, parsePrePrReview, PrePrGateError, PrePrS
 import { selectReviewModel, type ReviewScope } from './review-policy';
 import { agentAttribution, appendAgentByline } from './agent-attribution';
 import { DEFAULT_PRE_PR_SETTINGS, normalizePrePrSettings, type PrePrSettings } from '../../src/logic/prePrSettings';
+import { createRunArtifactStore } from './artifacts';
+import { prepareDockerStage, sanitizeDockerGit } from './docker-stage';
 
 const exec = promisify(execFile);
 const adapters: Record<PrePrReviewerId, AgentAdapter> = { codex: codexAdapter, 'claude-code': claudeCodeAdapter };
@@ -57,6 +59,12 @@ export async function readPrePrReport(path: string): Promise<unknown> {
   } finally { await file.close(); }
 }
 
+async function recordValidatedReport(runsDir: string, runId: string, identity: { stage: string; round: number; reviewer?: string }, path: string): Promise<void> {
+  const bytes = await readFile(path);
+  const store = createRunArtifactStore(join(runsDir, '.artifacts'));
+  await store.write({ runId, ...identity }, bytes);
+}
+
 async function installed(command: string): Promise<boolean> {
   for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
     try { await access(join(dir, command), constants.X_OK); if ((await stat(join(dir, command))).isFile()) return true; } catch { /* Try the next PATH entry. */ }
@@ -64,11 +72,44 @@ async function installed(command: string): Promise<boolean> {
   return false;
 }
 
+export async function assertClarificationReady(task: AgentTask, runId: string, fetcher: typeof fetch = fetch): Promise<void> {
+  if (task.clarification === undefined) return;
+  const raw = task.clarification?.gateUrl;
+  if (typeof raw !== 'string' || raw.length > 1024) throw new PrePrGateError('Clarification publication gate is unavailable; publication blocked.');
+  let url: URL;
+  try { url = new URL(raw); }
+  catch { throw new PrePrGateError('Clarification publication gate URL is invalid; publication blocked.'); }
+  const token = task.clarification?.gateToken;
+  const dockerGate = url.hostname === 'host.docker.internal' && url.pathname === '/clarification-gate'
+    && typeof token === 'string' && /^[a-z\d._~-]{20,4096}$/i.test(token);
+  const localGate = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+    && url.pathname === `/api/runs/${runId}/clarification-gate`;
+  if (url.protocol !== 'http:' || !(dockerGate || localGate)
+    || url.username || url.password || url.search || url.hash
+    || !/^[a-z\d_-]{1,128}$/i.test(runId)) {
+    throw new PrePrGateError('Clarification publication gate must match this local voyage; publication blocked.');
+  }
+  try {
+    const response = await fetcher(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(3000),
+      ...(dockerGate ? { headers: { Authorization: `Bearer ${token}` } } : {}) });
+    if (!response.ok) throw new Error(`gate returned HTTP ${response.status}`);
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !('ready' in body) || body.ready !== true) {
+      throw new Error('required clarification has not been answered');
+    }
+  } catch (error) {
+    throw new PrePrGateError(`Clarification publication gate did not pass; publication blocked. ${error instanceof Error ? error.message : 'gate unavailable'}`);
+  }
+}
+
 export async function executePrePrStage(adapter: AgentAdapter, task: AgentTask, cwd: string, emit: (event: AgentEvent) => void,
   signal: AbortSignal, timeoutMs = STAGE_TIMEOUT): Promise<void> {
   if (signal.aborted) throw new Error('Voyage stopped');
-  const command = adapter.buildCommand(task);
-  await new Promise<void>((done, reject) => {
+  const docker = task.dockerExecution ? await prepareDockerStage(adapter, task, cwd) : undefined;
+  const command = docker?.command ?? adapter.buildCommand(task);
+  let success = false;
+  try {
+    await new Promise<void>((done, reject) => {
     const grouped = process.platform !== 'win32';
     const child = spawn(command.cmd, command.args, { cwd, env: process.env, detached: grouped, stdio: ['ignore', 'pipe', 'pipe'] });
     let failure: Error | undefined;
@@ -83,6 +124,7 @@ export async function executePrePrStage(adapter: AgentAdapter, task: AgentTask, 
     };
     const stop = (message: string) => {
       failure ??= new Error(message);
+      if (docker) void docker.stop().catch(() => undefined);
       killStage('SIGTERM');
       killTimer ??= setTimeout(() => killStage('SIGKILL'), 5000);
       killTimer.unref();
@@ -129,11 +171,32 @@ export async function executePrePrStage(adapter: AgentAdapter, task: AgentTask, 
       else done();
     });
     if (signal.aborted) abort();
-  });
+    });
+    success = true;
+  } finally { await docker?.cleanup(success); }
+}
+
+export function stageEventEmitter(id: PrePrReviewerId, task: AgentTask, emit: (event: AgentEvent) => void): (event: AgentEvent) => void {
+  let stageCost = 0;
+  let costReported = false;
+  const { model, effort } = agentAttribution(id, task, task.review || task.prePr?.stage === 'review' ? 'review agent' : 'PR author');
+  const context = { provider: id, model, effort, stage: task.prePr?.stage ?? (task.review ? 'review' : undefined),
+    round: task.prePr?.round ?? (task.review ? 1 : undefined) };
+  return event => {
+    const { costUsd, ...safe } = event;
+    const validCost = Number.isFinite(costUsd) && (costUsd ?? -1) >= 0;
+    const nextCost = validCost ? Math.max(stageCost, costUsd ?? 0) : stageCost;
+    const delta = id === 'codex' ? costUsd ?? 0 : nextCost - stageCost;
+    const includeCost = validCost && (id === 'codex' || !costReported || delta > 0);
+    stageCost = nextCost;
+    costReported ||= validCost;
+    emit({ ...safe, ...context, ...(includeCost ? { costUsd: delta } : {}) });
+  };
 }
 
 export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrReviewerId; runsDir: string; settings?: PrePrSettings }, emit: (event: AgentEvent) => void): Promise<number> {
   const cwd = process.cwd();
+  const runId = basename(cwd);
   const settings = normalizePrePrSettings(input.settings);
   const abort = new AbortController();
   const stopped = () => abort.abort();
@@ -159,10 +222,11 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
   };
   try {
     if (!adapters[input.writerId]) throw new Error('Unsupported writer CLI');
+    if (input.task.dockerExecution) await sanitizeDockerGit(cwd, input.task.repo);
     const reviewerIds: PrePrReviewerId[] = [];
     for (const id of [input.writerId, input.writerId === 'codex' ? 'claude-code' : 'codex'] as PrePrReviewerId[]) {
       if (reviewerIds.length >= settings.reviewerCount) break;
-      if (await installed(id === 'codex' ? 'codex' : 'claude')) reviewerIds.push(id);
+      if (input.task.dockerExecution || await installed(id === 'codex' ? 'codex' : 'claude')) reviewerIds.push(id);
       else if (id === input.writerId) throw new Error('The writer CLI is unavailable');
     }
     emit({ kind: 'phase', text: `Pre-PR gate: ${reviewerIds.length} reviewer(s), up to ${settings.maxRounds} rounds, ${settings.stageTimeoutMinutes} minutes per session` });
@@ -194,14 +258,14 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
     await mkdir(artifactDir, { recursive: true, mode: 0o700 });
     let metadataPath = '';
     const runStage = async (id: PrePrReviewerId, task: AgentTask, dir: string) => {
-      let stageCost = 0;
-      await executePrePrStage(adapters[id], task, dir, event => {
-        const { costUsd, ...safe } = event;
-        const nextCost = Number.isFinite(costUsd) && (costUsd ?? -1) >= 0 ? Math.max(stageCost, costUsd ?? 0) : stageCost;
-        const delta = nextCost - stageCost;
-        stageCost = nextCost;
-        emit({ ...safe, ...(delta > 0 ? { costUsd: delta } : {}) });
-      }, abort.signal, settings.stageTimeoutMinutes * 60_000);
+      const forward = stageEventEmitter(id, task, emit);
+      forward({ kind: 'phase', text: `Starting ${id} ${task.prePr?.stage ?? 'agent'} stage` });
+      try {
+        await executePrePrStage(adapters[id], task, dir, forward, abort.signal, settings.stageTimeoutMinutes * 60_000);
+      } catch (error) {
+        forward({ kind: 'error', text: error instanceof Error ? error.message : 'Agent stage failed' });
+        throw error;
+      }
     };
     const snapshot = async () => {
       const headSha = await git(['rev-parse', 'HEAD']);
@@ -218,7 +282,11 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
       const reportPath = savedReportPath ?? join(artifactDir, `review-${context.round}-${reviewerId}.json`);
       try {
         if (!savedReportPath) await rm(reportPath, { force: true });
-        await git(['worktree', 'add', '--detach', worktree, context.headSha]);
+        if (input.task.dockerExecution) {
+          await git(['clone', '--no-hardlinks', '--no-local', cwd, worktree]);
+          await git(['checkout', '--detach', context.headSha], worktree);
+          await sanitizeDockerGit(worktree, input.task.repo);
+        } else await git(['worktree', 'add', '--detach', worktree, context.headSha]);
         const reviewTask: AgentTask = { ...input.task, model: choice.model, effort: choice.effort,
           prePr: { stage: 'review', ...context, reportPath } };
         const assertReviewUnchanged = async () => {
@@ -229,7 +297,9 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
         await assertReviewUnchanged();
         const originalReport = await readPrePrReport(reportPath);
         try {
-          return parsePrePrReview(originalReport, context);
+          const parsed = parsePrePrReview(originalReport, context);
+          await recordValidatedReport(input.runsDir, runId, { stage: 'review', round: context.round, reviewer: reviewerId }, reportPath);
+          return parsed;
         } catch (error) {
           if (!(error instanceof PrePrSummaryTooLongError)) throw error;
           emit({ kind: 'phase', text: `${reviewerId}: ${error.message} Requesting one summary-only correction.` });
@@ -245,13 +315,16 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
             }
             const corrected = parsePrePrReview(await readPrePrReport(correctedPath), context);
             assertReviewSummaryCorrection(error.report, corrected);
+            await recordValidatedReport(input.runsDir, runId, { stage: 'review', round: context.round, reviewer: reviewerId }, correctedPath);
             return corrected;
           } catch (correctionError) {
             throw new PrePrGateError(`${reviewerId} summary correction failed after one attempt; publication blocked. ${correctionError instanceof Error ? correctionError.message : String(correctionError)}`);
           }
         }
       } finally {
-        try { await exec('git', ['worktree', 'remove', '--force', worktree], { cwd, timeout: 15_000 }); } catch { /* Failed worktree creation needs no git cleanup. */ }
+        if (!input.task.dockerExecution) {
+          try { await exec('git', ['worktree', 'remove', '--force', worktree], { cwd, timeout: 15_000 }); } catch { /* Failed worktree creation needs no git cleanup. */ }
+        }
         await rm(root, { recursive: true, force: true });
       }
     };
@@ -295,6 +368,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
         await rm(metadataPath, { force: true });
         await runStage(input.writerId, { ...input.task, prePr: { stage, ...context, reportPath: metadataPath } }, cwd);
         parsePrMetadata(await readPrePrReport(metadataPath), input.task);
+        await recordValidatedReport(input.runsDir, runId, { stage, round: context.round }, metadataPath);
         if (!(await git(['diff', '--name-only', baseSha, 'HEAD']))) throw new Error('Author produced an empty overall diff');
       },
       review,
@@ -306,6 +380,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
           await validateRemote();
         };
         await assertApproved();
+        await assertClarificationReady(input.task, runId);
         await git(['push', remote, `${expected.headSha}:refs/heads/${branch}`]);
         await assertApproved();
         const assertRemoteApproved = async () => {
@@ -333,6 +408,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
         await writeFile(bodyFile, body, { mode: 0o600 });
         await assertApproved();
         await assertRemoteApproved();
+        await assertClarificationReady(input.task, runId);
         if (existing) {
           await command('gh', ['pr', 'edit', String(existing.number), '--repo', input.task.repo, '--body-file', bodyFile]);
           return existing.number;

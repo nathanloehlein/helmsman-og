@@ -105,7 +105,7 @@ describe('todo workflow', () => {
     expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('false');
     click('[data-todo-auto-claim]');
     await vi.waitFor(() => expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('true'));
-    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Disable auto-claim');
+    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Stop automatic starts');
     expect(root.querySelector<HTMLInputElement>('[name=title]')?.value).toBe('Keep this draft ');
     await view.refresh();
     expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('true');
@@ -133,7 +133,7 @@ describe('todo workflow', () => {
     resetAutoClaim();
     await view.refresh();
     expect(root.querySelector('[data-todo-auto-claim]')?.getAttribute('aria-pressed')).toBe('false');
-    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Enable auto-claim');
+    expect(root.querySelector('[data-todo-auto-claim]')?.textContent).toBe('Start todos automatically');
     expect(root.querySelector<HTMLInputElement>('[name=title]')?.value).toBe('Draft across server restart');
   });
 

@@ -16,6 +16,12 @@ import { requestSlackReview, SlackReviewRequestError, type SlackReviewResult } f
 import './style.css';
 import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
 import { renderRunsView } from './renderRuns';
+import { fetchOutcomes, saveOutcomeAssessment, OUTCOME_WINDOWS, type OutcomeWindow } from './data/outcomeClient';
+import { renderOutcomesView, type OutcomesViewState } from './renderOutcomes';
+import { mountCampaigns } from './renderCampaigns';
+import { mountClarifications } from './renderClarifications';
+import type { OutcomeSummary } from './data/outcomes';
+import './outcomes.css';
 import { loadDashboard, POLL_MS, LOCAL_POLL_MS, type DashboardResponse } from './data/live';
 import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderVoyageRetry, runTabStatus, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
 import type { RunTabView, PrViewState } from './render';
@@ -208,6 +214,15 @@ export class DashboardView {
   private slackSeq: number = 0;
   private slackReads = new Set<string>();
   private slackReviewRequests = new Map<string, { requestId: string; pending: boolean; error?: string; result?: SlackReviewResult }>();
+  private outcomes: OutcomeSummary | null = null;
+  private outcomeDays: OutcomeWindow = 30;
+  private outcomesLoading = false;
+  private outcomesError: string | null = null;
+  private outcomesSeq = 0;
+  private outcomesSavingRunId: string | null = null;
+  private outcomesEditing = false;
+  private campaigns: ReturnType<typeof mountCampaigns> | null = null;
+  private clarifications: ReturnType<typeof mountClarifications> | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -282,7 +297,12 @@ export class DashboardView {
         return;
       }
       if (!(control instanceof HTMLSelectElement)) return;
-      if (this.view === 'triage' && control.matches('[data-triage-days]')) {
+      if (this.view === 'outcomes' && control.matches('[data-outcome-days]')) {
+        const days = OUTCOME_WINDOWS.find(days => String(days) === control.value);
+        if (days === undefined) return;
+        this.outcomeDays = days;
+        void this.loadOutcomes();
+      } else if (this.view === 'triage' && control.matches('[data-triage-days]')) {
         const days = TRIAGE_DATE_OPTIONS.find(days => String(days) === control.value);
         if (days === undefined) return;
         this.triageFilters.days = days;
@@ -309,7 +329,12 @@ export class DashboardView {
     this.root.addEventListener('submit', (event: SubmitEvent): void => this.handleSubmit(event), { signal: this.rootEvents.signal });
     this.root.addEventListener('input', (event: Event): void => {
       const control = event.target;
-      if (!(control instanceof HTMLElement) || this.view !== 'todos') return;
+      if (!(control instanceof HTMLElement)) return;
+      if (this.view === 'outcomes' && control.closest('[data-outcome-assessment]')) {
+        this.outcomesEditing = true;
+        return;
+      }
+      if (this.view !== 'todos') return;
       if (control instanceof HTMLInputElement && control.matches('[data-todo-search]')) {
         this.todos.search = control.value;
         this.paintTodoList();
@@ -444,6 +469,10 @@ export class DashboardView {
     window.removeEventListener('popstate', this.onPopState);
     this.stopCmuxScreenPoll();
     this.stopCapture();
+    this.campaigns?.destroy();
+    this.campaigns = null;
+    this.clarifications?.destroy();
+    this.clarifications = null;
     this.cmuxEventSource?.close();
     this.runTabs.forEach(tab => tab.unsub?.());
   }
@@ -453,10 +482,18 @@ export class DashboardView {
     this.route = parseRoute(new URL(href, window.location.origin));
     if (history === 'replace') window.history.replaceState(null, '', href);
     else if (history === 'push' && href !== window.location.pathname + window.location.search) window.history.pushState(null, '', href);
-    document.title = `${route.view === 'dashboard' ? term('dashboard') : route.view === 'prs' ? term('prs') : route.view === 'runs' ? term('runs') : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
+    document.title = `${route.view === 'dashboard' ? term('dashboard') : route.view === 'prs' ? term('prs') : route.view === 'runs' ? term('runs') : route.view === 'outcomes' ? term('costsOutcomes') : route.view === 'campaigns' ? term('campaigns') : route.view === 'clarifications' ? term('clarifications') : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
   }
 
   private async navigate(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): Promise<void> {
+    if (this.view === 'campaigns' && route.view !== 'campaigns') {
+      this.campaigns?.destroy();
+      this.campaigns = null;
+    }
+    if (this.view === 'clarifications' && route.view !== 'clarifications') {
+      this.clarifications?.destroy();
+      this.clarifications = null;
+    }
     if (!this.jiraEnabled && (route.view === 'triage' || route.view === 'bugs')) {
       route = { ...route, view: 'todos', pane: null };
     } else if (this.jiraEnabled && route.view === 'todos') {
@@ -494,6 +531,9 @@ export class DashboardView {
       ++this.localGitSeq;
       this.localGitPending = null;
       this.localGit = emptyLocalGit(scope);
+      ++this.outcomesSeq;
+      this.outcomes = null;
+      this.outcomesError = null;
     }
     this.selectedRepo = scope;
     saveRepoScope(scope);
@@ -520,6 +560,7 @@ export class DashboardView {
     if (route.view === 'triage') await this.loadTriage();
     else if (route.view === 'todos') await this.loadTodos();
     else if (route.view === 'bugs') await this.loadBugs();
+    else if (route.view === 'outcomes') await this.loadOutcomes();
     else if (route.view === 'config') {
       const config = await getConfig();
       if (seq !== this.routeSeq) return;
@@ -708,6 +749,8 @@ export class DashboardView {
         const next = template.content.querySelector('[data-pane=recent]');
         if (next) recent.replaceWith(next);
       }
+    } else if (this.view === 'outcomes' && localDue && !this.outcomesEditing && !this.outcomesSavingRunId) {
+      void this.loadOutcomes();
     }
     this.paintRunRetries();
   }
@@ -846,6 +889,41 @@ export class DashboardView {
     }
     if (this.view === 'runs') {
       this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.runs }));
+      this.bindHeadControls();
+      this.rehomeRunDrawer();
+      return;
+    }
+    if (this.view === 'outcomes') {
+      this.mountPage(renderOutcomesView(this.outcomesState(), this.shellOptions()));
+      this.bindHeadControls();
+      this.rehomeRunDrawer();
+      return;
+    }
+    if (this.view === 'campaigns') {
+      const existing = this.root.querySelector<HTMLElement>('#campaigns-page');
+      if (!existing || !this.campaigns) {
+        this.campaigns?.destroy();
+        this.mountPage(renderAppShell(this.shellOptions(), '<div id="campaigns-page"></div>'));
+        const container = this.root.querySelector<HTMLElement>('#campaigns-page');
+        if (container) {
+          this.campaigns = mountCampaigns(container, {
+            repo: () => this.selectedRepo,
+            onOpenRun: runId => { void this.navigate({ ...this.route, view: 'runs', pane: 'tasks', run: runId }); },
+          });
+        }
+      } else void this.campaigns.refresh();
+      this.bindHeadControls();
+      this.rehomeRunDrawer();
+      return;
+    }
+    if (this.view === 'clarifications') {
+      const existing = this.root.querySelector<HTMLElement>('#clarifications-page');
+      if (!existing || !this.clarifications) {
+        this.clarifications?.destroy();
+        this.mountPage(renderAppShell(this.shellOptions(), '<div id="clarifications-page"></div>'));
+        const container = this.root.querySelector<HTMLElement>('#clarifications-page');
+        if (container) this.clarifications = mountClarifications(container, { repo: () => this.selectedRepo });
+      } else void this.clarifications.refresh();
       this.bindHeadControls();
       this.rehomeRunDrawer();
       return;
@@ -1218,6 +1296,30 @@ export class DashboardView {
     this.bugsResponse = result;
   }
 
+  private outcomesState(): OutcomesViewState {
+    return { summary: this.outcomes, days: this.outcomeDays, loading: this.outcomesLoading, error: this.outcomesError, savingRunId: this.outcomesSavingRunId };
+  }
+
+  private async loadOutcomes(): Promise<void> {
+    const seq = ++this.outcomesSeq;
+    const repo = this.selectedRepo;
+    this.outcomesLoading = true;
+    this.outcomesError = null;
+    if (!this.outcomesEditing && !this.outcomesSavingRunId) this.paint();
+    try {
+      const summary = await fetchOutcomes(repo, this.outcomeDays);
+      if (seq !== this.outcomesSeq || repo !== this.selectedRepo || this.view !== 'outcomes') return;
+      this.outcomes = summary;
+    } catch (error: unknown) {
+      if (seq !== this.outcomesSeq || repo !== this.selectedRepo || this.view !== 'outcomes') return;
+      this.outcomesError = error instanceof Error ? error.message : 'Could not load outcomes.';
+    } finally {
+      if (seq !== this.outcomesSeq || this.destroyed) return;
+      this.outcomesLoading = false;
+      if (!this.outcomesEditing && !this.outcomesSavingRunId) this.paint();
+    }
+  }
+
   private paintLocalGit(): void {
     if (this.view !== 'config') return;
     const card = this.root.querySelector('.local-git-panel');
@@ -1275,7 +1377,7 @@ export class DashboardView {
     if (!repo || this.localGit.repo !== repo || this.localGit.loading || this.localGit.pendingAction || this.localGitOperations.has(repo)) return Promise.resolve();
     const seq = ++this.localGitSeq;
     this.localGit = { ...this.localGit, confirmation: undefined, cleanup: undefined, error: null,
-      pendingAction: action.action === 'refresh-remotes' ? 'Checking remotes…'
+      pendingAction: action.action === 'refresh-remotes' ? 'Fetching remote status…'
         : action.action === 'preview-delete-untracked-branches' ? 'Checking eligible branches…' : 'Deleting…' };
     this.paintLocalGit();
     const promise = updateLocalGit(repo, action).then(result => {
@@ -1307,7 +1409,7 @@ export class DashboardView {
     if (autoClaim) {
       const enabled = this.autoClaimRepos.includes(this.selectedRepo ?? '');
       autoClaim.setAttribute('aria-pressed', String(enabled));
-      autoClaim.textContent = enabled ? 'Disable auto-claim' : 'Enable auto-claim';
+      autoClaim.textContent = enabled ? 'Stop automatic starts' : 'Start todos automatically';
     }
     const feedback = this.root.querySelector('[data-todo-feedback]');
     if (feedback) {
@@ -1795,6 +1897,11 @@ export class DashboardView {
 
   private handleSubmit(event: SubmitEvent): void {
     const target: EventTarget | null = event.target;
+    if (target instanceof HTMLFormElement && target.matches('[data-outcome-assessment]')) {
+      event.preventDefault();
+      void this.saveOutcomeAssessment(target);
+      return;
+    }
     if (target instanceof HTMLFormElement && target.matches('[data-todo-form]')) {
       event.preventDefault();
       void this.saveTodo(target);
@@ -1803,6 +1910,42 @@ export class DashboardView {
     if (!(target instanceof HTMLFormElement) || !target.classList.contains('cmux-send')) return;
     event.preventDefault();
     void this.withStableView(() => this.handleCmuxSend(target));
+  }
+
+  private async saveOutcomeAssessment(form: HTMLFormElement): Promise<void> {
+    const runId = form.dataset.outcomeAssessment;
+    if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId) || this.outcomesSavingRunId) return;
+    const data = new FormData(form);
+    const state = data.get('state');
+    const outcome = data.get('outcome');
+    if (!['complete', 'partial', 'failed', 'not-assessed'].includes(String(state)) || !['achieved', 'partial', 'not-achieved', 'unknown'].includes(String(outcome))) return;
+    const correctionRaw = String(data.get('correctionRounds') ?? '').trim();
+    const correctionRounds = correctionRaw === '' ? null : Number(correctionRaw);
+    if (correctionRounds !== null && (!Number.isSafeInteger(correctionRounds) || correctionRounds < 0)) {
+      const error = form.querySelector<HTMLElement>('.outcome-save-error');
+      if (error) error.textContent = 'Correction rounds must be a whole non-negative number.';
+      return;
+    }
+    this.outcomesSavingRunId = runId;
+    this.outcomesEditing = false;
+    this.paint();
+    try {
+      await saveOutcomeAssessment(runId, {
+        state: state as 'complete' | 'partial' | 'failed' | 'not-assessed',
+        outcome: outcome as 'achieved' | 'partial' | 'not-achieved' | 'unknown',
+        summary: String(data.get('summary') ?? '').trim(),
+        evidence: String(data.get('evidence') ?? '').split('\n').map(value => value.trim()).filter(Boolean),
+        failureStage: String(data.get('failureStage') ?? '').trim() || null,
+        correctionRounds,
+      });
+      this.outcomesSavingRunId = null;
+      await this.loadOutcomes();
+    } catch (error: unknown) {
+      this.outcomesSavingRunId = null;
+      this.outcomesError = error instanceof Error ? error.message : 'Could not save assessment.';
+      this.outcomesEditing = true;
+      this.paint();
+    }
   }
 
   private paintRunRetries(): void {

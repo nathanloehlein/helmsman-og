@@ -1,0 +1,73 @@
+# Moon Units recommendations: implementation and verification
+
+Source: `deliverables/Moon-Units-vs-Helmsman.docx` (source-reviewed edition, 18 September 2026), with implementation detail in `Moon-Units-Code-Reuse-Assessment.md`. Moon Units reference revision: `d723a019`. Helmsman starting revision: `45e6fcf6`.
+
+The goal is to implement every recommendation. This checklist records evidence, not substitutes for working flows. Work is isolated on `feat/moonunit-adoption`; the running application remains on its original checkout while changes are developed.
+
+## Required capabilities
+
+- [x] Structured Codex JSON events; malformed/null fields guarded; raw fallback and PR discovery preserved.
+- [x] Provider usage accounting with idempotent ingestion and unknown costs distinguished from zero; no invented model prices.
+- [x] Bounded GitHub/Jira HTTP error parsing with size limits, deadlines, and safe fallbacks.
+- [x] Dedicated Costs & Outcomes tab, header galleon scope, date window, costs/coverage, tokens, durations, unique PR review/publication/merge metrics, failure stages and correction rounds.
+- [x] Persistent outcome evidence distinct from process success and mandatory review gates; explicit complete/partial/failed/not-assessed evaluation state.
+- [x] Immutable stage artifacts, safe paths, hashes, exclusive writes and verification on checkpoint continuation.
+- [x] Versioned workflow definitions and complete execution snapshots, preserving frozen settings across retry/resume.
+- [x] Required-skill preflight, immutable content verification and per-run provisioning; safe names/argv, actionable failures.
+- [x] Durable dispatch claims, stale-claim reconciliation and uncertain-launch handling, preserving existing deduplication and one active writer per galleon.
+- [x] Batch campaigns with CSV/JSONL preview/intake, deterministic import/record identities, concurrency, phases, pause/stop and failed-item retry.
+- [x] Durable run-bound clarification questions/answers, deadlines, local UI, explicit waiting/capacity policy; required answers never inferred from timeout.
+- [x] Trusted contact defaults, conversation ownership and orphan cleanup; no outbound messages without explicit configured authorization.
+- [x] Docker RunHost with persistent identity, liveness, stop and restart reattachment.
+- [x] Run-scoped credential access, operation/branch restrictions and human-only merges; no long-lived token vending or inherited alternate credentials in isolated execution.
+- [x] Authenticated, deduplicated webhook intake mapped to saved workflows.
+- [x] Launch preflight and lifecycle telemetry with model/effort/attempt/stage identity.
+- [x] Remote-worker reconnect behavior if the implemented host requires a remote control channel; otherwise document why local Docker uses the existing durable host protocol.
+
+## Completion gates
+
+- [x] Relevant unit/integration tests exercise real application entry points, not only standalone helpers.
+- [x] `npm run build` (TypeScript + Vite) and required checks pass.
+- [x] UI verified in browser for Costs & Outcomes, campaigns, clarifications, empty/error states, scope changes and terminology modes.
+- [x] Commit reviewed as Senior Software Architect; material findings fixed and reverified.
+- [x] Final requirement-by-requirement audit includes file/test/runtime evidence and remaining limitations.
+
+## Human-input todos
+
+- Register trusted contacts with the Jira account ID in the address field for automatic assignee/reporter routing; contact selection never authorizes sending.
+- Configure host OpenAI/Anthropic API keys to validate a real provider-backed Docker run. Neither key is configured in this development session. No provider calls or external messages were sent for testing.
+- Choose webhook event/action mappings and a webhook secret before enabling external intake. Intake is disabled by default; deploying public ingress is not part of local implementation.
+
+## Implementation limits
+
+- Isolated agents have no arbitrary internet egress; required dependencies/cache must be supplied in the runtime image.
+- Docker branch-update reruns currently fail preflight; use the existing trusted local host for that mode. New coding and standalone review use host-supervised isolated stages.
+- Workflow retries enforce saved prompt-source and skill hashes. Code/skill drift fails preflight instead of silently executing a different revision. Unreported provider-default model identities and prices remain unknown.
+- PR metrics are live best-effort reads with bounded refreshes and explicit unavailable/stale counts. Reviewed external PRs do not count as Helmsman-authored publications.
+
+## Requirement audit
+
+| Capability | Implementation and evidence |
+|---|---|
+| Structured events, usage, lifecycle | `agents/codex-stream.ts`, `agents/claude-stream.ts`, `run-telemetry.ts`, `log-tail.ts`; parser, replay and UTF-8 tests |
+| Bounded errors | `server/http-failure.ts`; GitHub/Jira integration; stalled cancellation regression |
+| Costs & Outcomes | `outcomes.ts`, `outcome-service.ts`, router, `renderOutcomes.ts`; complete/partial pricing coverage, evidence validation, scope and client tests |
+| Immutable artifacts, frozen workflows, skills | `artifacts.ts`, `workflow-snapshots.ts`, `skills-preflight.ts`, `prepare-run.ts`, runtime/resume hooks; hashes, symlinks, exclusive writes and drift tests |
+| Durable claims and campaigns | `campaigns.ts`, `campaign-service.ts`, `campaign-dispatcher.ts`, `created-pr-reviews.ts`; CAS, stale-claim, dedup, preview/confirm tests |
+| Human clarification and contacts | `clarifications.ts`, `clarification-runtime.ts`, `contact-policy.ts`, Jira hints, local page and publication gates; expiry/ownership/blocking integration tests |
+| Isolated host and credentials | `docker-host.ts`, `docker-stage.ts`, `docker-workspace.ts`, `scoped-gateway.ts`; real offline Docker lifecycle, retry, output-copy and network-isolation smoke checks |
+| Webhooks | `webhooks.ts`, main/router wiring; raw-body HMAC, mapping, persistent delivery and uncertain-launch tests |
+| Recovery | Local detached supervisor plus persisted Docker identity; no remote socket/control channel, so no new reconnect protocol is required |
+
+## Progress and evidence
+
+- Worktree `helmsman-moonunit-adoption`, branch `feat/moonunit-adoption`; original running checkout untouched.
+- Codex stream + HTTP errors: 112 focused adapter/GitHub/Jira tests passed at first integration.
+- Persistent usage, outcomes, API routes, evidence assessments and Costs & Outcomes UI implemented. Byte-offset replay is idempotent, split UTF-8 log records are preserved, unknown costs stay unknown.
+- Campaign import/service/dispatcher/UI and durable created-PR review claims implemented; campaign scope and preview/confirm tested without launching external work.
+- Clarification store, local UI, JSONL relay, required-answer publication gates and orphan cleanup implemented. Expired questions never imply an answer.
+- Immutable report artifacts, workflow snapshots, required skill hashes and cross-platform private provisioning integrated with runtime/retry/resume.
+- Docker image built successfully. Real offline RunHost smoke passed with host-visible log and exit marker. Credential gateway forwarding, expiry, revocation, persistence and scope checks tested with fake upstreams.
+- UI verified in cmux browser against a temporary database on port 8799: empty pages, known/unknown costs, scoped clarification answer, campaign import preview/confirm, and Pirate terminology. Screenshots saved under `/tmp/helmsman-ui-ekdio3/`.
+- Final full suite: 146 files / 2,248 tests passed. Final recovery/output-reader and UI polish then passed `npm run build` and 107 focused tests. Build emits an existing Vite config-loader compatibility warning; no build or TypeScript errors.
+- Final browser screenshots inspected: Costs & Outcomes, campaigns and clarifications. Post-commit Senior Software Architect review found and fixed Claude beta-request forwarding, stale automatic outcome evidence after resume, and unpinned known Codex defaults. Final fixes pass the build and 91 focused tests. A real pinned Claude container reached a mocked upstream with its beta flags and host credential substitution verified; no provider request was made.

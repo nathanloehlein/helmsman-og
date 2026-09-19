@@ -66,7 +66,7 @@ describe('Slack notification center', () => {
   it('uses a general empty state for the notification center', () => {
     document.body.innerHTML = renderSlack(unavailableSlack(), true);
     expect(document.querySelector('.slack-popover')?.getAttribute('aria-label')).toBe('Notifications');
-    expect(document.querySelector('.slack-empty')?.textContent).toBe('No notifications yet.');
+    expect(document.querySelector('.slack-empty')?.textContent).toContain('No notifications yet.');
   });
 
   it.each([true, false])('uses mode-specific labels without rewriting external notification text (%s)', pirate => {
@@ -136,7 +136,7 @@ describe('Slack notification center', () => {
     state.notifications = [{ ...item, status: 'blocked', sourceUrl: 'javascript:bad()', error: '<img src=x onerror=bad()>' }];
     document.body.innerHTML = renderSlack(state, false, 'Could not mark notification read. Try again.');
     expect(document.querySelector<HTMLElement>('#slack-notifications')?.hidden).toBe(true);
-    expect(document.querySelector('.slack-health')?.textContent).toContain('Reader unavailable');
+    expect(document.querySelector('.slack-health')?.textContent).toContain('Automatic checks unavailable');
     expect(document.querySelector('.slack-health strong')?.textContent).toBe('Slack');
     expect(document.querySelector('.slack-status')?.textContent).toBe('Inspection blocked');
     expect(document.querySelector('a[href^="javascript:"]')).toBeNull();

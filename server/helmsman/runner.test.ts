@@ -8,6 +8,7 @@ import { openDb, type Db, type RunRow } from './db';
 import type { JiraActions } from './jira-actions';
 import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import type { HostRef, LaunchSpec, RunHost } from './run-host';
+import { restoreRunAdapter } from './agents/restore';
 
 const task: AgentTask = { ticketId: 'LEKA-1', title: 'do it', repo: 'o/r', jiraBaseUrl: 'https://x' };
 const unknownAttribution = { role: 'review agent', model: 'not reported', effort: 'not reported' };
@@ -986,6 +987,27 @@ describe('reattachRun', () => {
     };
   }
 
+  it.each(['codex', 'claude-code'])('recovers Docker %s review usage from structured worker logs', async adapter => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const reviewTask = { ...task, review: true, prNumber: 12, prHeadSha: 'a'.repeat(40),
+        dockerExecution: { image: 'test', runId: 'run-1', gatewayUrl: 'http://host.docker.internal:8790', capability: 'a'.repeat(64) } };
+      const row = { ...baseRow(runsDir), adapter, prNumber: 12, taskJson: JSON.stringify(reviewTask) };
+      const event = { kind: 'usage', text: 'Recovered review usage', provider: adapter, model: 'review-model', stage: 'review', round: 1,
+        costUsd: 1.25, usage: { inputTokens: 12 } };
+      writeFileSync(row.logPath!, JSON.stringify({ __helmsmanPrePr: 1, ...event }) + '\n');
+      writeFileSync(row.exitPath!, '0');
+      db.insertRun(row);
+      const recordAgentEvent = vi.fn(() => 1.25);
+      await reattachRun(row, { ...deps(db, restoreRunAdapter(row, { runsDir }), singleAttemptHost([], true), runsDir),
+        recordAgentEvent, readReview: async () => 'Verdict: APPROVE — verified', postReview: async () => ({ ok: true }) });
+      expect(recordAgentEvent).toHaveBeenCalledWith(expect.objectContaining({ id: row.id }), reviewTask, event, expect.any(Number));
+      expect(db.getRun(row.id)).toMatchObject({ status: 'succeeded', costUsd: 1.25 });
+      expect(db.listEvents(row.id)).toContainEqual(expect.objectContaining({ kind: 'usage', text: 'Recovered review usage' }));
+    } finally { db.close(); }
+  });
+
   it('persists recovered exit-log bytes so a subsequent attachment does not replay costs or events', async () => {
     const db = openDb(':memory:');
     try {
@@ -1224,4 +1246,27 @@ describe('reattachRun', () => {
     expect(db.listEvents('run-1').some((e) => e.kind === 'error' && e.text.includes('host gone'))).toBe(true);
     db.close();
   });
+});
+
+it('fails a zero-exit run with unanswered required clarification and does not enqueue a PR review', async () => {
+  const db = openDb(':memory:');
+  const runnerDeps = deps(db, jsonAdapter(), singleAttemptHost([], true, 7), freshRunsDir());
+  runnerDeps.hasRequiredUnanswered = () => true;
+  runnerDeps.enqueueCreatedPrReview = vi.fn();
+  await startRun(task, runnerDeps);
+  expect(db.getRun('run-1')?.status).toBe('failed');
+  expect(runnerDeps.enqueueCreatedPrReview).not.toHaveBeenCalled();
+  db.close();
+});
+
+it('stops the host if a required clarification times out during execution', async () => {
+  const db = openDb(':memory:');
+  const host = singleAttemptHost([], true);
+  host.stop = vi.fn(async () => {});
+  const runnerDeps = deps(db, jsonAdapter(), host, freshRunsDir());
+  runnerDeps.pollClarifications = () => { throw new Error('Required clarification timed out'); };
+  await startRun(task, runnerDeps);
+  expect(db.getRun('run-1')?.status).toBe('failed');
+  expect(host.stop).toHaveBeenCalledOnce();
+  db.close();
 });

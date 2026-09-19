@@ -20,10 +20,10 @@ describe('interface terminology', () => {
   });
 
   it.each([
-    ['tokens', 'Tokens', 'Pieces of eight'], ['agent', 'Agent', 'Deckhand'],
+    ['tokens', 'Tokens', 'Tokens'], ['agent', 'Agent', 'Deckhand'],
     ['start', 'Start', 'Weigh anchor'], ['review', 'Review', 'Inspection'],
     ['pr', 'PR', 'Bounty'], ['repository', 'Repository', 'Galleon'],
-    ['run', 'Run', 'Voyage'], ['launchTicket', 'Launch ticket', 'All Hands on Deck'],
+    ['run', 'Run', 'Voyage'], ['launchTicket', 'Start ticket run', 'Start ticket voyage'],
   ] as const)('maps the explicit %s label without relying on storage', (key, plain, pirate) => {
     expect(wording(key, false)).toBe(plain);
     expect(wording(key, true)).toBe(pirate);
