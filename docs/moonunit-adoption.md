@@ -2,7 +2,21 @@
 
 Source: `deliverables/Moon-Units-vs-Helmsman.docx` (source-reviewed edition, 18 September 2026), with implementation detail in `Moon-Units-Code-Reuse-Assessment.md`. Moon Units reference revision: `d723a019`. Helmsman starting revision: `45e6fcf6`.
 
-The goal is to implement every recommendation. This checklist records evidence, not substitutes for working flows. Work is isolated on `feat/moonunit-adoption`; the running application remains on its original checkout while changes are developed.
+The recommendations were implemented on `feat/moonunit-adoption` and merged into `master`. This checklist records implementation evidence and remaining setup requirements.
+
+## Feature overview
+
+| Feature | What it adds to Helmsman |
+|---|---|
+| Costs & Outcomes | Tracks reported costs, tokens, duration and PR outcomes; missing prices remain unknown. |
+| Batch campaigns | Imports CSV/JSONL tasks with a preview, concurrency controls, pause/stop and failed-item retry. |
+| Agent Questions | Lets an agent request a human decision during a run and receive an answer in the UI. Agents are instructed to wait before dependent work; unresolved required questions block successful completion and publication. |
+| Reproducible runs | Freezes workflow settings and required skills, saves immutable artifacts, and verifies saved evidence before continuing. |
+| Isolated execution | Runs supported agent stages in Docker with restricted networking and run-scoped credential access. |
+| Webhook intake | Maps authenticated, deduplicated events to saved workflows once configured. |
+| Reliable dispatch and telemetry | Persists launch claims, reconciles interrupted work, and records structured provider usage and lifecycle events. |
+
+See the updated [voyage flowchart](helmsman-process.html) for how these features connect to implementation, review and publication.
 
 ## Required capabilities
 
@@ -61,7 +75,7 @@ The goal is to implement every recommendation. This checklist records evidence, 
 
 ## Progress and evidence
 
-- Worktree `helmsman-moonunit-adoption`, branch `feat/moonunit-adoption`; original running checkout untouched.
+- Development used worktree `helmsman-moonunit-adoption`, branch `feat/moonunit-adoption`, before merging into `master`.
 - Codex stream + HTTP errors: 112 focused adapter/GitHub/Jira tests passed at first integration.
 - Persistent usage, outcomes, API routes, evidence assessments and Costs & Outcomes UI implemented. Byte-offset replay is idempotent, split UTF-8 log records are preserved, unknown costs stay unknown.
 - Campaign import/service/dispatcher/UI and durable created-PR review claims implemented; campaign scope and preview/confirm tested without launching external work.
@@ -71,3 +85,4 @@ The goal is to implement every recommendation. This checklist records evidence, 
 - UI verified in cmux browser against a temporary database on port 8799: empty pages, known/unknown costs, scoped clarification answer, campaign import preview/confirm, and Pirate terminology. Screenshots saved under `/tmp/helmsman-ui-ekdio3/`.
 - Final full suite: 146 files / 2,248 tests passed. Final recovery/output-reader and UI polish then passed `npm run build` and 107 focused tests. Build emits an existing Vite config-loader compatibility warning; no build or TypeScript errors.
 - Final browser screenshots inspected: Costs & Outcomes, campaigns and clarifications. Post-commit Senior Software Architect review found and fixed Claude beta-request forwarding, stale automatic outcome evidence after resume, and unpinned known Codex defaults. Final fixes pass the build and 91 focused tests. A real pinned Claude container reached a mocked upstream with its beta flags and host credential substitution verified; no provider request was made.
+- Integration into `master`: TypeScript/Vite build and full suite passed (149 files / 2,286 tests), including the newer Slack master toggle and grouped settings.

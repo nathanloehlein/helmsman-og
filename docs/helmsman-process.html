@@ -31,33 +31,69 @@ svg { display: block; width: 100%; min-width: 0; height: auto; }
 .notes h2 { font-size: 17px; margin: 0 0 7px; }
 .notes p { font-size: 14px; line-height: 1.6; margin: 0; color: #486174; }
 footer { font-size: 13px; color: #587082; margin-top: 24px; }
+.section-heading { font-size: 23px; margin: 30px 0 10px; letter-spacing: -.015em; }
+.section-intro { color: #486174; line-height: 1.6; margin: 0 0 16px; max-width: 85ch; }
+.intake-sources, .host-options, .workflow-options, .lifecycle { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.host-options, .workflow-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.flow-step { border: 1px solid #b4c9da; padding: 16px; background: #f6faff; border-radius: 8px; }
+.flow-step h3, .lifecycle h3 { margin: 0 0 8px; font-size: 17px; }
+.flow-step p, .flow-step li, .lifecycle li { margin: 0; font-size: 14px; line-height: 1.55; color: #355269; }
+.flow-step ol { margin: 0; padding-left: 20px; }
+.flow-common { max-width: 780px; margin: 0 auto; }
+.flow-arrow { margin: 8px 0; text-align: center; font-size: 24px; color: #526d86; }
+.lifecycle { margin-bottom: 22px; }
+.lifecycle ol { margin: 0; padding-left: 22px; }
+.lifecycle li + li { margin-top: 12px; }
+.lifecycle article { border-top: 2px solid #7da9cf; padding-top: 14px; }
+.review-diagram svg { min-width: 900px; }
+.diagram-hint { color: #486174; font-size: 13px; margin: 0 0 10px; }
+.limit-note { padding: 14px 16px; background: #fff9ec; border: 1px solid #dccb9d; border-radius: 8px; color: #584a2d; font-size: 14px; line-height: 1.6; }
+@media (max-width: 700px) { .intake-sources, .host-options, .workflow-options, .lifecycle { grid-template-columns: 1fr; } .section-heading { font-size: 21px; } }
 @media (max-width: 700px) { main { margin: 0; padding: 24px 16px; border: 0; border-radius: 0; } .notes { grid-template-columns: 1fr; } }
-@media print { @page { size: A3 portrait; margin: 10mm; } body { background: #fff; } main { margin: 0; padding: 0; max-width: none; border: 0; } h1 { font-size: 24px; } .subtitle { font-size: 13px; } .defaults { margin: 12px 0; } .defaults li { padding: 6px 9px; font-size: 12px; } .toolbar { display: none; } .diagram { overflow: visible; border: 0; } svg { min-width: 0; width: 100%; max-height: 295mm; } .notes { margin-top: 12px; gap: 12px; } .notes h2 { font-size: 12px; } .notes p, footer { font-size: 10px; } * { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+@media print { @page { size: A3 portrait; margin: 10mm; } body { background: #fff; } main { margin: 0; padding: 0; max-width: none; border: 0; } h1 { font-size: 24px; } .subtitle { font-size: 13px; } .defaults { margin: 12px 0; } .defaults li { padding: 6px 9px; font-size: 12px; } .toolbar, .diagram-hint { display: none; } .review-section { break-before: page; } .lifecycle-section { break-before: page; } .flow-step, .lifecycle article, .notes > div { break-inside: avoid; } .section-heading { font-size: 20px; } .flow-step p, .flow-step li, .lifecycle li { font-size: 12px; } .review-diagram svg { min-width: 0; } .diagram { overflow: visible; border: 0; } svg { min-width: 0; width: 100%; max-height: 295mm; } .notes { margin-top: 12px; gap: 12px; } .notes h2 { font-size: 12px; } .notes p, footer { font-size: 10px; } * { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
 </style>
 </head>
 <body>
 <main>
 <header>
 <h1>Helmsman voyage flow</h1>
-<p class="subtitle">From a task in your selected galleon to an approved commit, a published PR, and follow-up reviews.</p>
+<p class="subtitle">From manual or automated intake to verified execution, human decisions, published work, and measured outcomes.</p>
 <ul class="defaults" aria-label="Default settings">
 <li><strong>2</strong> desired reviewer CLIs</li><li><strong>3</strong> review rounds</li><li><strong>45 min</strong> per agent session</li>
 </ul>
 <p class="toolbar">Defaults shown; live configuration may differ. <a href="helmsman-process.md">Mermaid source and full notes</a> · Works offline · Print or save as PDF from your browser.</p>
 </header>
-<div class="diagram">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1970" role="img" aria-labelledby="diagram-title diagram-desc">
-<title id="diagram-title">Helmsman voyage from task selection to published PR and follow-up reviews</title>
-<desc id="diagram-desc">Select a galleon and task source, prepare a managed worktree, implement and commit. Review leads run sequentially. Validate reports, correct an oversized summary once, and fix findings within the review-round limit. After all reviewers approve, push the exact commit, verify it, and create the PR. Finish with Jira and Copilot actions and a queued Helmsman review. Failure blocks publication and preserves work.</desc>
+<section aria-labelledby="intake-heading">
+<h2 class="section-heading" id="intake-heading">Intake and execution preparation</h2>
+<p class="section-intro">Each source resolves a task, galleon, and workflow before execution. The same publication safeguards apply to automated work.</p>
+<div class="intake-sources">
+<article class="flow-step"><h3>Manual launch</h3><p>Select a galleon, then a Jira ticket, custom task, local todo, or existing PR. A panel can explicitly override the header target.</p></article>
+<article class="flow-step"><h3>Campaign</h3><p>Create phases → preview CSV/JSONL → confirm tasks → start a phase. Imports are deduplicated; explicit galleon overrides appear in the preview.</p></article>
+<article class="flow-step"><h3>Authenticated webhook</h3><p>Verify the raw-body HMAC and configured event/action/workflow mapping. Persist and deduplicate delivery IDs. Disabled until configured.</p></article>
+</div>
+<div class="flow-arrow" aria-hidden="true">↓</div>
+<div class="flow-step flow-common"><h3>Dispatch and freeze execution</h3><ol><li>Check scope and capacity; allow one active writer per galleon. Automated dispatch uses durable claims.</li><li>Freeze workflow version, model/effort, review settings, and prompt/skill hashes.</li><li>Verify required skills and provision private copies. Retries and checkpoint resumes must match the saved snapshot.</li></ol></div>
+<div class="flow-arrow" aria-hidden="true">↓</div>
+<div class="host-options">
+<article class="flow-step"><h3>Trusted local host · default</h3><p>Agent stages use the existing local runtime and its host permissions.</p></article>
+<article class="flow-step"><h3>Docker agent stages · optional</h3><p>Pin the image; use private workspaces and read-only skills. A run-scoped gateway permits provider operations and restricted GitHub reads. Upstream credentials remain on the host.</p></article>
+</div>
+<p class="section-intro" style="margin-top: 14px">The host supervises, verifies evidence, and publishes. Missing skills, snapshot drift, or unavailable Docker requirements fail preflight; isolated execution never falls back silently to the local host.</p>
+<div class="flow-arrow" aria-hidden="true">↓</div>
+<div class="workflow-options">
+<article class="flow-step"><h3>New coding task</h3><p>Continue through implementation and the exact-revision PR review loop below.</p></article>
+<article class="flow-step"><h3>Existing PR review</h3><p>Pin the current PR head and run a standalone review. The host verifies the result and required answers before posting.</p></article>
+</div>
+</section>
+<section class="review-section" aria-labelledby="review-heading">
+<h2 class="section-heading" id="review-heading">Coding and PR publication</h2>
+<p class="section-intro">The detailed review loop remains the gate to publishing new code. Agent Questions, immutable evidence, and usage accounting accompany every stage.</p>
+<p class="diagram-hint">On a narrow screen, scroll the diagram horizontally to read the full review loop.</p>
+<div class="diagram review-diagram">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 450 1200 1520" role="img" aria-labelledby="diagram-title diagram-desc">
+<title id="diagram-title">Prepared coding workflow through exact-revision review, publication and follow-up reviews</title>
+<desc id="diagram-desc">After intake and frozen execution preparation, create a workspace, implement and commit. Review leads run sequentially against the pinned revision. Validate reports, correct an oversized summary once, and fix findings within the round limit. All selected reviewers must approve with no findings, and required Agent Questions must be answered. The host pushes the exact approved commit, verifies it and rechecks required answers before creating the PR. Jira and Copilot actions follow, with a queued Helmsman review. Failures preserve work; there is no automatic merge.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#526d86"/></marker></defs>
-<path d="M600 85 V115" class="edge " marker-end="url(#arrow)"/>
-<path d="M600 180 V205 H200 V230" class="edge " marker-end="url(#arrow)"/>
-<path d="M600 180 V230" class="edge " marker-end="url(#arrow)"/>
-<path d="M600 180 V205 H1000 V230" class="edge " marker-end="url(#arrow)"/>
-<path d="M200 315 V340 H600 V365" class="edge " marker-end="url(#arrow)"/>
-<path d="M600 315 V365" class="edge " marker-end="url(#arrow)"/>
-<path d="M1000 315 V340 H600" class="edge " marker-end="url(#arrow)"/>
-<path d="M600 430 V460" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 575 V605" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 700 V735" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 880 V900" class="edge " marker-end="url(#arrow)"/>
@@ -76,52 +112,31 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <path d="M1025 1205 V1235 H1182 V717 H660 V735" class="edge " marker-end="url(#arrow)"/>
 <text x="1010" y="706" text-anchor="middle" class="edge-label">New commit → fresh reviews</text>
 <path d="M600 1170 V1265" class="edge " marker-end="url(#arrow)"/>
-<text x="600" y="1225" text-anchor="middle" class="edge-label">All approve · no findings</text>
+<text x="600" y="1225" text-anchor="middle" class="edge-label">All approve · required answers received</text>
 <path d="M600 1360 V1390" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 1480 V1510" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 1605 V1640" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 1780 V1810" class="edge " marker-end="url(#arrow)"/>
-<g class="node start"><rect x="470" y="25" width="260" height="60" rx="14"/>
-<text x="600.0" y="54" text-anchor="middle" class="node-title">User</text>
-</g>
-<g class="node normal"><rect x="390" y="115" width="420" height="65" rx="14"/>
-<text x="600.0" y="144" text-anchor="middle" class="node-title">1 · Select galleon</text>
-</g>
-<g class="node source"><rect x="50" y="230" width="300" height="85" rx="14"/>
-<text x="200.0" y="259" text-anchor="middle" class="node-title">Jira ticket</text>
-<text x="200.0" y="285" text-anchor="middle" class="node-detail">Jira enabled</text>
-</g>
-<g class="node source"><rect x="450" y="230" width="300" height="85" rx="14"/>
-<text x="600.0" y="259" text-anchor="middle" class="node-title">Freeform task</text>
-<text x="600.0" y="285" text-anchor="middle" class="node-detail">Direct task requirements</text>
-</g>
-<g class="node source"><rect x="850" y="230" width="300" height="85" rx="14"/>
-<text x="1000.0" y="259" text-anchor="middle" class="node-title">Local todo</text>
-<text x="1000.0" y="285" text-anchor="middle" class="node-detail">Jira disabled</text>
-</g>
-<g class="node normal"><rect x="390" y="365" width="420" height="65" rx="14"/>
-<text x="600.0" y="394" text-anchor="middle" class="node-title">2 · Launch voyage</text>
-</g>
 <g class="node normal"><rect x="375" y="460" width="450" height="115" rx="14"/>
-<text x="600.0" y="489" text-anchor="middle" class="node-title">3 · Prepare context and worktree</text>
+<text x="600.0" y="489" text-anchor="middle" class="node-title">1 · Prepare context and workspace</text>
 <text x="600.0" y="515" text-anchor="middle" class="node-detail">Load task requirements; managed branch</text>
 <text x="600.0" y="538" text-anchor="middle" class="node-detail">Validate clean checkout, base, remote</text>
-<text x="600.0" y="561" text-anchor="middle" class="node-detail">and installed writer CLI</text>
+<text x="600.0" y="561" text-anchor="middle" class="node-detail">Selected host, CLI, frozen skills and snapshot</text>
 </g>
 <g class="node normal"><rect x="375" y="605" width="450" height="95" rx="14"/>
-<text x="600.0" y="634" text-anchor="middle" class="node-title">4 · Writer implements</text>
+<text x="600.0" y="634" text-anchor="middle" class="node-title">2 · Writer implements</text>
 <text x="600.0" y="660" text-anchor="middle" class="node-detail">Run checks and commit locally</text>
 <text x="600.0" y="683" text-anchor="middle" class="node-detail">Write PR metadata; no publication yet</text>
 </g>
 <g class="node review"><rect x="375" y="735" width="450" height="145" rx="14"/>
-<text x="600.0" y="764" text-anchor="middle" class="node-title">5 · Review the pinned committed diff</text>
+<text x="600.0" y="764" text-anchor="middle" class="node-title">3 · Review the pinned committed diff</text>
 <text x="600.0" y="790" text-anchor="middle" class="node-detail">Sequential leads: writer CLI → alternate</text>
-<text x="600.0" y="813" text-anchor="middle" class="node-detail">Fresh detached worktree for each lead</text>
+<text x="600.0" y="813" text-anchor="middle" class="node-detail">Fresh review workspace for each lead</text>
 <text x="600.0" y="836" text-anchor="middle" class="node-detail">Prompts request focused sub-agents</text>
 <text x="600.0" y="859" text-anchor="middle" class="node-detail">Independent scopes may run concurrently</text>
 </g>
 <g class="node review"><rect x="375" y="900" width="450" height="95" rx="14"/>
-<text x="600.0" y="929" text-anchor="middle" class="node-title">6 · Validate each report</text>
+<text x="600.0" y="929" text-anchor="middle" class="node-title">4 · Validate each report</text>
 <text x="600.0" y="955" text-anchor="middle" class="node-detail">JSON, exact SHA, verdict and findings</text>
 <text x="600.0" y="978" text-anchor="middle" class="node-detail">Reviewer and author revisions unchanged</text>
 </g>
@@ -139,14 +154,15 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <text x="170.0" y="1001" text-anchor="middle" class="node-detail">Failed summary correction</text>
 <text x="170.0" y="1024" text-anchor="middle" class="node-detail">COMMENT / incomplete review</text>
 <text x="170.0" y="1047" text-anchor="middle" class="node-detail">Findings at final review round</text>
+<text x="170.0" y="1070" text-anchor="middle" class="node-detail">Required answer missing / expired</text>
 <text x="170.0" y="1093" text-anchor="middle" class="node-detail">Any stage or publication failure</text>
 <text x="170.0" y="1116" text-anchor="middle" class="node-detail">also stops the flow.</text>
 <text x="170.0" y="1139" text-anchor="middle" class="node-detail">No automatic voyage restart.</text>
 </g>
 <g class="node gate"><rect x="375" y="1070" width="450" height="100" rx="14"/>
-<text x="600.0" y="1099" text-anchor="middle" class="node-title">7 · Approval gate</text>
+<text x="600.0" y="1099" text-anchor="middle" class="node-title">5 · Approval and required-answer gate</text>
 <text x="600.0" y="1125" text-anchor="middle" class="node-detail">Every selected reviewer must approve</text>
-<text x="600.0" y="1148" text-anchor="middle" class="node-detail">with no remaining findings</text>
+<text x="600.0" y="1148" text-anchor="middle" class="node-detail">No findings; required answers received</text>
 </g>
 <g class="node review"><rect x="885" y="1070" width="280" height="135" rx="14"/>
 <text x="1025.0" y="1099" text-anchor="middle" class="node-title">Writer fixes findings</text>
@@ -156,29 +172,29 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <text x="1025.0" y="1194" text-anchor="middle" class="node-detail">Commit a new revision</text>
 </g>
 <g class="node success"><rect x="375" y="1265" width="450" height="95" rx="14"/>
-<text x="600.0" y="1294" text-anchor="middle" class="node-title">8 · Push approved commit</text>
+<text x="600.0" y="1294" text-anchor="middle" class="node-title">6 · Host pushes approved commit</text>
 <text x="600.0" y="1320" text-anchor="middle" class="node-detail">Recheck branch, base, head and clean state</text>
-<text x="600.0" y="1343" text-anchor="middle" class="node-detail">Push the exact approved SHA</text>
+<text x="600.0" y="1343" text-anchor="middle" class="node-detail">Recheck answers; push exact approved SHA</text>
 </g>
 <g class="node success"><rect x="375" y="1390" width="450" height="90" rx="14"/>
-<text x="600.0" y="1419" text-anchor="middle" class="node-title">9 · Verify publication target</text>
+<text x="600.0" y="1419" text-anchor="middle" class="node-title">7 · Verify publication target</text>
 <text x="600.0" y="1445" text-anchor="middle" class="node-detail">Remote SHA must match approved commit</text>
 <text x="600.0" y="1468" text-anchor="middle" class="node-detail">Verify PR base and head</text>
 </g>
 <g class="node success"><rect x="375" y="1510" width="450" height="95" rx="14"/>
-<text x="600.0" y="1539" text-anchor="middle" class="node-title">10 · Create and verify PR</text>
-<text x="600.0" y="1565" text-anchor="middle" class="node-detail">Or reuse a matching existing PR</text>
+<text x="600.0" y="1539" text-anchor="middle" class="node-title">8 · Create and verify PR</text>
+<text x="600.0" y="1565" text-anchor="middle" class="node-detail">Recheck answers; create or reuse matching PR</text>
 <text x="600.0" y="1588" text-anchor="middle" class="node-detail">Apply the managed author byline</text>
 </g>
 <g class="node success"><rect x="300" y="1640" width="600" height="140" rx="14"/>
-<text x="600.0" y="1669" text-anchor="middle" class="node-title">11 · Finish the creation voyage</text>
+<text x="600.0" y="1669" text-anchor="middle" class="node-title">9 · Finish the creation voyage</text>
 <text x="600.0" y="1695" text-anchor="middle" class="node-detail">Queue a separate Helmsman PR review → record success</text>
 <text x="600.0" y="1718" text-anchor="middle" class="node-detail">Eligible Jira ticket → configured review status</text>
 <text x="600.0" y="1741" text-anchor="middle" class="node-detail">Request Copilot review → complete parent voyage</text>
 <text x="600.0" y="1764" text-anchor="middle" class="node-detail">Queue / Copilot request failures are non-fatal</text>
 </g>
 <g class="node success"><rect x="300" y="1810" width="600" height="145" rx="14"/>
-<text x="600.0" y="1839" text-anchor="middle" class="node-title">12 · Run queued Helmsman review when eligible</text>
+<text x="600.0" y="1839" text-anchor="middle" class="node-title">10 · Run queued Helmsman review when eligible</text>
 <text x="600.0" y="1865" text-anchor="middle" class="node-detail">Wait for parent completion, capacity and GitHub availability</text>
 <text x="600.0" y="1888" text-anchor="middle" class="node-detail">Require open, non-draft PR; pin its current head</text>
 <text x="600.0" y="1911" text-anchor="middle" class="node-detail">Reuse a matching existing review when available</text>
@@ -186,13 +202,24 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 </g>
 </svg>
 </div>
+</section>
+<section class="lifecycle-section" aria-labelledby="lifecycle-heading">
+<h2 class="section-heading" id="lifecycle-heading">Services throughout a voyage</h2>
+<p class="section-intro">These run alongside implementation and review. They preserve decisions, execution evidence, and results without replacing the publication gates.</p>
+<div class="lifecycle">
+<article><h3>Agent Questions</h3><ol><li>The agent saves a run-bound question and deadline.</li><li>The operator replies on Agent Questions; the agent reads the answer and continues.</li><li>Missing, expired, or cancelled required answers block completion and publication. Waiting retains capacity.</li></ol><p class="section-intro">Contacts are optional suggested respondents. They do not send notifications.</p></article>
+<article><h3>Evidence and recovery</h3><ol><li>The host validates reports, then records immutable artifacts and content hashes.</li><li>After restart, reattach the durable process or container identity.</li><li>For checkpoint continuation, verify the frozen snapshot, saved artifacts, branch, base, and head before reusing work.</li></ol><p class="section-intro">A fresh retry preserves the original task/provider and Docker image pin. Prompt or skill drift blocks preflight.</p></article>
+<article><h3>Costs &amp; Outcomes</h3><ol><li>Structured provider events and stage timings enter an idempotent usage ledger.</li><li>Show reported spend, pricing coverage, tokens, duration, PR outcomes, failures, and correction rounds.</li><li>Record task outcomes (achieved, partial, not achieved, unknown) separately from assessment state (complete, partial, failed, not assessed), with evidence.</li></ol><p class="section-intro">Process success does not itself prove task completion. Missing prices stay unknown; cost-per-PR uses fully priced runs.</p></article>
+</div>
+<p class="limit-note"><strong>Current setup and limits:</strong> Docker needs a built image, host provider keys, and pre-provisioned dependencies; agent stages have no unrestricted internet access. Docker branch-update reruns currently fail preflight; select trusted local execution for that mode. Webhook secrets, mappings, and public ingress require configuration. Offline Docker and mocked gateway flows were tested; real provider-backed Docker validation still requires host API keys. No path automatically merges a PR.</p>
+</section>
 <section class="notes" aria-label="Flow boundaries">
-<div><h2>Review selection and concurrency</h2><p>The writer CLI is required. If the alternate CLI is unavailable, one reviewer is allowed even when two are configured. Lead sessions run sequentially; prompts request concurrent focused sub-agents, but runtime does not verify delegation.</p></div>
+<div><h2>Review selection and concurrency</h2><p>The writer CLI must be available in the selected execution environment. If the alternate CLI is unavailable, one reviewer is allowed even when two are configured. Lead sessions run sequentially; prompts request concurrent focused sub-agents, but runtime does not verify delegation.</p></div>
 <div><h2>Round and session limits</h2><p>Configuration allows 1–2 reviewers, 1–5 rounds, and 5–180 minutes per session. Summary correction gets one separate session per report and does not use another review round. The 2,000-character limit uses JavaScript string length, including whitespace and bylines.</p></div>
-<div><h2>Resume preserved work</h2><p>A valid checkpoint skips implementation and reuses the original reports for its saved review round. The current branch, base, head, and complete reviewer set must match. Oversized saved summaries can use the same correction step.</p></div>
+<div><h2>Resume preserved work</h2><p>A valid checkpoint verifies saved artifact hashes and its frozen snapshot, skips implementation, and reuses the original reports for its saved review round. The current branch, base, head, and complete reviewer set must match. Legacy checkpoints without manifests use an explicit compatibility path. Oversized saved summaries can use the same correction step.</p></div>
 <div><h2>Publication and follow-up boundaries</h2><p>Pre-PR voyages have one outer attempt. Failures preserve work; a push may already have happened if a later publication check fails. Jira transitions apply to eligible Jira tasks, not todos or freeform tasks. The separate Helmsman review waits for availability and may reuse an existing review of the current head.</p></div>
 </section>
-<footer>Static SVG diagram · No external scripts, fonts, or network dependencies.</footer>
+<footer>Static HTML and SVG · No external scripts, fonts, or network dependencies. <a href="moonunit-adoption.md">Adoption evidence</a> · <a href="docker-run-host.md">Docker setup</a> · <a href="webhooks.md">Webhook setup</a></footer>
 </main>
 </body>
 </html>
