@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setPirateMode } from './logic/terminology';
 import type { LocalGitState } from './data/localGit';
 import { renderLocalGit } from './renderLocalGit';
 
@@ -11,7 +12,18 @@ function render(overrides: Partial<LocalGitState> = {}): HTMLDivElement {
   return root;
 }
 
+beforeEach(() => setPirateMode(true));
+afterEach(() => localStorage.removeItem('helmsman.pirateMode'));
+
 describe('renderLocalGit', () => {
+  it.each([true, false])('uses the selected terminology only for shipped copy (%s)', pirate => {
+    setPirateMode(pirate);
+    expect(render({ repo: null }).textContent).toContain(pirate ? 'Select a galleon' : 'Select a repository');
+    const error = 'Galleon voyage review failed';
+    expect(render({ error }).querySelector('.local-git-error')?.textContent).toBe(error);
+    expect(render().querySelector('h3')?.textContent).toContain('Branches');
+  });
+
   it('warns about unmerged commit loss only for the previewed force mode', () => {
     const cleanup = { expectedHead: 'head123', force: true, candidates: [{ branch: 'topic', expectedCommit: 'abc123', upstreamStatus: 'none' as const }], skipped: [] };
     const forced = render({ cleanup });
@@ -62,7 +74,7 @@ describe('renderLocalGit', () => {
 
   it('shows a selection prompt and disables refresh without a repo', () => {
     const root = render({ repo: null, path: null });
-    expect(root.textContent).toContain('Select a repo');
+    expect(root.textContent).toContain('Select a galleon');
     expect(root.querySelector<HTMLButtonElement>('.local-git-refresh')?.disabled).toBe(true);
     expect(root.querySelector('.local-git-columns')).toBeNull();
   });

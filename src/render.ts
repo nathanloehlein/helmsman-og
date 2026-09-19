@@ -1,3 +1,4 @@
+import { term, isPirateMode, TERMINOLOGY, TERMINOLOGY_REFERENCE_KEYS } from './logic/terminology';
 import { renderLocalGit } from './renderLocalGit';
 import { renderThemePreview } from './renderThemePreview';
 import { emptyLocalGit, type LocalGitState } from './data/localGit';
@@ -36,7 +37,7 @@ import { DEFAULT_THEME_ID, THEMES } from './data/themes';
 const PRIORITY_CLASS: Record<Priority, string> = { P0: 'pri-p0', P1: 'pri-p1', P2: 'pri-p2', P3: 'pri-p3', P4: 'pri-p4' };
 
 export const CONFIG_HELP: Record<string, string> = {
-  JIRA_ENABLED: 'Use Jira tickets for voyages; disable to use local todos instead. Applies immediately. Example: false',
+  get JIRA_ENABLED() { return `Use Jira tickets for ${term('runs').toLowerCase()}; disable to use local todos instead. Applies immediately. Example: false`; },
   GITHUB_REVIEW_WATCH_ENABLED: 'Automatically review GitHub PRs requesting your review every five minutes: true or false. Changes apply immediately. Example: true',
   SLACK_WATCH_ENABLED: 'Enable automatic PR reviews from the watched Slack channel: true or false. Changes apply immediately. Example: true',
   SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
@@ -47,22 +48,22 @@ export const CONFIG_HELP: Record<string, string> = {
   SLACK_REVIEW_MENTION: 'Slack user group to mention in manual PR review requests. Use a group handle or ID. Example: airo-editing-squad',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
   AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
-  AGENT_MAX_ATTEMPTS: 'Total attempts for existing-PR voyages, including the initial attempt. New coding voyages use the separate pre-PR review rounds. Example: 1',
-  AGENT_MAX_COST_USD: 'Per-voyage spend ceiling in USD; the voyage stops once exceeded. Blank means no cap. Example: 5.00',
+  get AGENT_MAX_ATTEMPTS() { return `Total attempts for existing-PR ${term('runs').toLowerCase()}, including the initial attempt. New coding ${term('runs').toLowerCase()} use the separate pre-PR review rounds. Example: 1`; },
+  get AGENT_MAX_COST_USD() { return `Per-${term('run').toLowerCase()} spend ceiling in USD; the ${term('run').toLowerCase()} stops once exceeded. Blank means no cap. Example: 5.00`; },
   PRE_PR_REVIEWER_COUNT: 'Independent reviewer sessions per round: 1 uses the writer\'s CLI; 2 also uses the other supported CLI when installed. An installed reviewer that fails blocks publication. Example: 2',
   PRE_PR_MAX_ROUNDS: 'Maximum review rounds, including the initial review. Each additional round allows fixes followed by every reviewer reviewing again. Unresolved findings block the PR. Example: 3',
   PRE_PR_STAGE_TIMEOUT_MINUTES: 'Time limit in minutes for each implementation, fix, or reviewer session. A timed-out session blocks publication and retains the worktree. Example: 45',
   AUTO_CLAIM_INTERVAL_MS: 'How often (milliseconds) the auto-claim scheduler polls for backlog tickets. Interval changes apply on restart. Example: 60000',
-  REPO_PROJECT_MAP: 'Comma-separated repo=jiraProject pairs, mapping each repository to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA',
-  JIRA_PROJECT: 'Default Jira project key used when the selected repo has no explicit REPO_PROJECT_MAP entry. Example: AIROBUILD',
+  get REPO_PROJECT_MAP() { return `Comma-separated ${term('repository').toLowerCase()}=jiraProject pairs, mapping each ${term('repository').toLowerCase()} to the Jira project its tickets live in. Example: gdcorp-partners/airo-app-builder=AIROBUILD,gdcorp-enm/conversations-web=LEKA`; },
+  get JIRA_PROJECT() { return `Default Jira project for All ${term('repositories').toLowerCase()}. Map individual ${term('repositories').toLowerCase()} with REPO_PROJECT_MAP. Example: AIROBUILD`; },
   JIRA_ASSIGNEE: 'Jira account that claimed tickets are assigned to — currentUser() or an accountId. Example: currentUser()',
   JIRA_JQL: 'Optional JQL filter that narrows which tickets appear in the backlog queue. Example: labels = agent-ready AND priority >= High',
-  GITHUB_REPO: 'Default owner/repo used for GitHub PR lookups when none is otherwise provided. Example: gdcorp-partners/airo-app-builder',
-  GITHUB_PR_AUTHOR: 'GitHub username whose authored PRs populate the Out to sea and Ship\'s log panels. Example: nloehlein-godaddy',
+  get GITHUB_REPO() { return `Default ${term('repository').toLowerCase()} (owner/name) used for GitHub PR lookups when none is otherwise provided. Example: gdcorp-partners/airo-app-builder`; },
+  get GITHUB_PR_AUTHOR() { return `GitHub username whose authored PRs populate the ${term('shipped')} and ${term('activity')} panels. Example: nloehlein-godaddy`; },
 };
 
 const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
-  'in-review': { label: 'In review', chipClass: 'chip-review' },
+  'in-review': { get label() { return term('inReview'); }, chipClass: 'chip-review' },
   merged: { label: 'Merged', chipClass: 'chip-done' },
   'changes-requested': { label: 'Changes requested', chipClass: 'chip-blocked' },
   closed: { label: 'Closed', chipClass: 'chip-closed' },
@@ -71,17 +72,13 @@ const PR_STATUS: Record<PrStatus, { label: string; chipClass: string }> = {
 function reviewChip(decision: string): { cls: string; label: string } {
   if (decision === 'APPROVED') return { cls: 'chip-done', label: 'Approved' };
   if (decision === 'CHANGES_REQUESTED') return { cls: 'chip-blocked', label: 'Changes' };
-  return { cls: 'chip-review', label: 'Review' };
-}
-
-const RUN_STATUS_CHIP: Record<string, { label: string; chipClass: string; laneState: string }> = {
-  succeeded: { label: 'Succeeded', chipClass: 'chip-done', laneState: 'double' },
-  failed: { label: 'Failed', chipClass: 'chip-blocked', laneState: 'ring' },
-  stopped: { label: 'Stopped', chipClass: 'chip-progress', laneState: 'gap' },
+  return { cls: 'chip-review', label: term('review') };
 }
 
 const ICON_LOCK: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.4"/><path d="M5.5 7V5.1a2.5 2.5 0 0 1 5 0V7"/></svg>'
+
+const ICON_PIRATE_FLAG = '<svg viewBox="0 0 36 40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 4v32M5 8c9-7 17 7 26 0v21c-9 7-17-7-26 0"/><path d="M17 11.5c-3 0-4.5 1.8-4.5 4.2 0 1.5.8 2.8 2.1 3.4v2h4.8v-2c1.3-.6 2.1-1.9 2.1-3.4 0-2.4-1.5-4.2-4.5-4.2Z"/><circle cx="15.1" cy="16" r=".7" fill="currentColor" stroke="none"/><circle cx="18.9" cy="16" r=".7" fill="currentColor" stroke="none"/><path d="m16.2 18.5.8-1 .8 1M17 19.8v1.3m-5 2.1 10 4m0-4-10 4m-1-4.7 1 .7-.3 1.1m10.3 2.2 1 .7-.3 1.1m-.7-5.8-1 .7.3 1.1m-10.3 2.2-1 .7.3 1.1"/></svg>';
 
 const ICON_STOP: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1.2"/></svg>'
@@ -121,19 +118,24 @@ const ICON_DOTS: string =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>'
 
 export function renderVoyageResult(run: RunSummary): string {
-  if (!['succeeded', 'failed', 'stopped'].includes(run.status)) return '';
   const results: Record<string, { label: string; tone: string; icon: string }> = {
-    APPROVE: { label: 'Review recommendation: Approve', tone: 'approved', icon: ICON_CHECK },
-    REQUEST_CHANGES: { label: 'Review recommendation: Request changes', tone: 'changes', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4v8m0-4h4a3 3 0 0 0 3-3V4"/><circle cx="5" cy="2.5" r="1.5"/><circle cx="5" cy="13.5" r="1.5"/><circle cx="12" cy="2.5" r="1.5"/></svg>' },
-    COMMENT: { label: 'Review recommendation: Comment only', tone: 'commented', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 2.5h-11v8h3v3l3-3h5z"/><path d="M5 5.5h6M5 7.5h4"/></svg>' },
+    APPROVE: { label: `${term('review')} recommendation: Approve`, tone: 'approved', icon: ICON_CHECK },
+    REQUEST_CHANGES: { label: `${term('review')} recommendation: Request changes`, tone: 'changes', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4v8m0-4h4a3 3 0 0 0 3-3V4"/><circle cx="5" cy="2.5" r="1.5"/><circle cx="5" cy="13.5" r="1.5"/><circle cx="12" cy="2.5" r="1.5"/></svg>' },
+    COMMENT: { label: `${term('review')} recommendation: Comment only`, tone: 'commented', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 2.5h-11v8h3v3l3-3h5z"/><path d="M5 5.5h6M5 7.5h4"/></svg>' },
   };
   const review = run.status === 'succeeded' && typeof run.reviewOutcome === 'string' && Object.hasOwn(results, run.reviewOutcome)
     ? results[run.reviewOutcome] : undefined;
   const result = review ?? (run.status === 'failed'
-    ? { label: 'Voyage failed', tone: 'changes', icon: ICON_X_MARK }
+    ? { label: `${term('run')} ${term('failed').toLowerCase()}`, tone: 'failed', icon: ICON_X_MARK }
     : run.status === 'stopped'
-      ? { label: 'Voyage stopped', tone: 'unknown', icon: ICON_STOP }
-      : { label: 'Completed · No review recommendation recorded', tone: 'unknown', icon: ICON_INFO });
+      ? { label: `${term('run')} stopped`, tone: 'unknown', icon: ICON_STOP }
+      : run.status === 'running'
+        ? { label: `${term('run')} ${term('running').toLowerCase()}`, tone: 'running', icon: ICON_DOTS }
+        : run.status === 'queued'
+          ? { label: `${term('run')} queued`, tone: 'unknown', icon: ICON_DOTS }
+          : run.status === 'succeeded'
+            ? { label: term('noReviewResult'), tone: 'unknown', icon: ICON_INFO }
+            : { label: `${term('run')} status: ${run.status || 'Unknown'}`, tone: 'unknown', icon: ICON_INFO });
   const verdict = typeof run.reviewVerdict === 'string' ? run.reviewVerdict.slice(0, 240) : '';
   const title = review ? `${result.label}. Published as a GitHub comment.${verdict ? ` ${verdict}` : ''}` : result.label;
   return `<span class="voyage-result voyage-result-${result.tone}" role="img" aria-label="${esc(result.label)}" title="${esc(title)}">${result.icon}</span>`;
@@ -218,25 +220,25 @@ function buildSparkline(values: number[]): string {
 export type { PageView } from './logic/routes';
 
 const PAGE_TABS: { view: PageView; label: string }[] = [
-  { view: 'dashboard', label: 'Helm' },
-  { view: 'prs', label: 'PR' },
+  { view: 'dashboard', get label() { return term('dashboard'); } },
+  { view: 'prs', get label() { return term('prs'); } },
   { view: 'triage', label: 'Triage' },
   { view: 'todos', label: 'Todos' },
   { view: 'cmux', label: 'Terminal' },
   { view: 'bugs', label: 'Bugs' },
-  { view: 'runs', label: 'Voyages' },
+  { view: 'runs', get label() { return term('runs'); } },
   { view: 'config', label: 'Config' },
 ];
 
 const PANEL_TITLE: Record<PanelId, string> = {
-  newrun: 'New voyage',
+  get newrun() { return term('newRun'); },
   backlog: 'Backlog queue',
-  underway: 'Mine · underway',
-  running: 'Active crew',
-  recent: 'Recent voyages',
-  repoprs: 'Open PRs',
-  shipped: 'Out to sea',
-  activity: "Ship's log",
+  get underway() { return term('mineRunning'); },
+  get running() { return term('activeAgents'); },
+  get recent() { return term('recentRuns'); },
+  get repoprs() { return term('openPrs'); },
+  get shipped() { return term('shipped'); },
+  get activity() { return term('activity'); },
 };
 
 interface PanelDef {
@@ -246,6 +248,7 @@ interface PanelDef {
 }
 
 export interface HelmHeadOpts {
+  greetingName?: string | null;
   active: PageView;
   jiraEnabled?: boolean;
   repos: string[];
@@ -255,8 +258,9 @@ export interface HelmHeadOpts {
 }
 
 export function renderHelmHead(opts: HelmHeadOpts): string {
-  const sorted: string[] = [...opts.repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
-  const scopeOptions: string = ['<option value="">All repos</option>']
+  const sorted: string[] = [...new Set([...opts.repos, ...(opts.selectedRepo ? [opts.selectedRepo] : [])])]
+    .sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
+  const scopeOptions: string = [`<option value="">${term('allRepositories')}</option>`]
     .concat(
       sorted.map(
         (repo) => `<option value="${esc(repo)}"${repo === opts.selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`,
@@ -268,12 +272,12 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
     (t) =>
       `<a class="page-tab view-toggle${t.view === opts.active ? ' is-active' : ''}" href="${esc(routeHref({ view: t.view, repo: opts.selectedRepo }))}" data-view="${t.view}" role="tab" id="page-tab-${t.view}" aria-selected="${t.view === opts.active}" aria-controls="page-content" tabindex="${t.view === opts.active ? 0 : -1}"${t.view === opts.active ? ' aria-current="page"' : ''}>${esc(t.label)}</a>`,
   ).join('');
-  const readout = `<div class="helm-readout mono" aria-label="Fleet status">
+  const readout = `<div class="helm-readout mono" aria-label="${term('systemStatus')}">
     ${(['running', 'queued', 'review'] as const).map((key) => {
       const value = opts.readout?.[key];
       const known = typeof value === 'number' && Number.isFinite(value);
-      const label = key === 'running' ? 'underway' : key === 'queued' ? 'queue' : 'review';
-      return `<span class="seg"><b class="seg7" data-fleet-count="${key}"${known ? '' : ' title="Not loaded for this repository"'}>${known ? value : '—'}</b> ${label}</span>`;
+      const label = key === 'running' ? term('running').toLowerCase() : key === 'queued' ? 'queue' : term('review').toLowerCase();
+      return `<span class="seg"><b class="seg7" data-fleet-count="${key}"${known ? '' : ` title="Not loaded for this ${term('repository').toLowerCase()}"`}>${known ? value : '—'}</b> <span data-readout-label="${key}">${label}</span></span>`;
     }).join('')}
   </div>`;
   return `
@@ -282,7 +286,8 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
         <span class="nameplate-mark" aria-hidden="true">${HELM_EMBLEM}</span>
         <div class="nameplate-scope">
           <span class="nameplate-name">Helmsman <span class="nameplate-alpha">Alpha</span></span>
-          <select class="repo-select" aria-label="Scope by repository">${scopeOptions}</select>
+          <select class="repo-select" aria-label="${term('scopeByRepository')}">${scopeOptions}</select>
+          <span class="helm-greeting" data-greeting>${term('greeting')}${typeof opts.greetingName === 'string' && opts.greetingName.trim() ? `, ${esc(opts.greetingName.trim())}` : ''}!</span>
         </div>
       </div>
       ${readout}
@@ -299,14 +304,15 @@ export function renderAppShell(opts: HelmHeadOpts, content: string): string {
     ${renderHelmHead(opts)}
     <main class="page-content" id="page-content" role="tabpanel" aria-labelledby="page-tab-${opts.active}" tabindex="0">${content}</main>
     <footer class="app-footer mono">
-      <div class="operator-note">${ICON_LOCK}<span>Read/write scoped to this branch only. Merge requires human approval &mdash; the agent never merges to main, and there is no merge control here.</span></div>
+      <div class="operator-note">${ICON_LOCK}<span>${term('operatorNote')}</span></div>
       <div class="footer-meta">
         <span class="footer-attr">nloehlein@godaddy.com</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span>Helmsman v${esc(__APP_VERSION__)}</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span>updated ${esc(__BUILD_DATE__)}</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} repo${opts.repos.length === 1 ? '' : 's'} tracked</span>
-        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-running>${running} underway</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} ${term(opts.repos.length === 1 ? 'repository' : 'repositories').toLowerCase()} tracked</span>
+        <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-running>${running} ${term('running').toLowerCase()}</span>
       </div>
+      <button class="pirate-mode-toggle" type="button" data-pirate-mode aria-label="Pirate mode" aria-pressed="${isPirateMode()}" title="Turn Pirate mode ${isPirateMode() ? 'off' : 'on'}">${ICON_PIRATE_FLAG}</button>
     </footer>
   </div>`;
 }
@@ -374,7 +380,7 @@ export function renderDashboard(
   const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
   const underwayItems = underwayKnown && underway.length
     ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, jiraEnabled ? selectedRepo : null)).join('')
-    : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : 'Underway tickets unavailable.'}</li>`;
+    : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : term('unavailableRunningTickets')}</li>`;
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
 
@@ -388,7 +394,7 @@ export function renderDashboard(
         <span class="queue-title">${esc(ticket.title)}</span>
         ${laneRail('queued')}
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
-        <button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="Launch voyage for ${esc(ticket.id)}">Launch</button>
+        <button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(ticket.repo)}" aria-label="${term('launchTicket')} ${esc(ticket.id)}">${term('launchTicket')}</button>
       </li>`,
         )
         .join('')
@@ -407,11 +413,11 @@ export function renderDashboard(
         ${caps.maxAttempts > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}/${caps.maxAttempts}</span>` : run.attempt > 1 ? `<span class="agent-attempt mono">&times;${run.attempt}</span>` : ''}
         ${run.costUsd != null ? `<span class="agent-cost mono">$${run.costUsd.toFixed(2)}${caps.maxCostUsd != null ? `/$${caps.maxCostUsd.toFixed(2)}` : ''}</span>` : ''}
         <span class="chip chip-progress">Running</span>
-        <button class="agent-stop" data-runid="${esc(run.id)}" aria-label="Stop voyage ${esc(run.ticketId)}">${ICON_STOP}</button>
+        <button class="agent-stop" data-runid="${esc(run.id)}" aria-label="Stop ${term('run').toLowerCase()} ${esc(run.ticketId)}">${ICON_STOP}</button>
       </li>`,
         )
         .join('')
-    : '<li class="empty-note">No crew tasks underway.</li>';
+    : `<li class="empty-note">${term('noAgentTasks')}</li>`;
 
   const shippedCards = data.shipped
     .map((pr) => {
@@ -432,7 +438,7 @@ export function renderDashboard(
         <span class="chip ${status.chipClass}">${status.label}</span>
       </div>`;
     })
-    .join('') || '<div class="empty-note">No recent pull requests.</div>';
+    .join('') || `<div class="empty-note">${term('noRecentPrs')}</div>`;
 
   const activityLines = data.activity.length
     ? data.activity
@@ -449,41 +455,16 @@ export function renderDashboard(
   const sampleSources = degraded.filter(source => source !== 'jira-underway');
   const banner: string =
     sampleSources.length > 0
-      ? `<div class="degraded-banner">${jiraEnabled ? 'Showing sample data for' : 'Unavailable integrations'}: ${sampleSources.join(', ')} — check server credentials.</div>`
+      ? `<div class="degraded-banner">${jiraEnabled && !selectedRepo ? 'Showing sample data for' : 'Unavailable integrations'}: ${sampleSources.join(', ')} — check server credentials.</div>`
       : '';
 
   const newRunRepoOptions: string = sortedRepos
-    .map((repo) => `<option value="${esc(repo)}">${esc(shortRepo(repo))}</option>`)
+    .map((repo) => `<option value="${esc(repo)}"${repo === selectedRepo ? ' selected' : ''}>${esc(shortRepo(repo))}</option>`)
     .join('');
 
   const recentRunItems: string = terminalRuns.length
-    ? terminalRuns
-        .map((run, i) => {
-          const statusInfo = RUN_STATUS_CHIP[run.status] ?? { label: esc(run.status), chipClass: 'chip-progress', laneState: 'gap' };
-          const costText: string = run.costUsd != null ? `$${run.costUsd.toFixed(2)}` : '&mdash;';
-          const prLink: string =
-            run.prNumber != null
-              ? `<a class="recent-run-pr" href="https://github.com/${esc(run.repo)}/pull/${run.prNumber}" target="_blank" rel="noopener">#${run.prNumber}</a>`
-              : '';
-          const canRerun: boolean = jiraEnabled && TICKET_RE.test(run.ticketId);
-          const rerunBtn: string = canRerun
-            ? `<button class="recent-rerun" type="button" data-ticket="${esc(run.ticketId)}" data-repo="${esc(run.repo)}" aria-label="Relaunch voyage for ${esc(run.ticketId)}" title="Relaunch voyage for ${esc(run.ticketId)}">${ICON_REDO}</button>`
-            : `<button class="recent-rerun" type="button" disabled aria-label="Cannot relaunch voyage" title="Cannot relaunch voyage — original task is unavailable">${ICON_REDO}</button>`;
-          return `
-      <li class="lane recent-run" data-runid="${esc(run.id)}">
-        <span class="lane-no mono">${laneNo(i)}</span>
-        ${renderVoyageResult(run)}
-        <span class="voyage-identity"><span class="ticket-id">${ticketLabel(run.ticketId || 'freeform', jiraBaseUrl)}</span>${renderVoyageId(run.id)}</span>
-        <span class="agent-repo mono">${esc(shortRepo(run.repo))}</span>
-        ${laneRail(statusInfo.laneState)}
-        <span class="agent-cost mono">${costText}</span>
-        ${prLink}
-        <span class="chip ${statusInfo.chipClass}">${statusInfo.label}</span>
-        ${run.status === 'failed' ? renderVoyageRetry(run.id) : rerunBtn}
-      </li>`;
-        })
-        .join('')
-    : '<li class="empty-note">No past voyages.</li>';
+    ? terminalRuns.map(run => renderVoyage(run, now, selectedRepo)).join('')
+    : `<li class="empty-note">${term('noRuns')}</li>`;
 
   const repoPrCount: number = validListPrs(scopeRepoPrs(selectedRepo, repoPrs)).length;
 
@@ -507,9 +488,9 @@ export function renderDashboard(
             ${jiraEnabled ? `<input class="newrun-ticket" type="text" placeholder="Ticket ID (e.g. ABC-123)">
             <input class="newrun-title" type="text" placeholder="Title (optional)">` : ''}
             <textarea class="newrun-task" placeholder="Describe the task..."></textarea>
-            <select class="newrun-repo" aria-label="Repository for new voyage">${newRunRepoOptions}</select>
+            <select class="newrun-repo" aria-label="${term('repository')} for ${term('newRun').toLowerCase()}">${newRunRepoOptions}</select>
             ${tuningSelects('newrun')}
-            <button class="newrun-launch">Launch voyage</button>
+            <button class="newrun-launch">${term('launchRun')}</button>
           </div>
         </div>`,
     },
@@ -526,7 +507,7 @@ export function renderDashboard(
     underway: {
       lamp: underwayKnown && underway.length ? 'queued' : 'idle',
       count: underwayKnown ? underway.length : null,
-      body: `${jiraEnabled && underwayKnown && underway.length && !selectedRepo ? '<div class="triage-hint">Select a repository to launch a voyage.</div>' : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
+      body: `${jiraEnabled && underwayKnown && underway.length && !selectedRepo ? `<div class="triage-hint">${term('launchScopeHint')}</div>` : ''}<ul class="underway-list lane-list">${underwayItems}</ul>`,
     },
     recent: {
       lamp: 'idle',
@@ -564,13 +545,13 @@ export function renderDashboard(
 function renderVoyageId(id: unknown): string {
   const shortId = shortVoyageId(id);
   return shortId && typeof id === 'string'
-    ? `<button type="button" class="voyage-id mono" data-copy-run-id="${esc(id)}" title="${esc(id)}" aria-label="Copy full voyage ID ${esc(id)}">${ICON_COPY}<span>${esc(shortId)}</span><span class="voyage-copy-feedback" role="status" aria-live="polite"></span></button>`
+    ? `<button type="button" class="voyage-id mono" data-copy-run-id="${esc(id)}" title="${esc(id)}" aria-label="Copy full ${term('run').toLowerCase()} ID ${esc(id)}">${ICON_COPY}<span>${esc(shortId)}</span><span class="voyage-copy-feedback" role="status" aria-live="polite"></span></button>`
     : '';
 }
 
-export function renderVoyageRetry(id: string): string {
+export function renderVoyageRetry(id: string, iconOnly = false): string {
   if (typeof id !== 'string' || id.startsWith('err-') || !/^[a-z\d_-]{1,128}$/i.test(id)) return '';
-  return `<button type="button" class="voyage-retry" data-retry-run-id="${esc(id)}" aria-label="Retry failed voyage ${esc(id)}" title="Start a fresh voyage with the original task and settings">${ICON_REDO}<span>Retry</span></button><span class="voyage-retry-feedback" data-retry-feedback-for="${esc(id)}" role="status" aria-live="polite"></span>`;
+  return `<button type="button" class="voyage-retry" data-retry-run-id="${esc(id)}" aria-label="${term('retryRun')} ${esc(id)}" title="${term('retryRunHint')}">${ICON_REDO}<span${iconOnly ? ' class="sr-only"' : ''}>Retry</span></button><span class="voyage-retry-feedback" data-retry-feedback-for="${esc(id)}" role="status" aria-live="polite"></span>`;
 }
 
 export interface RunTabView {
@@ -581,7 +562,7 @@ export interface RunTabView {
 }
 
 export function runTabStatus(status?: string, complete = false): { kind: string; label: string } {
-  const labels: Record<string, string> = { running: 'Running', succeeded: 'Succeeded', failed: 'Failed', stopped: 'Stopped', queued: 'Queued', completed: 'Completed' };
+  const labels: Record<string, string> = { running: term('running'), succeeded: term('success'), failed: term('failed'), stopped: 'Stopped', queued: 'Queued', completed: 'Completed' };
   const kind = status && Object.hasOwn(labels, status) ? status : complete ? 'completed' : 'running';
   return { kind, label: labels[kind] ?? 'Running' };
 }
@@ -599,8 +580,8 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
           <span class="run-tab-status">${status.label}</span>
         </button>
         <div class="run-tab-meta">${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}
-          <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Open ${esc(t.label)} in Voyages" title="Open voyage">${ICON_OPEN}</a>` : ''}
-          <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}" title="Close voyage">${ICON_CLOSE}</button></div>
+          <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Open ${esc(t.label)} in ${term('runs')}" title="Open ${term('run').toLowerCase()}">${ICON_OPEN}</a>` : ''}
+          <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}" title="Close ${term('run').toLowerCase()}">${ICON_CLOSE}</button></div>
         </div>
       </div>`;
       },
@@ -608,21 +589,21 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
     .join('');
   const emptyBody: string =
     tabs.length === 0
-      ? '<div class="run-drawer-empty empty-note">No crew tasks open. Select active crew or a recent voyage to view its tasks here.</div>'
+      ? `<div class="run-drawer-empty empty-note">${term('noOpenTasks')}</div>`
       : '';
   const header: string =
-    tabs.length === 0 ? '<span class="run-drawer-title mono">CREW TASKS</span>' : '';
+    tabs.length === 0 ? `<span class="run-drawer-title mono">${term('agentTasks').toUpperCase()}</span>` : '';
   const collapseBtn: string =
-    tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', 'crew tasks', collapsed) : '';
+    tabs.length > 0 ? surfaceCollapseBtn('runs:drawer', term('agentTasks').toLowerCase(), collapsed) : '';
   const activeTab = tabs.find(tab => tab.id === activeId);
   const logToolbar = activeId && !activeId.startsWith('err-') && /^[a-z\d_-]{1,128}$/i.test(activeId)
     ? `<div class="run-log-toolbar mono">${renderVoyageId(activeId)}<span>Recent output · up to ${RUN_LOG_PREVIEW_LIMIT} entries</span><a class="run-log-download" href="/api/agents/${encodeURIComponent(activeId)}/log/download" download title="Includes earlier output and full-length entries">Download full log</a></div>`
     : '';
   return `
-    <div class="run-tabs" role="tablist" aria-label="Open voyages">${header}${strip}${collapseBtn}</div>
+    <div class="run-tabs" role="tablist" aria-label="Open ${term('runs').toLowerCase()}">${header}${strip}${collapseBtn}</div>
     ${logToolbar}
     <div class="run-drawer-retry">${activeTab?.status === 'failed' ? renderVoyageRetry(activeTab.id) : ''}</div>
-    <div class="run-drawer-body mono" id="run-log-panel" role="tabpanel"${activeId ? ` aria-labelledby="run-tab-${esc(encodeURIComponent(activeId))}"` : ' aria-label="Voyage output"'} tabindex="0">${emptyBody}</div>
+    <div class="run-drawer-body mono" id="run-log-panel" role="tabpanel"${activeId ? ` aria-labelledby="run-tab-${esc(encodeURIComponent(activeId))}"` : ` aria-label="${term('run')} output"`} tabindex="0">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>
     <div class="run-drawer-pr"></div>`;
 }
@@ -634,8 +615,8 @@ function prTimestamp(value: unknown, fallback: string): string {
   return `<time datetime="${esc(date.toISOString())}" title="${esc(date.toLocaleString(undefined, { timeZoneName: 'short' }))}">${esc(label)}</time>`;
 }
 
-export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false): string {
-  if (!pr) return '<div class="pr-panel empty-note">No PR found.</div>';
+export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOpenInTab: boolean = false, selectedRepo: string | null = null): string {
+  if (!pr) return `<div class="pr-panel empty-note">${term('noPrFound')}</div>`;
   const stateLabel: string = pr.merged ? 'Merged' : pr.draft ? 'Draft' : pr.state === 'closed' ? 'Closed' : 'Open';
   const stateChipClass: string = pr.merged ? 'chip-done' : pr.state === 'closed' ? 'chip-blocked' : 'chip-review';
   const checks: { passed: number; failed: number; pending: number } = pr.checks ?? { passed: 0, failed: 0, pending: 0 };
@@ -662,11 +643,11 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
   const title: string = typeof pr.title === 'string' ? pr.title.trim() : '';
   const authorLogin: string = typeof pr.authorLogin === 'string' ? pr.authorLogin.trim() : '';
   const viewerReviewBadge: string = viewerReviewLabel
-    ? `<span class="chip pr-viewer-review ${reviewChip(pr.viewerReview ?? '').cls}">Your review: ${viewerReviewLabel}</span>`
+    ? `<span class="chip pr-viewer-review ${reviewChip(pr.viewerReview ?? '').cls}">Your ${term('review').toLowerCase()}: ${viewerReviewLabel}</span>`
     : '';
   const reviewTimeKnown = pr.reviewsAvailable !== false && typeof pr.viewerReviewedAt === 'string' && Number.isFinite(Date.parse(pr.viewerReviewedAt));
   const reviewTime = prTimestamp(reviewTimeKnown ? pr.viewerReviewedAt : undefined,
-    pr.reviewsAvailable === true && !pr.viewerReview && pr.viewerReviewedAt === undefined ? 'Not reviewed yet' : 'Unavailable');
+    pr.reviewsAvailable === true && !pr.viewerReview && pr.viewerReviewedAt === undefined ? term('notReviewed') : 'Unavailable');
   const canCompareCommits = reviewTimeKnown && typeof pr.headSha === 'string' && pr.headSha.trim()
     && typeof pr.viewerReviewedCommitId === 'string' && pr.viewerReviewedCommitId.trim();
   const commitChanged = canCompareCommits && pr.headSha !== pr.viewerReviewedCommitId;
@@ -675,11 +656,11 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
     : '';
   const canRelaunch: boolean = canRerun && pr.isOwnPr === true;
   const feedback: string = canRelaunch
-    ? '<textarea class="pr-rerun-feedback" aria-label="Feedback for the crew to address" placeholder="Feedback for the crew to address"></textarea>'
+    ? `<textarea class="pr-rerun-feedback" aria-label="Feedback for ${term('agents').toLowerCase()} to address" placeholder="Feedback for ${term('agents').toLowerCase()} to address"></textarea>`
     : '';
   const rerun: string = canRerun
-    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Relaunch with feedback</button>' : ''}<button class="pr-review-agent">Code review with crew</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Link to crew review ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Link to relaunch ↗</a>` : ''}</div></div>`
-    : '<div class="pr-no-rerun empty-note">Crew actions unavailable: this repo is not checked out locally.</div>';
+    ? `<div class="pr-crew-controls">${feedback}${tuningSelects('pr')}<div class="pr-review-actions">${canRelaunch ? '<button class="pr-rerun">Relaunch with feedback</button>' : ''}<button class="pr-review-agent">${term('codeReview')}</button></div><div class="pr-voyage-links"><a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'review' }))}">Link to ${term('review').toLowerCase()} ↗</a>${canRelaunch ? `<a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'newrun', mode: 'rerun' }))}">Link to relaunch ↗</a>` : ''}</div></div>`
+    : `<div class="pr-no-rerun empty-note">${term('crewUnavailable')}</div>`;
   return `
     <div class="pr-panel" data-pr-repo="${esc(pr.repo)}" data-pr-number="${pr.number}">
       <div class="pr-panel-head">
@@ -701,17 +682,17 @@ export function renderPrPanel(pr: PrStatusView | null, canRerun: boolean, showOp
             ${ciBadge}
             <span class="pr-comments mono">${pr.comments} ${pr.comments === 1 ? 'comment' : 'comments'}</span>
           </div>
-          ${showOpenInTab ? `<button class="pr-open-in-tab" type="button" data-repo="${esc(pr.repo)}" data-number="${pr.number}">Open in PR tab ↗</button>` : ''}
+          ${showOpenInTab ? `<button class="pr-open-in-tab" type="button" data-repo="${esc(pr.repo)}" data-number="${pr.number}">Open in ${term('pr')} tab ↗</button>` : ''}
         </div>
         <div class="pr-panel-timing">
-          <span class="pr-last-reviewed"><span class="pr-meta-label">Last reviewed by you</span>${reviewTime}</span>
+          <span class="pr-last-reviewed"><span class="pr-meta-label">${term('lastReviewed')}</span>${reviewTime}</span>
           <span class="pr-last-updated" title="Latest GitHub PR activity, including commits, comments, and reviews"><span class="pr-meta-label">Last updated</span>${prTimestamp(pr.updatedAt, 'Unavailable')}</span>
           ${reviewFreshness}
         </div>
       </div>
       ${pr.isOwnPr === true && pr.state === 'open' && !pr.merged ? slackReviewButton(pr.repo, pr.number) : ''}
       <div class="pr-review">
-        <textarea class="pr-review-body" placeholder="Review comment"></textarea>
+        <textarea class="pr-review-body" placeholder="${term('review')} comment"></textarea>
         <div class="pr-review-actions">
           <button class="pr-approve">Approve</button>
           <button class="pr-request-changes">Request changes</button>
@@ -746,18 +727,18 @@ function validListPrs(state?: PrListState): OpenPr[] {
 
 function slackReviewButton(repo: string, number: number): string {
   return `<span class="slack-review-control" data-slack-review-control data-repo="${esc(repo)}" data-number="${number}">
-    <button type="button" class="slack-review-request" data-slack-review-request data-repo="${esc(repo)}" data-number="${number}">Request review in Slack</button>
+    <button type="button" class="slack-review-request" data-slack-review-request data-repo="${esc(repo)}" data-number="${number}">${term('requestSlackReview')}</button>
     <span class="slack-review-result" role="status"></span>
   </span>`;
 }
 
-function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false): string {
+function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false, selectedRepo: string | null = null): string {
   const prs: OpenPr[] = validListPrs(state);
   const rows: string = prs.map((pr) => {
     const chip = reviewChip(pr.reviewDecision ?? '');
     const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
-    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} PR #${pr.number}: ${esc(title)}">
-      <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
+    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}">
+      <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
       <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span></span>
       ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
       ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
@@ -765,17 +746,17 @@ function renderPrList(state: PrListState | undefined, emptyMessage: string, requ
     </li>`;
   }).join('');
   const status: string = !state || state.loading
-    ? 'Loading PRs…'
+    ? term('loadingPrs')
     : state.degraded
       ? prs.length
         ? 'Some GitHub results are unavailable. This list may be incomplete.'
-        : 'GitHub PRs are unavailable. Retrying shortly.'
+        : term('unavailablePrs')
       : prs.length === 0
-        ? state.truncated ? 'No matching PRs in the retrieved results.' : emptyMessage
+        ? state.truncated ? term('noMatchingPrs') : emptyMessage
         : '';
   return `<ul class="pr-list lane-list" aria-busy="${!state || state.loading}">${rows}</ul>
     ${status ? `<div class="empty-note" role="status">${esc(status)}</div>` : ''}
-    ${state?.truncated ? '<div class="empty-note pr-list-truncated">Showing the most recent results. More PRs may be available on GitHub.</div>' : ''}`;
+    ${state?.truncated ? `<div class="empty-note pr-list-truncated">${term('morePrs')}</div>` : ''}`;
 }
 
 function scopeRepoPrs(repo: string | null, state?: PrListState): PrListState | undefined {
@@ -785,9 +766,9 @@ function scopeRepoPrs(repo: string | null, state?: PrListState): PrListState | u
 }
 
 export function renderRepoPrs(repo: string | null, state?: PrListState): string {
-  if (!repo) return '<div class="empty-note">Select a repository to see its open PRs.</div>';
+  if (!repo) return `<div class="empty-note">${term('selectRepoPrs')}</div>`;
   const repoUrl: string = `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}/pulls`;
-  return `${renderPrList(scopeRepoPrs(repo, state), 'No open pull requests in this repository.')}
+  return `${renderPrList(scopeRepoPrs(repo, state), term('noRepoPrs'), false, repo)}
     ${state?.truncated ? `<div class="empty-note">${githubPrListLink(repoUrl)}</div>` : ''}`;
 }
 
@@ -795,17 +776,19 @@ function githubPrListLink(url: string): string {
   return `<a class="pr-list-github" href="${esc(url)}" target="_blank" rel="noopener noreferrer">View all on GitHub ↗</a>`;
 }
 
-function renderPrListPanel(title: string, className: string, state: PrListState | undefined, emptyMessage: string, githubUrl: string): string {
+function renderPrListPanel(title: string, className: string, state: PrListState | undefined, emptyMessage: string, githubUrl: string, selectedRepo: string | null): string {
   return `<section class="panel pr-list-panel ${className}">
     <div class="panel-head"><span class="panel-title">${title}</span><span class="mono pr-list-count">${validListPrs(state).length}</span></div>
-    ${renderPrList(state, emptyMessage, className === 'pr-authored')}
+    ${renderPrList(state, emptyMessage, className === 'pr-authored', selectedRepo)}
     <div class="empty-note">${githubPrListLink(githubUrl)}</div>
   </section>`;
 }
 
-export function renderPrLists(lists?: PrInboxState): string {
-  return `${renderPrListPanel('Review requests', 'pr-review-requests', lists?.reviewRequests, 'No PRs awaiting your review.', 'https://github.com/pulls/review-requested')}
-    ${renderPrListPanel('My open PRs', 'pr-authored', lists?.authored, 'You have no open pull requests.', 'https://github.com/pulls')}`;
+export function renderPrLists(lists?: PrInboxState, selectedRepo: string | null = null): string {
+  const reviewUrl = selectedRepo ? `https://github.com/pulls?q=${encodeURIComponent(`is:open is:pr review-requested:@me repo:${selectedRepo}`)}` : 'https://github.com/pulls/review-requested';
+  const authoredUrl = selectedRepo ? `https://github.com/pulls?q=${encodeURIComponent(`is:open is:pr author:@me repo:${selectedRepo}`)}` : 'https://github.com/pulls';
+  return `${renderPrListPanel(term('reviewRequests'), 'pr-review-requests', lists?.reviewRequests, term('noReviewRequests'), reviewUrl, selectedRepo)}
+    ${renderPrListPanel(term('myOpenPrs'), 'pr-authored', lists?.authored, term('noAuthoredPrs'), authoredUrl, selectedRepo)}`;
 }
 
 function diffLineClass(line: string): string {
@@ -834,27 +817,23 @@ export function renderPrDiff(files: PrFileDiff[] | null): string {
   return `<div class="pr-diff">${fileBlocks}</div>`;
 }
 
-export function renderVoyage(run: RunSummary): string {
-  const statusName = typeof run.status === 'string' && run.status ? run.status : 'Unknown';
-  const status = Object.hasOwn(RUN_STATUS_CHIP, statusName) ? RUN_STATUS_CHIP[statusName]
-    : statusName === 'running' ? { label: 'Underway', chipClass: 'chip-progress' }
-      : statusName === 'queued' ? { label: 'Queued', chipClass: 'chip-review' }
-        : { label: statusName, chipClass: 'chip-progress' };
-  const title = typeof run.ticketId === 'string' && run.ticketId ? run.ticketId : 'Freeform voyage';
-  const pr = Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0 ? ` · PR #${run.prNumber}` : '';
+export function renderVoyage(run: RunSummary, now: Date = new Date(), selectedRepo: string | null = null): string {
+  const title = typeof run.ticketId === 'string' && run.ticketId ? run.ticketId : term('freeformRun');
+  const hasPr = Number.isSafeInteger(run.prNumber) && (run.prNumber ?? 0) > 0;
+  const label = hasPr ? `${/^review$/i.test(title) ? '' : `${title} · `}${term('pr')} #${run.prNumber}` : title;
   const startedAt = typeof run.startedAt === 'string' && Number.isFinite(Date.parse(run.startedAt))
-    ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}">${esc(formatRelativeTime(run.startedAt, new Date()))}</time>` : '';
-  const href = `/runs?${new URLSearchParams({ run: run.id })}`;
+    ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}" title="${esc(new Date(run.startedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}">${esc(formatRelativeTime(run.startedAt, now))}</time>` : '';
+  const href = routeHref({ view: 'runs', run: run.id, repo: selectedRepo });
   return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
-    <a class="app-link lane runs-voyage-link" href="${esc(href)}">
+    <a class="app-link runs-voyage-link" href="${esc(href)}">
       ${renderVoyageResult(run)}
-      <span class="voyage-identity"><span class="ticket-id">${esc(title)}${pr}</span></span>
-      <span class="agent-repo mono">${esc(run.repo.split('/').pop() ?? run.repo)}</span>
-      ${startedAt}
-      <span class="chip ${status.chipClass}">${esc(status.label)}</span>
+      <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
     </a>
-    ${renderVoyageId(run.id)}
-    ${run.status === 'failed' ? renderVoyageRetry(run.id) : ''}
+    <div class="voyage-row-meta">
+      ${run.status === 'failed' ? renderVoyageRetry(run.id, true) : ''}
+      ${startedAt}
+      ${renderVoyageId(run.id)}
+    </div>
   </li>`;
 }
 
@@ -865,11 +844,11 @@ export function renderRecentPrRuns(runs: RunSummary[], repo: string | null): str
     .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
   const recent = matches.slice(0, 10);
   return `<section class="panel pr-recent-runs">
-    <div class="panel-head"><span class="panel-title">Recent PR voyages</span>
+    <div class="panel-head"><span class="panel-title">${term('recentPrRuns')}</span>
       <span class="panel-count mono">${recent.length}${matches.length > recent.length ? ` of ${matches.length}` : ''}</span>
-      <a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'recent' }))}">All voyages ↗</a>
+      <a class="app-link pane-link" href="${esc(routeHref({ view: 'runs', repo, pane: 'recent' }))}">${term('allRuns')} ↗</a>
     </div>
-    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(renderVoyage).join('') : '<li class="empty-note">No recent PR voyages for this repository scope.</li>'}</ul>
+    <ul class="recent-runs-list lane-list">${recent.length ? recent.map(run => renderVoyage(run, undefined, repo)).join('') : `<li class="empty-note">${term('noRecentPrRuns')}</li>`}</ul>
   </section>`;
 }
 
@@ -877,10 +856,10 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
   const value: string = state.repo && state.number ? `${state.repo}#${state.number}` : '';
   const canRerun: boolean = Boolean(state.pr && opts.repos.includes(state.pr.repo));
   const panel: string = state.loading
-    ? '<div class="pr-panel empty-note">Loading PR…</div>'
+    ? `<div class="pr-panel empty-note">${term('loadingPr')}</div>`
     : state.number
-      ? renderPrPanel(state.pr, canRerun)
-      : '<div class="pr-panel empty-note">Enter a PR above to review it.</div>';
+      ? renderPrPanel(state.pr, canRerun, false, opts.selectedRepo)
+      : `<div class="pr-panel empty-note">${term('prLookupHint')}</div>`;
   const diffSection: string = state.pr && !state.loading
     ? `<section class="panel pr-diff-panel">
         <div class="panel-head"><span class="panel-title">Diff</span></div>
@@ -888,13 +867,13 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
       </section>`
     : '';
   return renderAppShell({ active: 'prs', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
-      <div class="pr-inbox pr-inbox-grid">${renderPrLists(opts.lists)}</div>
+      <div class="pr-inbox pr-inbox-grid">${renderPrLists(opts.lists, opts.selectedRepo)}</div>
       ${renderRecentPrRuns(opts.runs ?? [], opts.selectedRepo)}
       <section class="panel pr-lookup-panel">
-        <div class="panel-head"><span class="panel-title">Review a PR</span></div>
+        <div class="panel-head"><span class="panel-title">${term('reviewPr')}</span></div>
         <div class="pr-lookup-form">
-          <input class="pr-lookup-input" placeholder="Paste a PR URL or owner/repo#number" value="${esc(value)}" />
-          <button class="pr-lookup-go">Load PR</button>
+          <input class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
+          <button class="pr-lookup-go">Load ${term('pr')}</button>
         </div>
         <div class="pr-lookup-result">${panel}</div>
       </section>
@@ -906,7 +885,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
 const STATUS_LABEL: Record<TicketStatus, string> = {
   backlog: 'Backlog',
   'in-progress': 'In Progress',
-  'in-review': 'In Review',
+  get 'in-review'() { return term('inReview'); },
   done: 'Done',
 };
 
@@ -919,7 +898,7 @@ const STATUS_CHIP_CLASS: Record<TicketStatus, string> = {
 
 function triageLaunchAction(ticket: Ticket, launchRepo: string | null): string {
   return launchRepo
-    ? `<button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(launchRepo)}" aria-label="Launch voyage for ${esc(ticket.id)}">Launch</button>`
+    ? `<button class="launch-btn" data-ticket="${esc(ticket.id)}" data-title="${esc(ticket.title)}" data-repo="${esc(launchRepo)}" aria-label="${term('launchTicket')} ${esc(ticket.id)}">${term('launchTicket')}</button>`
     : '';
 }
 
@@ -1001,7 +980,7 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
   const launchable: boolean = selectedRepo !== null;
   const launchRow = (t: Ticket, base: string | null): string => triageLaunchRow(t, base, selectedRepo);
   const statusRow = (t: Ticket, base: string | null): string => triageStatusRow(t, base, selectedRepo);
-  const scopeHint: string = launchable ? '' : 'Select a repo to launch a voyage.';
+  const scopeHint: string = launchable ? '' : term('launchScopeHint');
   const filters = opts.filters ?? defaultTriageFilters();
   const pageSize = TRIAGE_PAGE_SIZES.find(size => size === opts.pageSize) ?? DEFAULT_TRIAGE_PAGE_SIZE;
   const now = Date.now();
@@ -1026,7 +1005,7 @@ export function renderTriageView(groups: TriageGroupsView, opts: TriageViewOpts)
       <div class="triage-grid">
         ${triageGroup('Unassigned · Backlog', 'backlog', paginateTriageTickets(filtered.unassignedBacklog, pageSize, opts.pages?.backlog ?? 1), launchRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unassigned backlog tickets.', scopeHint, 'triage:backlog', collapsed.has('triage:backlog'))}
         ${triageGroup('Unassigned · To Do', 'todo', paginateTriageTickets(filtered.unassignedTodo, pageSize, opts.pages?.todo ?? 1), launchRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unassigned to-do tickets.', scopeHint, 'triage:todo', collapsed.has('triage:todo'))}
-        ${triageGroup('Mine · underway', 'mine', paginateTriageTickets(filtered.mineOpen, pageSize, opts.pages?.mine ?? 1), statusRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unfinished tickets assigned to you.', scopeHint, 'triage:mine', collapsed.has('triage:mine'))}
+        ${triageGroup(term('mineRunning'), 'mine', paginateTriageTickets(filtered.mineOpen, pageSize, opts.pages?.mine ?? 1), statusRow, jiraBaseUrl, isFiltered ? filterEmpty : 'No unfinished tickets assigned to you.', scopeHint, 'triage:mine', collapsed.has('triage:mine'))}
       </div>
       <div class="runs-drawer-slot"></div>
 `);
@@ -1169,8 +1148,8 @@ function prePrConfigPanel(uiConfig: UiConfig): string {
   }).join('');
   return `
       <section class="panel config-panel pre-pr-config-panel" aria-labelledby="pre-pr-config-title">
-        <div class="panel-head"><span class="panel-title" id="pre-pr-config-title">Pre-PR review</span></div>
-        <div class="config-warning">Adversarial reviews run before a new coding voyage publishes its PR. Every reviewer must approve the final commit. Changes apply to newly launched voyages; running voyages keep their settings. Supported CLIs: Codex and Claude Code. With only one installed, one reviewer runs.</div>
+        <div class="panel-head"><span class="panel-title" id="pre-pr-config-title">Pre-${term('pr')} ${term('review').toLowerCase()}</span></div>
+        <div class="config-warning">Adversarial ${term('reviews').toLowerCase()} run before a new coding ${term('run').toLowerCase()} publishes its ${term('pr')}. Every reviewer must approve the final commit. Changes apply to newly launched ${term('runs').toLowerCase()}; active ${term('runs').toLowerCase()} keep their settings. Supported CLIs: Codex and Claude Code. With only one installed, one reviewer runs.</div>
         <div class="config-list">${rows}</div>
       </section>`;
 }
@@ -1195,7 +1174,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
   ).join('');
   return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
       <section class="panel config-panel" aria-labelledby="work-source-title">
-        <div class="panel-head"><span class="panel-title" id="work-source-title">Voyage source</span></div>
+        <div class="panel-head"><span class="panel-title" id="work-source-title">${term('runSource')}</span></div>
         <div class="config-list">
           <div class="config-row" data-key="JIRA_ENABLED">
             <label class="config-key" for="jira-enabled">Jira integration</label>
@@ -1213,6 +1192,8 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
       <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
         <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
         <div class="ui-customization-body">
+          <p id="pirate-mode-help">Toggle Pirate mode with the flag at the bottom-right of every page. The preference is saved in this browser; your content stays unchanged.</p>
+          <details class="terminology-reference"><summary>Terminology reference</summary><table><thead><tr><th scope="col">Plain</th><th scope="col">Pirate</th></tr></thead><tbody>${TERMINOLOGY_REFERENCE_KEYS.map(key => TERMINOLOGY[key]).map(({ plain, pirate }) => `<tr><td>${esc(plain)}</td><td>${esc(pirate)}</td></tr>`).join('')}</tbody></table></details>
           <label for="ui-theme">Theme</label>
           <select id="ui-theme" class="theme-select" aria-describedby="ui-theme-help">${themeOptions}</select>
           <p id="ui-theme-help">Applies immediately and is saved in this browser.</p>
@@ -1220,8 +1201,8 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
         </div>
       </section>
       <section class="panel config-panel slack-review-config" aria-labelledby="slack-review-config-title">
-        <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack review requests</span></div>
-        <p class="config-warning">The button on your open PRs posts the PR link and tags your review group. Requests are sent only when you click it.</p>
+        <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack ${term('reviewRequests').toLowerCase()}</span></div>
+        <p class="config-warning">The button on your open ${term('prs')} posts the ${term('pr')} link and tags your ${term('review').toLowerCase()} group. Requests are sent only when you click it.</p>
         <div class="config-list">
           ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', 'Review group', 'airo-editing-squad']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">

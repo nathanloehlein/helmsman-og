@@ -1,7 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { renderThemePreview } from './renderThemePreview';
+import { setPirateMode } from './logic/terminology';
+
+afterEach(() => { setPirateMode(true); localStorage.clear(); });
 
 describe('renderThemePreview', () => {
+  it.each([true, false])('updates review labels at render time for pirate mode=%s without changing verdict meanings', enabled => {
+    setPirateMode(enabled);
+    document.body.innerHTML = renderThemePreview();
+    const swatches = [...document.querySelectorAll('.theme-preview-swatch')];
+    expect(swatches[7]?.textContent?.trim()).toBe(enabled ? 'Inspection' : 'Review');
+    expect(document.querySelector('.chip-review')?.textContent).toBe(enabled ? 'Inspection needed' : 'Review needed');
+    expect(document.querySelector('.chip-done')?.textContent).toBe('Approved');
+    expect(document.querySelector('.chip-blocked')?.textContent).toBe('Changes requested');
+  });
+
   it('identifies palette and status samples without adding controls or live status announcements', () => {
     document.body.innerHTML = renderThemePreview();
 

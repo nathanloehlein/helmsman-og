@@ -1,4 +1,5 @@
 import './themePreview.css';
+import { term } from './logic/terminology';
 
 const SWATCHES = [
   ['Background', '--bg'],
@@ -22,13 +23,13 @@ export function renderThemePreview(): string {
     <ul class="theme-preview-palette" aria-label="Theme colors">
       ${SWATCHES.map(([label, variable]) => `<li class="theme-preview-swatch">
         <span class="theme-preview-color" style="background: var(${variable})" aria-hidden="true"></span>
-        <span>${label}</span>
+        <span>${variable === '--review' ? term('review') : label}</span>
       </li>`).join('')}
     </ul>
     <div class="theme-preview-statuses" role="group" aria-label="Sample statuses">
       <span class="theme-preview-caption">Status examples</span>
       <span class="chip chip-done">Approved</span>
-      <span class="chip chip-review">Review needed</span>
+      <span class="chip chip-review">${term('review')} needed</span>
       <span class="chip chip-queued">Queued</span>
       <span class="chip chip-blocked">Changes requested</span>
     </div>

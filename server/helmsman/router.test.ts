@@ -57,6 +57,18 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('serves only public GitHub profile fields without using the selected galleon', async () => {
+    const githubProfile = vi.fn(async () => ({ displayName: 'Captain Example', login: 'captain', token: 'private' }));
+    expect(await handleApi('GET', '/api/github/profile', new URLSearchParams('repo=o/r'), null, { ...deps, githubProfile }))
+      .toEqual({ status: 200, json: { displayName: 'Captain Example', login: 'captain' } });
+    expect(githubProfile).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('returns empty profile fields when the GitHub profile source is unavailable', async () => {
+    expect(await handleApi('GET', '/api/github/profile', new URLSearchParams(), null, deps))
+      .toEqual({ status: 200, json: { displayName: null, login: null } });
+  });
+
   describe('retry failed voyages', () => {
     const failed = (extra: Partial<RunRow> = {}): RunRow => ({
       id: 'failed-run', ticketId: 'PROJ-1', repo: 'o/r', adapter: 'pre-pr:codex', status: 'failed', attempt: 1,
@@ -200,7 +212,7 @@ describe('handleApi', () => {
     expect(markRead).toHaveBeenCalledTimes(2);
   });
   it('routes local checkout requests and preserves unknown-repository responses', async () => {
-    const response = { status: 404, json: { error: 'Repository is not configured.' } };
+    const response = { status: 404, json: { error: 'Galleon is not configured.' } };
     const localGit = vi.fn().mockResolvedValue(response);
     expect(await handleApi('GET', '/api/repo/local', new URLSearchParams({ repo: 'o/r' }), null, { ...deps, localGit })).toEqual(response);
     expect(localGit).toHaveBeenCalledWith('o/r');
@@ -435,7 +447,7 @@ describe('agent control routes', () => {
   it('rejects a launch missing repo', async () => {
     const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1' }, launchDeps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo required' });
+    expect(r?.json).toEqual({ error: 'Galleon required' });
   });
 
   it('launches a rerun and calls launch with repo, prNumber, mode, and feedback', async () => {
@@ -547,19 +559,19 @@ describe('GET /api/pr', () => {
   it('rejects a request missing number', async () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r'), null, deps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo and number required' });
+    expect(r?.json).toEqual({ error: 'Galleon and PR number required' });
   });
 
   it('rejects a request with a non-numeric number', async () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('repo=o/r&number=x'), null, deps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo and number required' });
+    expect(r?.json).toEqual({ error: 'Galleon and PR number required' });
   });
 
   it('rejects a request missing repo', async () => {
     const r = await handleApi('GET', '/api/pr', new URLSearchParams('number=5'), null, deps);
     expect(r?.status).toBe(400);
-    expect(r?.json).toEqual({ error: 'repo and number required' });
+    expect(r?.json).toEqual({ error: 'Galleon and PR number required' });
   });
 
   it('returns 404 when the PR is not found or GitHub is not configured', async () => {

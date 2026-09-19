@@ -49,7 +49,7 @@ describe('buildDashboardResponse', () => {
     });
     expect(r.snapshot.underwayAvailable).toBe(true);
     expect(r.snapshot.underway).toEqual([{
-      id: 'PROJA-1', title: 'Older assigned work', status: 'backlog', priority: 'P2', repo: 'a',
+      id: 'PROJA-1', title: 'Older assigned work', status: 'backlog', priority: 'P2', repo: 'o/a',
       updatedAt: '2025-01-01T00:00:00.000Z',
     }]);
   });
@@ -96,7 +96,7 @@ describe('buildDashboardResponse', () => {
     expect(r.snapshot.queue.length).toBeGreaterThan(0);
   });
 
-  it('re-scopes Jira to the mapped project and filters shipped to the selected repo', async () => {
+  it('re-scopes Jira to the mapped project and filters shipped and open PRs to the selected repo', async () => {
     const prA = { number: 1, title: 'a', headRef: '', authorLogin: 'bot', state: 'open' as const, mergedAt: null, createdAt: NOW.toISOString(), reviewDecision: null, repo: 'o/a' };
     const prB = { ...prA, number: 2, repo: 'o/b' };
     let seenProject = '';
@@ -120,9 +120,23 @@ describe('buildDashboardResponse', () => {
     );
     expect(seenProject).toBe('PROJA');
     expect(r.snapshot.shipped.map((p) => p.number)).toEqual([1]);
-    expect(r.snapshot.myOpenPrs.map((p) => p.number).sort()).toEqual([1, 2]);
+    expect(r.snapshot.myOpenPrs.map((p) => p.number)).toEqual([1]);
     expect(r.repos).toEqual(['o/a', 'o/b']);
     expect(r.selectedRepo).toBe('o/a');
+  });
+
+  it.each([
+    { selectedRepo: null, expected: [1, 2] },
+    { selectedRepo: 'O/A', expected: [1] },
+  ])('filters open PRs case-insensitively and preserves all-galleon scope: $selectedRepo', async ({ selectedRepo, expected }) => {
+    const result = await buildDashboardResponse(FULL_ENV, NOW, {
+      ...OK_DEPS,
+      fetchOpenAuthoredPrs: async () => [
+        { number: 1, title: 'a', repo: 'o/a', reviewDecision: null, draft: false, createdAt: NOW.toISOString() },
+        { number: 2, title: 'b', repo: 'o/b', reviewDecision: null, draft: false, createdAt: NOW.toISOString() },
+      ],
+    }, selectedRepo);
+    expect(result.snapshot.myOpenPrs.map(pr => pr.number).sort()).toEqual(expected);
   });
 
   it('uses the default Jira project and all repos when no repo is selected', async () => {
@@ -141,6 +155,49 @@ describe('buildDashboardResponse', () => {
     expect(seenProject).toBe('AIROBUILD');
     expect(r.selectedRepo).toBeNull();
     expect(r.repos).toEqual(['o/a']);
+  });
+
+  it('never substitutes the default Jira project for an unmapped repository', async () => {
+    const fetchQueueIssues = vi.fn(OK_DEPS.fetchQueueIssues);
+    const fetchActiveIssues = vi.fn(OK_DEPS.fetchActiveIssues);
+    const fetchMineOpenIssues = vi.fn(OK_DEPS.fetchQueueIssues);
+    const result = await buildDashboardResponse({ ...FULL_ENV, REPO_PROJECT_MAP: 'o/a=PROJA' }, NOW,
+      { ...OK_DEPS, fetchQueueIssues, fetchActiveIssues, fetchMineOpenIssues }, 'o/unmapped');
+    expect(fetchQueueIssues).not.toHaveBeenCalled();
+    expect(fetchActiveIssues).not.toHaveBeenCalled();
+    expect(fetchMineOpenIssues).not.toHaveBeenCalled();
+    expect(result.snapshot.queue).toEqual([]);
+    expect(result.snapshot.underway).toEqual([]);
+    expect(result.snapshot.activity).toEqual([]);
+    expect(result.snapshot.stats.awaitingReview).toBe(0);
+  });
+
+  it('filters cross-project query results before deriving every Jira panel and keeps full repository identity', async () => {
+    const issue = (key: string) => ({ key, fields: {
+      summary: key, status: { name: 'In Review', statusCategory: { key: 'indeterminate' } }, priority: null, resolutiondate: null,
+    }, changelog: { histories: [{ created: NOW.toISOString(), items: [{ field: 'status', fromString: 'In Progress', toString: 'In Review' }] }] } });
+    const rows = [issue('PROJA-1'), issue('PROJB-2')];
+    const result = await buildDashboardResponse({ ...FULL_ENV, REPO_PROJECT_MAP: 'o/a=PROJA,o/b=PROJB', JIRA_JQL: 'assignee = currentUser()' }, NOW, {
+      ...OK_DEPS, fetchQueueIssues: async () => rows, fetchActiveIssues: async () => rows, fetchMineOpenIssues: async () => rows,
+    }, 'o/a');
+    expect(result.snapshot.queue.map(ticket => [ticket.id, ticket.repo])).toEqual([['PROJA-1', 'o/a']]);
+    expect(result.snapshot.underway?.map(ticket => ticket.id)).toEqual(['PROJA-1']);
+    expect(result.snapshot.stats.awaitingReview).toBe(1);
+    expect(result.snapshot.activity.map(event => event.text).join(' ')).not.toContain('PROJB');
+  });
+
+  it('does not fill a selected repository with unrelated sample data when integrations fail', async () => {
+    const loadMock = vi.fn(OK_DEPS.loadMock);
+    const result = await buildDashboardResponse({ ...FULL_ENV, REPO_PROJECT_MAP: 'o/a=PROJA' }, NOW, {
+      ...OK_DEPS, loadMock,
+      fetchQueueIssues: async () => { throw new Error('unavailable'); },
+      fetchAuthoredPrs: async () => { throw new Error('unavailable'); },
+    }, 'o/a');
+    expect(loadMock).not.toHaveBeenCalled();
+    expect(result.degraded).toEqual(expect.arrayContaining(['jira', 'github']));
+    expect(result.snapshot.queue).toEqual([]);
+    expect(result.snapshot.shipped).toEqual([]);
+    expect(result.snapshot.activity).toEqual([]);
   });
 });
 

@@ -65,12 +65,12 @@ describe('Slack review requests from authored PRs', () => {
     const drawerButton = () => root.querySelector<HTMLButtonElement>('.run-drawer-pr [data-slack-review-request]');
     await vi.waitFor(() => expect(drawerButton()).not.toBeNull());
     drawerButton()!.click();
-    await vi.waitFor(() => expect(drawerButton()?.textContent).toBe('Review requested'));
+    await vi.waitFor(() => expect(drawerButton()?.textContent).toBe('Inspection requested'));
     const previous = drawerButton();
     root.querySelector<HTMLButtonElement>('.run-tab-select[data-tabid="review-run"]')!.click();
     await vi.waitFor(() => expect(drawerButton()).not.toBeNull());
     expect(drawerButton()).not.toBe(previous);
-    expect(drawerButton()?.textContent).toBe('Review requested');
+    expect(drawerButton()?.textContent).toBe('Inspection requested');
     expect(drawerButton()?.disabled).toBe(true);
     expect(root.querySelector<HTMLAnchorElement>('.run-drawer-pr .slack-review-result a')?.href).toBe(permalink);
     drawerButton()!.click();
@@ -82,7 +82,7 @@ describe('Slack review requests from authored PRs', () => {
     await view.refresh();
     expect(writes).toEqual([]);
     button().click();
-    await vi.waitFor(() => expect(button().textContent).toBe('Review requested'));
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ repo: 'org/repo', prNumber: 42 });
     expect(writes[0]?.requestId).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
@@ -107,10 +107,10 @@ describe('Slack review requests from authored PRs', () => {
     button().click();
     expect(writes).toHaveLength(1);
     finish(json(success));
-    await vi.waitFor(() => expect(button().textContent).toBe('Review requested'));
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
     await view.refresh();
     expect(button().disabled).toBe(true);
-    expect(button().textContent).toBe('Review requested');
+    expect(button().textContent).toBe('Inspection requested');
     button().click();
     expect(writes).toHaveLength(1);
   });
@@ -126,7 +126,7 @@ describe('Slack review requests from authored PRs', () => {
     expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Invite the Slack bot to #airo-editing.');
     expect(writes).toHaveLength(1);
     button().click();
-    await vi.waitFor(() => expect(button().textContent).toBe('Review requested'));
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
     expect(writes).toHaveLength(2);
     expect(writes[1]?.requestId).toBe(writes[0]?.requestId);
   });
@@ -139,7 +139,7 @@ describe('Slack review requests from authored PRs', () => {
     await vi.waitFor(() => expect(root.querySelector('.slack-review-result')?.textContent).toBe(payload));
     expect(root.querySelector('.slack-review-result img')).toBeNull();
     button().click();
-    await vi.waitFor(() => expect(button().textContent).toBe('Review requested'));
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
     expect(root.querySelector('.slack-review-result a')).toBeNull();
     expect(root.querySelector('.slack-review-result')?.textContent).toContain('Sent to #airo-editing');
   });
@@ -151,7 +151,7 @@ describe('Slack review requests from authored PRs', () => {
     button().click();
     await vi.waitFor(() => expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Configure a bot token first.'));
     button().click();
-    await vi.waitFor(() => expect(button().textContent).toBe('Review requested'));
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
     expect(writes).toHaveLength(2);
     expect(writes[1]?.requestId).not.toBe(writes[0]?.requestId);
   });

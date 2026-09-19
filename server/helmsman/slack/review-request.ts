@@ -68,7 +68,7 @@ function validateInput(value: unknown): ReviewInput {
   if (typeof input?.repo !== 'string' || !isGithubRepo(input.repo)
     || typeof input.prNumber !== 'number' || !Number.isSafeInteger(input.prNumber) || input.prNumber < 1
     || typeof input.requestId !== 'string' || !/^[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i.test(input.requestId)) {
-    throw new SlackReviewError('A repository, PR number, and unique request ID are required.', 400);
+    throw new SlackReviewError('A galleon, PR number, and unique request ID are required.', 400);
   }
   return { repo: input.repo, prNumber: input.prNumber, requestId: input.requestId };
 }

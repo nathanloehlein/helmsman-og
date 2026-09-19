@@ -1,3 +1,6 @@
+import { applyBootTerminology } from './logic/bootTerminology';
+import { term, setPirateMode, isPirateMode } from './logic/terminology';
+import { loadProfile } from './data/profile';
 import { copyText } from './logic/clipboard';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
 import { appendHighlightedLog } from './logic/logHighlight';
@@ -102,9 +105,9 @@ interface RunTab {
 }
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
-  if (summary.status === 'succeeded' && summary.prNumber != null) return 'In Review';
-  if (summary.status === 'succeeded') return 'Succeeded';
-  if (summary.status === 'failed') return 'Failed';
+  if (summary.status === 'succeeded' && summary.prNumber != null) return term('inReview');
+  if (summary.status === 'succeeded') return term('success');
+  if (summary.status === 'failed') return term('failed');
   if (summary.status === 'stopped') return 'Stopped';
   return summary.status;
 }
@@ -144,6 +147,7 @@ export class DashboardView {
   private lastDashboardRefresh: number = -Infinity;
   private dashboardRepo: string | null | undefined = undefined;
   private lastReviewRequestsRefresh: number = -Infinity;
+  private reviewRequestsRepo: string | null | undefined = undefined;
   private lastRepoPrsRefresh: number = -Infinity;
   private repoPrsRepo: string | null | undefined = undefined;
   private readonly onVisibilityChange = (): void => {
@@ -157,7 +161,7 @@ export class DashboardView {
   };
   private repoPrsSeq: number = 0;
   private reviewRequestsSeq: number = 0;
-  private reviewRequestsPending: Promise<void> | null = null;
+  private reviewRequestsPending: { repo: string | null; seq: number; promise: Promise<void> } | null = null;
   private repoPrsPending: { repo: string | null; seq: number; promise: Promise<void> } | null = null;
   private prViewSeq: number = 0;
   private dashboardUnavailable: boolean = false;
@@ -191,6 +195,9 @@ export class DashboardView {
   private cmuxCapturing: boolean = false;
   private readonly onCaptureKeydown = (event: KeyboardEvent): void => this.handleCaptureKeydown(event);
   private themeId: string = loadThemeId();
+  private greetingName: string | null = null;
+  private configSaves: number = 0;
+  private pendingViewActions: number = 0;
   private jiraBaseUrl: string | null = null;
   private jiraEnabled: boolean = true;
   private todos: TodosViewState = { items: [], loading: false, error: null, search: '', stateFilter: 'all' };
@@ -292,7 +299,7 @@ export class DashboardView {
         this.paintTriage();
         this.root.querySelector<HTMLSelectElement>('[data-triage-page-size]')?.focus({ preventScroll: true });
       } else if (control.matches('.repo-select')) {
-        void this.navigate({ ...this.route, view: this.view, repo: control.value || null, pr: null, run: null });
+        void this.navigate({ ...this.route, view: this.view, repo: control.value || null, prRepo: null, pr: null, run: null });
       } else if (control.matches('.theme-select')) {
         this.themeId = control.value;
         applyTheme(this.themeId);
@@ -308,7 +315,12 @@ export class DashboardView {
         this.paintTodoList();
       }
       const form = control.closest<HTMLFormElement>('[data-todo-form]');
-      if (form) this.todos.draft = readTodoForm(form);
+      if (form) {
+        const draft = readTodoForm(form);
+        if (!this.todos.editingId && this.todos.draft?.repo === undefined && !control.matches('[name="repo"]')) {
+          this.todos.draft = { ...draft, repo: undefined };
+        } else this.todos.draft = draft;
+      }
     }, { signal: this.rootEvents.signal });
     this.root.addEventListener('paste', (event: ClipboardEvent): void => void this.handlePasteImage(event), { signal: this.rootEvents.signal });
 
@@ -319,6 +331,7 @@ export class DashboardView {
   }
 
   async start(): Promise<void> {
+    void this.loadGreeting();
     window.addEventListener('popstate', this.onPopState);
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -339,6 +352,77 @@ export class DashboardView {
     this.refreshTimer = setInterval(() => void this.refresh(false), LOCAL_POLL_MS);
   }
 
+  private async loadGreeting(): Promise<void> {
+    const profile = await loadProfile();
+    if (this.destroyed) return;
+    this.greetingName = profile.displayName ?? profile.login;
+    this.syncShell();
+  }
+
+  private syncPirateToggle(): void {
+    const toggle = this.root.querySelector<HTMLButtonElement>('[data-pirate-mode]');
+    if (toggle) {
+      toggle.disabled = this.configSaves > 0 || this.pendingViewActions > 0;
+      toggle.setAttribute('aria-pressed', String(isPirateMode()));
+      toggle.title = `Turn Pirate mode ${isPirateMode() ? 'off' : 'on'}`;
+    }
+  }
+
+  private async withStableView(action: () => Promise<void>): Promise<void> {
+    ++this.pendingViewActions;
+    this.syncPirateToggle();
+    try {
+      await action();
+    } finally {
+      --this.pendingViewActions;
+      this.syncPirateToggle();
+    }
+  }
+
+  private changePirateMode(enabled: boolean): void {
+    if (this.configSaves > 0 || this.pendingViewActions > 0) return;
+    const controls = (): Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> => {
+      const result = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
+      const occurrences = new Map<string, number>();
+      for (const control of this.root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')) {
+        const scope = control.closest('.run-drawer') ? 'drawer' : 'page';
+        const identity = `${scope}:${control.tagName}:${control.id || control.name || control.className}`;
+        const occurrence = occurrences.get(identity) ?? 0;
+        occurrences.set(identity, occurrence + 1);
+        result.set(`${identity}:${occurrence}`, control);
+      }
+      return result;
+    };
+    const savedControls = controls();
+    const openDetails = Array.from(this.root.querySelectorAll('details'), detail => detail.open);
+    const pageScroll = this.root.querySelector('#page-content')?.scrollTop ?? 0;
+    const logScroll = this.runDrawerEl.querySelector('.run-drawer-body')?.scrollTop ?? 0;
+    const followLog = this.stickToBottom;
+    setPirateMode(enabled);
+    this.paint();
+    this.paintSlack();
+    this.renderRunDrawer(false);
+    this.stickToBottom = followLog;
+    this.flushRunLog();
+    const log = this.runDrawerEl.querySelector('.run-drawer-body');
+    if (log && !followLog) log.scrollTop = logScroll;
+    this.updateAddress(this.route, 'replace');
+    const template = document.createElement('template');
+    template.innerHTML = renderAppShell(this.shellOptions(), '');
+    const footer = template.content.querySelector('.app-footer');
+    if (footer) this.root.querySelector('.app-footer')?.replaceWith(footer);
+    for (const [key, control] of controls()) {
+      const previous = savedControls.get(key);
+      if (!previous) continue;
+      control.value = previous.value;
+      if (control instanceof HTMLInputElement && previous instanceof HTMLInputElement) control.checked = previous.checked;
+    }
+    this.root.querySelectorAll('details').forEach((detail, index) => { detail.open = openDetails[index] ?? false; });
+    const page = this.root.querySelector('#page-content');
+    if (page) page.scrollTop = pageScroll;
+    this.root.querySelector<HTMLButtonElement>('[data-pirate-mode]')?.focus({ preventScroll: true });
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.copyTimers.forEach(timer => clearTimeout(timer));
@@ -352,6 +436,8 @@ export class DashboardView {
     ++this.routeSeq;
     ++this.refreshSeq;
     ++this.prViewSeq;
+    ++this.reviewRequestsSeq;
+    ++this.repoPrsSeq;
     ++this.localGitSeq;
     ++this.slackSeq;
     ++this.todosSeq;
@@ -367,7 +453,7 @@ export class DashboardView {
     this.route = parseRoute(new URL(href, window.location.origin));
     if (history === 'replace') window.history.replaceState(null, '', href);
     else if (history === 'push' && href !== window.location.pathname + window.location.search) window.history.pushState(null, '', href);
-    document.title = `${route.view === 'dashboard' ? 'Helm' : route.view === 'prs' ? 'PR' : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
+    document.title = `${route.view === 'dashboard' ? term('dashboard') : route.view === 'prs' ? term('prs') : route.view === 'runs' ? term('runs') : route.view === 'cmux' ? 'Terminal' : route.view[0]!.toUpperCase() + route.view.slice(1)} · Helmsman`;
   }
 
   private async navigate(route: AppRoute, history: 'push' | 'replace' | 'none' = 'push'): Promise<void> {
@@ -381,10 +467,29 @@ export class DashboardView {
     this.stopCmuxScreenPoll();
     this.stopCapture();
     this.cmuxCapturing = false;
-    const scope = route.repo && (route.view !== 'prs' && route.view !== 'runs' || this.repos.includes(route.repo)) ? route.repo : null;
+    const scope = route.repo;
     const scopeChanged = this.selectedRepo !== scope;
     if (scopeChanged) {
+      this.snapshot = null;
+      this.snapshotRepo = undefined;
+      this.dashboardRepo = undefined;
+      this.lastDashboardRefresh = -Infinity;
+      this.dashboardUnavailable = false;
       this.triagePages = { backlog: 1, todo: 1, mine: 1 };
+      this.triageGroups = { unassignedBacklog: [], unassignedTodo: [], mineOpen: [] };
+      this.triageDegraded = false;
+      ++this.triageSeq;
+      this.bugsResponse = null;
+      ++this.bugsSeq;
+      ++this.refreshSeq;
+      this.refreshPending = null;
+      ++this.reviewRequestsSeq;
+      this.reviewRequestsPending = null;
+      this.reviewRequestsRepo = undefined;
+      this.lastReviewRequestsRefresh = -Infinity;
+      this.reviewRequests = { prs: [], loading: true, degraded: false, truncated: false };
+      this.repoPrs = { prs: [], loading: false, degraded: false, truncated: false };
+      this.repoPrsRepo = undefined;
       ++this.repoPrsSeq;
       ++this.localGitSeq;
       this.localGitPending = null;
@@ -405,10 +510,11 @@ export class DashboardView {
     if (route.pane) this.collapsed.delete(`${route.view}:${route.pane === 'tabs' ? 'list' : route.pane === 'screen' ? 'detail' : route.pane}`);
     if (route.run || route.pane === 'tasks') this.collapsed.delete('runs:drawer');
     if (route.view === 'prs' || route.view === 'runs') {
-      this.prView = { repo: route.pr ? route.repo : null, number: route.pr, pr: null, diff: null, loading: Boolean(route.pr) };
+      this.prView = { repo: route.pr ? route.prRepo ?? route.repo : null, number: route.pr, pr: null, diff: null, loading: Boolean(route.pr) };
     }
     if (!route.run) this.activeTabId = null;
     this.paint();
+    if (scopeChanged) this.paintSlack();
     if (scopeChanged || route.view === 'dashboard' || route.view === 'prs') await this.refresh(false);
     if (seq !== this.routeSeq) return;
     if (route.view === 'triage') await this.loadTriage();
@@ -431,14 +537,15 @@ export class DashboardView {
     } else if (route.view === 'prs') await this.loadReviewRequests(false);
     else if (route.view === 'dashboard') await this.loadRepoPrs(false);
     if (seq !== this.routeSeq) return;
-    if ((route.view === 'prs' || route.view === 'runs') && route.repo && route.pr) await this.loadPrView(route.repo, route.pr, false);
+    const prRepo = route.prRepo ?? route.repo;
+    if ((route.view === 'prs' || route.view === 'runs') && prRepo && route.pr) await this.loadPrView(prRepo, route.pr, false);
     if (seq !== this.routeSeq) return;
     if (route.view !== 'dashboard' && route.view !== 'prs' && route.view !== 'runs' && route.view !== 'config') this.paint();
     if (route.run) {
       const summary = this.runs.find(run => run?.id === route.run) ?? await getRun(route.run);
       if (seq !== this.routeSeq) return;
       if (summary) {
-        this.openRunTab(route.run, summary.ticketId || (summary.prNumber ? `PR #${summary.prNumber}` : route.run), false);
+        this.openRunTab(route.run, summary.ticketId || (summary.prNumber ? `${term('pr')} #${summary.prNumber}` : route.run), false);
         const tab = this.runTabs.find(item => item.runId === route.run);
         if (tab) {
           tab.footer = summary;
@@ -446,7 +553,7 @@ export class DashboardView {
           tab.complete = this.isTerminalRunStatus(summary.status);
           if (summary.prNumber) tab.pr = { repo: summary.repo, number: summary.prNumber };
         }
-      } else this.openErrorTab('Voyage unavailable', 'This voyage was not found or the server is unavailable.');
+      } else this.openErrorTab(term('unavailableRunTitle'), term('unavailableRunMessage'));
     }
     this.renderRunDrawer();
     this.rehomeRunDrawer();
@@ -479,7 +586,7 @@ export class DashboardView {
       if (!head || head.querySelector('.pane-link')) continue;
       const link = document.createElement('a');
       link.className = 'pane-link app-link';
-      link.href = routeHref({ ...this.route, view: this.view, pane, repo: this.route.repo ?? this.selectedRepo });
+      link.href = routeHref({ ...this.route, view: this.view, pane, repo: this.selectedRepo });
       link.textContent = '↗';
       link.setAttribute('aria-label', `Link to ${panel.querySelector('.panel-title, .faceplate-title')?.textContent ?? pane}`);
       head.append(link);
@@ -574,7 +681,7 @@ export class DashboardView {
       this.paintSlack();
     }
     if (this.view === 'dashboard') {
-      if (response || force) this.paint();
+      if (dashboardDue || force) this.paint();
       else if (localDue) this.paintLocalRuns();
       await this.loadRepoPrs(force);
     } else if (this.view === 'prs') {
@@ -606,7 +713,7 @@ export class DashboardView {
   }
 
   private paintLocalRuns(): void {
-    if (!this.snapshot || this.view !== 'dashboard') return;
+    if (!this.snapshot || this.snapshotRepo !== this.selectedRepo || this.view !== 'dashboard') return;
     const next = document.createElement('div');
     renderDashboard(next, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo,
       this.runs, this.autoClaimRepos, this.caps, this.themeId, this.rackLayout, this.jiraBaseUrl, this.repoPrs, this.jiraEnabled);
@@ -621,10 +728,11 @@ export class DashboardView {
 
   private prInbox(): PrInboxState {
     const unavailable = this.dashboardUnavailable || this.degraded.includes('github');
+    const authored = this.snapshotRepo === this.selectedRepo ? this.snapshot?.myOpenPrs ?? [] : [];
     return {
       reviewRequests: this.reviewRequests,
       authored: {
-        prs: this.degraded.includes('github') ? [] : this.snapshot?.myOpenPrs ?? [],
+        prs: this.degraded.includes('github') ? [] : authored.filter(pr => !this.selectedRepo || pr?.repo?.toLowerCase() === this.selectedRepo.toLowerCase()),
         loading: !this.snapshot && !unavailable,
         degraded: unavailable,
         truncated: false,
@@ -635,29 +743,34 @@ export class DashboardView {
   private paintPrInbox(): void {
     if (this.view !== 'prs') return;
     const inbox: HTMLElement | null = this.root.querySelector('.pr-inbox');
-    if (inbox) inbox.innerHTML = renderPrLists(this.prInbox());
+    if (inbox) inbox.innerHTML = renderPrLists(this.prInbox(), this.selectedRepo);
     this.bindPaneLinks();
     this.paintSlackReviewRequests();
   }
 
   private loadReviewRequests(force: boolean = true): Promise<void> {
     if (!force && document.hidden) return Promise.resolve();
-    if (this.reviewRequestsPending) return this.reviewRequestsPending;
-    if (!force && Date.now() - this.lastReviewRequestsRefresh < POLL_MS) return Promise.resolve();
+    if (this.reviewRequestsPending?.repo === this.selectedRepo && this.reviewRequestsPending.seq === this.reviewRequestsSeq) {
+      return this.reviewRequestsPending.promise;
+    }
+    const repo = this.selectedRepo;
+    if (!force && this.reviewRequestsRepo === repo && Date.now() - this.lastReviewRequestsRefresh < POLL_MS) return Promise.resolve();
+    this.reviewRequestsRepo = repo;
     this.lastReviewRequestsRefresh = Date.now();
     const pending: Promise<void> = this.fetchReviewRequests().finally(() => {
-      if (this.reviewRequestsPending === pending) this.reviewRequestsPending = null;
+      if (this.reviewRequestsPending?.promise === pending) this.reviewRequestsPending = null;
     });
-    this.reviewRequestsPending = pending;
+    this.reviewRequestsPending = { repo, seq: this.reviewRequestsSeq, promise: pending };
     return pending;
   }
 
   private async fetchReviewRequests(): Promise<void> {
     const seq: number = ++this.reviewRequestsSeq;
+    const repo = this.selectedRepo;
     this.reviewRequests = { ...this.reviewRequests, loading: true };
     this.paintPrInbox();
-    const result = await fetchReviewRequests();
-    if (seq !== this.reviewRequestsSeq) return;
+    const result = await fetchReviewRequests(repo);
+    if (seq !== this.reviewRequestsSeq || repo !== this.selectedRepo || this.destroyed) return;
     this.reviewRequests = { ...result, loading: false };
     this.paintPrInbox();
   }
@@ -715,6 +828,7 @@ export class DashboardView {
     const sameView = this.root.querySelector<HTMLElement>('.helm')?.dataset.page === this.view;
     this.paintView();
     this.paintRunRetries();
+    this.syncPirateToggle();
     if (focusedTab) {
       const view = sameView ? focusedTab : this.view;
       const tabs = Array.from(this.root.querySelectorAll<HTMLAnchorElement>('.page-tab'));
@@ -756,8 +870,8 @@ export class DashboardView {
       this.paintPrView();
       return;
     }
-    if (!this.snapshot) {
-      this.mountPage(renderAppShell(this.shellOptions(), '<div class="empty-note" role="status">Loading Helm…</div>'));
+    if (!this.snapshot || this.snapshotRepo !== this.selectedRepo) {
+      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? term('unavailableDashboard') : `Loading ${term('dashboard')}…`}</div>`));
       return;
     }
     const preBody: HTMLElement | null =
@@ -806,6 +920,7 @@ export class DashboardView {
     return {
       active: this.view, repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId,
       jiraEnabled: this.jiraEnabled,
+      greetingName: this.greetingName,
       readout: {
         running: this.runs.filter(run => run?.status === 'running' && (!this.selectedRepo || run.repo === this.selectedRepo)).length,
         queued: snapshot && !this.degraded.includes('jira') ? snapshot.queue?.length ?? null : null,
@@ -845,6 +960,7 @@ export class DashboardView {
     if (repo && nextRepo) {
       if (repo.innerHTML !== nextRepo.innerHTML) repo.innerHTML = nextRepo.innerHTML;
       repo.value = this.selectedRepo ?? '';
+      repo.setAttribute('aria-label', nextRepo.getAttribute('aria-label') ?? '');
     }
     const tabs = shell.querySelector('.page-tabs');
     const nextTabs = template.content.querySelector('.page-tabs');
@@ -854,6 +970,7 @@ export class DashboardView {
       const tab = shell.querySelector<HTMLAnchorElement>(`#${next.id}`);
       if (!tab) continue;
       tab.className = next.className;
+      tab.textContent = next.textContent;
       for (const name of ['href', 'aria-selected', 'aria-current']) {
         const value = next.getAttribute(name);
         if (value === null) tab.removeAttribute(name);
@@ -868,10 +985,19 @@ export class DashboardView {
       if (next.hasAttribute('title')) count.setAttribute('title', next.title);
       else count.removeAttribute('title');
     }
+    shell.querySelector('.helm-readout')?.setAttribute('aria-label', term('systemStatus'));
+    for (const label of template.content.querySelectorAll<HTMLElement>('[data-readout-label]')) {
+      const current = shell.querySelector(`[data-readout-label="${label.dataset.readoutLabel}"]`);
+      if (current) current.textContent = label.textContent;
+    }
     const repos = shell.querySelector('[data-footer-repos]');
-    if (repos) repos.textContent = `${this.repos.length} repo${this.repos.length === 1 ? '' : 's'} tracked`;
+    if (repos) repos.textContent = `${this.repos.length} ${term(this.repos.length === 1 ? 'repository' : 'repositories').toLowerCase()} tracked`;
     const running = shell.querySelector('[data-footer-running]');
-    if (running) running.textContent = `${opts.readout?.running ?? '—'} underway`;
+    if (running) running.textContent = `${opts.readout?.running ?? '—'} ${term('running').toLowerCase()}`;
+    const nextGreeting = template.content.querySelector('[data-greeting]');
+    const greeting = shell.querySelector('[data-greeting]');
+    if (nextGreeting && greeting) greeting.replaceWith(nextGreeting);
+    else if (nextGreeting) shell.querySelector('.nameplate-scope')?.append(nextGreeting);
   }
 
   private bindHeadControls(): void {
@@ -893,7 +1019,7 @@ export class DashboardView {
     const focusToggle = focused instanceof HTMLElement && center.contains(focused) && focused.hasAttribute('data-slack-toggle');
     const scrollTop = center.querySelector('.slack-popover')?.scrollTop ?? 0;
     const template = document.createElement('template');
-    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.slackError);
+    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.slackError, undefined, this.selectedRepo);
     const nextToggle = template.content.querySelector<HTMLButtonElement>('[data-slack-toggle]');
     const nextPopover = template.content.querySelector<HTMLElement>('.slack-popover');
     const toggle = center.querySelector<HTMLButtonElement>('[data-slack-toggle]');
@@ -928,7 +1054,7 @@ export class DashboardView {
       const status = control.querySelector<HTMLElement>('.slack-review-result');
       if (!button || !status) continue;
       button.disabled = Boolean(state?.pending || state?.result);
-      button.textContent = state?.pending ? 'Sending…' : state?.result ? 'Review requested' : 'Request review in Slack';
+      button.textContent = state?.pending ? 'Sending…' : state?.result ? term('reviewRequested') : term('requestSlackReview');
       status.classList.toggle('is-error', Boolean(state?.error));
       status.setAttribute('role', state?.error ? 'alert' : 'status');
       status.replaceChildren();
@@ -1296,7 +1422,7 @@ export class DashboardView {
     if (todoConfirmDelete && this.todos.deletingId !== todo.id) return;
     ++this.todosSeq;
     this.todos.loading = false;
-    this.todos.pendingAction = todoConfirmDelete ? 'Deleting todo…' : 'Launching voyage…';
+    this.todos.pendingAction = todoConfirmDelete ? 'Deleting todo…' : term('launchingRun');
     this.todos.error = null;
     this.paint();
     try {
@@ -1674,7 +1800,7 @@ export class DashboardView {
     }
     if (!(target instanceof HTMLFormElement) || !target.classList.contains('cmux-send')) return;
     event.preventDefault();
-    void this.handleCmuxSend(target);
+    void this.withStableView(() => this.handleCmuxSend(target));
   }
 
   private paintRunRetries(): void {
@@ -1712,7 +1838,7 @@ export class DashboardView {
       void this.refresh();
     } catch (error: unknown) {
       if (this.destroyed) return;
-      this.runRetries.set(runId, { pending: false, error: error instanceof Error ? error.message : 'Voyage retry failed.' });
+      this.runRetries.set(runId, { pending: false, error: error instanceof Error ? error.message : term('retryFailed') });
     } finally {
       if (!this.destroyed) this.paintRunRetries();
     }
@@ -1740,6 +1866,11 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+    const pirateToggle = target.closest<HTMLButtonElement>('[data-pirate-mode]');
+    if (pirateToggle) {
+      if (!pirateToggle.disabled) this.changePirateMode(!isPirateMode());
+      return;
+    }
     const copyButton = target.closest<HTMLButtonElement>('button[data-copy-run-id]');
     if (copyButton) {
       event.preventDefault();
@@ -1843,7 +1974,7 @@ export class DashboardView {
 
     const cmuxActionBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.cmux-action');
     if (cmuxActionBtn) {
-      void this.handleCmuxAction(cmuxActionBtn);
+      void this.withStableView(() => this.handleCmuxAction(cmuxActionBtn));
       return;
     }
 
@@ -1861,7 +1992,7 @@ export class DashboardView {
 
     const launchBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.launch-btn');
     if (launchBtn) {
-      void this.handleLaunchClick(launchBtn);
+      void this.withStableView(() => this.handleLaunchClick(launchBtn));
       return;
     }
 
@@ -1873,7 +2004,7 @@ export class DashboardView {
 
     const newRunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.newrun-launch');
     if (newRunBtn) {
-      void this.handleNewRun(newRunBtn);
+      void this.withStableView(() => this.handleNewRun(newRunBtn));
       return;
     }
 
@@ -1922,31 +2053,31 @@ export class DashboardView {
 
     const approveBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-approve');
     if (approveBtn) {
-      void this.handleReview(approveBtn, 'APPROVE');
+      void this.withStableView(() => this.handleReview(approveBtn, 'APPROVE'));
       return;
     }
 
     const requestChangesBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-request-changes');
     if (requestChangesBtn) {
-      void this.handleReview(requestChangesBtn, 'REQUEST_CHANGES');
+      void this.withStableView(() => this.handleReview(requestChangesBtn, 'REQUEST_CHANGES'));
       return;
     }
 
     const commentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-comment');
     if (commentBtn) {
-      void this.handleReview(commentBtn, 'COMMENT');
+      void this.withStableView(() => this.handleReview(commentBtn, 'COMMENT'));
       return;
     }
 
     const rerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-rerun');
     if (rerunBtn) {
-      void this.handleRerun(rerunBtn);
+      void this.withStableView(() => this.handleRerun(rerunBtn));
       return;
     }
 
     const reviewAgentBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.pr-review-agent');
     if (reviewAgentBtn) {
-      void this.handleReviewAgent(reviewAgentBtn);
+      void this.withStableView(() => this.handleReviewAgent(reviewAgentBtn));
       return;
     }
 
@@ -1978,34 +2109,9 @@ export class DashboardView {
       return;
     }
 
-    const recentRerunBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.recent-rerun');
-    if (recentRerunBtn) {
-      void this.handleRecentRerun(recentRerunBtn);
-      return;
-    }
-
     if (target.closest('a')) return;
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
-  }
-
-  private async handleRecentRerun(btn: HTMLButtonElement): Promise<void> {
-    const ticketId: string | undefined = btn.dataset.ticket;
-    const repo: string | undefined = btn.dataset.repo;
-    if (!ticketId || !repo) return;
-    const seq: number = ++this.launchSeq;
-    btn.disabled = true;
-    try {
-      const result: LaunchResult = await launchRun({ ticketId, repo, mode: 'ticket' });
-      if (seq !== this.launchSeq) return;
-      this.openRunTab(result.runId, ticketId);
-    } catch (err: unknown) {
-      if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage relaunch failed';
-      this.openErrorTab(ticketId, message);
-    } finally {
-      btn.disabled = false;
-    }
   }
 
   private prTarget(btn: HTMLElement): { panel: HTMLElement; repo: string; number: number } | null {
@@ -2030,7 +2136,7 @@ export class DashboardView {
       const reviewEl: HTMLElement | null = t.panel.querySelector<HTMLElement>('.pr-review');
       const errEl: HTMLDivElement = document.createElement('div');
       errEl.className = 'pr-review-error';
-      errEl.textContent = result.error ?? 'Review failed.';
+      errEl.textContent = result.error ?? term('reviewFailed');
       reviewEl?.appendChild(errEl);
       return;
     }
@@ -2045,7 +2151,7 @@ export class DashboardView {
       this.prView = { ...this.prView, pr: refreshed };
     }
     if (t.panel.isConnected) {
-      t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab);
+      t.panel.outerHTML = renderPrPanel(refreshed, this.repos.includes(t.repo), showOpenInTab, this.selectedRepo);
       this.paintSlackReviewRequests();
     }
     void this.loadReviewRequests();
@@ -2064,7 +2170,7 @@ export class DashboardView {
       this.openRunTab(result.runId, `feedback #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage relaunch failed';
+      const message: string = err instanceof Error ? err.message : term('relaunchFailed');
       this.openErrorTab(`feedback #${t.number}`, message);
     }
   }
@@ -2076,11 +2182,11 @@ export class DashboardView {
     try {
       const result: LaunchResult = await launchRun({ mode: 'review', repo: t.repo, prNumber: t.number, ...this.readTuning(t.panel, 'pr') });
       if (seq !== this.launchSeq) return;
-      this.openRunTab(result.runId, `review #${t.number}`);
+      this.openRunTab(result.runId, `${term('review')} #${t.number}`);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Code review failed';
-      this.openErrorTab(`review #${t.number}`, message);
+      const message: string = err instanceof Error ? err.message : term('reviewFailed');
+      this.openErrorTab(`${term('review')} #${t.number}`, message);
     }
   }
 
@@ -2090,14 +2196,14 @@ export class DashboardView {
     const parsed: { repo: string; number: number } | null = parsePrUrl(input.value);
     const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
     if (!parsed) {
-      if (result) result.innerHTML = '<div class="pr-panel empty-note">Enter a PR URL or owner/repo#number.</div>';
+      if (result) result.innerHTML = `<div class="pr-panel empty-note">${term('prLookupInvalid')}</div>`;
       return;
     }
     await this.loadPrView(parsed.repo, parsed.number);
   }
 
   private async loadPrView(repo: string, number: number, updateRoute: boolean = true): Promise<void> {
-    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, repo, pr: number, pane: this.view === 'runs' ? 'newrun' : 'lookup' });
+    if (updateRoute) this.updateAddress({ ...this.route, view: this.view, repo: this.selectedRepo, prRepo: repo, pr: number, pane: this.view === 'runs' ? 'newrun' : 'lookup' });
     const seq: number = ++this.prViewSeq;
     this.prView = { repo, number, pr: null, diff: null, loading: true };
     if (this.view === 'prs' || this.view === 'runs') this.paint();
@@ -2108,7 +2214,7 @@ export class DashboardView {
   }
 
   private async enterPrView(repo?: string, number?: number): Promise<void> {
-    await this.navigate(parseRoute(new URL(routeHref({ view: 'prs', repo: repo ?? this.selectedRepo, pr: number ?? null, pane: number ? 'lookup' : null }), window.location.origin)));
+    await this.navigate(parseRoute(new URL(routeHref({ view: 'prs', repo: this.selectedRepo, prRepo: repo ?? null, pr: number ?? null, pane: number ? 'lookup' : null }), window.location.origin)));
   }
 
   private handlePrListClick(row: HTMLElement): void {
@@ -2282,7 +2388,7 @@ export class DashboardView {
     if (this.destroyed || !this.runTabs.includes(tab) || runId !== this.activeTabId) return;
     const prEl = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-pr');
     if (prEl) {
-      prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true);
+      prEl.innerHTML = renderPrPanel(tab.prStatus ?? null, this.repos.includes(repo), true, this.selectedRepo);
       this.paintSlackReviewRequests();
     }
   }
@@ -2294,7 +2400,7 @@ export class DashboardView {
     else this.cancelRunLogFlush();
   }
 
-  private renderRunDrawer(): void {
+  private renderRunDrawer(refreshPr: boolean = true): void {
     this.cancelRunLogFlush();
     this.renderedRunLines = [];
     const tabsView: RunTabView[] = this.runTabs.map((t: RunTab): RunTabView => ({
@@ -2316,7 +2422,14 @@ export class DashboardView {
       this.scheduleRunLogFlush();
     }
     this.renderFooterDom(active);
-    if (active.pr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
+    if (active.pr) {
+      if (refreshPr) void this.loadTabPr(active.runId, active.pr.repo, active.pr.number);
+      else {
+        const panel = this.runDrawerEl.querySelector('.run-drawer-pr');
+        if (panel) panel.innerHTML = renderPrPanel(active.prStatus ?? null, this.repos.includes(active.pr.repo), true, this.selectedRepo);
+        this.paintSlackReviewRequests();
+      }
+    }
   }
 
   private lineEl(event: RunEvent): HTMLDivElement {
@@ -2378,7 +2491,7 @@ export class DashboardView {
 
     const statusLine: HTMLDivElement = document.createElement('div');
     statusLine.className = 'run-drawer-footer-status';
-    statusLine.textContent = `Ticket status: ${deriveTicketStatus(summary)}`;
+    statusLine.textContent = `${term('ticketStatus')}: ${deriveTicketStatus(summary)}`;
     footer.appendChild(statusLine);
 
     if (summary.prNumber == null) return;
@@ -2390,10 +2503,10 @@ export class DashboardView {
       link.href = `https://github.com/${summary.repo}/pull/${summary.prNumber}`;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = `PR #${summary.prNumber}`;
+      link.textContent = `${term('pr')} #${summary.prNumber}`;
       prLine.appendChild(link);
     } else {
-      prLine.textContent = `PR #${summary.prNumber}`;
+      prLine.textContent = `${term('pr')} #${summary.prNumber}`;
     }
     footer.appendChild(prLine);
   }
@@ -2413,7 +2526,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage launch failed';
+      const message: string = err instanceof Error ? err.message : term('launchFailed');
       this.openErrorTab(ticketId, message);
     } finally {
       btn.disabled = false;
@@ -2466,7 +2579,7 @@ export class DashboardView {
       this.openRunTab(result.runId, ticketId || title);
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
-      const message: string = err instanceof Error ? err.message : 'Voyage launch failed';
+      const message: string = err instanceof Error ? err.message : term('launchFailed');
       this.openErrorTab(ticketId || title, message);
     } finally {
       btn.disabled = false;
@@ -2474,6 +2587,7 @@ export class DashboardView {
   }
 
   private async handleConfigSave(btn: HTMLButtonElement): Promise<void> {
+    if (btn.disabled) return;
     const row: HTMLElement | null = btn.closest<HTMLElement>('.config-row');
     const key: string | undefined = row?.dataset.key;
     const input = row?.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input') ?? null;
@@ -2481,6 +2595,8 @@ export class DashboardView {
     const errorEl: HTMLElement | null = row?.querySelector<HTMLElement>('.config-error') ?? null;
     if (errorEl) errorEl.textContent = '';
     btn.disabled = true;
+    ++this.configSaves;
+    this.syncPirateToggle();
     try {
       const result: { ok: boolean; error?: string } = await setConfig(key, input.value);
       if (!result.ok) {
@@ -2510,12 +2626,15 @@ export class DashboardView {
       }
     } finally {
       btn.disabled = false;
+      --this.configSaves;
+      this.syncPirateToggle();
     }
   }
 
 }
 
 function armBootScreen(boot: HTMLElement): () => void {
+  applyBootTerminology(boot);
   const MIN_MS: number = 2000;
   const CAP_MS: number = 4200;
   const start: number = performance.now();

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildBugsResponse, type BugsDeps } from './bugs-endpoint';
 import type { BugIssue } from './jira';
 
@@ -45,6 +45,26 @@ describe('buildBugsResponse', () => {
   it('scopes to a single project when repo is given', async () => {
     const res = await buildBugsResponse(ENV, NOW, okDeps(), 'o/a');
     expect(res.cards.map((c) => c.project)).toEqual(['AIROBUILD']);
+  });
+
+  it('matches a selected galleon case-insensitively', async () => {
+    const res = await buildBugsResponse(ENV, NOW, okDeps(), 'O/A');
+    expect(res.cards.map(card => [card.project, card.repo])).toEqual([['AIROBUILD', 'o/a']]);
+  });
+
+  it.each(['', 'o/a=AIROBUILD'])('never substitutes the default project for an unmapped galleon (map: %s)', async repoProjectMap => {
+    const verifyAuth = vi.fn(async () => {});
+    const fetchApproxCount = vi.fn(async () => 5);
+    const result = await buildBugsResponse({ ...ENV, REPO_PROJECT_MAP: repoProjectMap }, NOW, okDeps({ verifyAuth, fetchApproxCount }), 'o/unmapped');
+    expect(result.cards).toEqual([]);
+    expect(result.degraded).toBe(false);
+    expect(verifyAuth).not.toHaveBeenCalled();
+    expect(fetchApproxCount).not.toHaveBeenCalled();
+  });
+
+  it('keeps the default project for All when no galleons are mapped', async () => {
+    const result = await buildBugsResponse({ ...ENV, REPO_PROJECT_MAP: '' }, NOW, okDeps());
+    expect(result.cards.map(card => [card.project, card.repo])).toEqual([['AIROBUILD', null]]);
   });
 
   it('degrades globally (no fake zeros) when auth fails', async () => {

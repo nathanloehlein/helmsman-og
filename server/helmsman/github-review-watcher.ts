@@ -111,7 +111,7 @@ export function createGithubReviewWatcher(options: GithubReviewWatcherOptions): 
         if (listed.has(requestKey)) continue;
         listed.add(requestKey);
         if (!configured.has(repo)) {
-          insert(repo, item.number, 'unsupported', `Repository ${repo} is not configured`);
+          insert(repo, item.number, 'unsupported', `Galleon ${repo} is not configured`);
           continue;
         }
         try {
@@ -126,7 +126,7 @@ export function createGithubReviewWatcher(options: GithubReviewWatcherOptions): 
         if (recoverQueued(notification)) continue;
         const repo = options.allowedRepos().find(repo => repo.toLowerCase() === notification.repo.toLowerCase());
         if (!repo) {
-          store.updateNotification(notification.id, 'blocked', now(), `Repository ${notification.repo} is not configured`);
+          store.updateNotification(notification.id, 'blocked', now(), `Galleon ${notification.repo} is not configured`);
           continue;
         }
         if (!listed.has(`${notification.repo.toLowerCase()}#${notification.prNumber}`)) {
@@ -145,7 +145,7 @@ export function createGithubReviewWatcher(options: GithubReviewWatcherOptions): 
           }
           if (!enabled()) return;
           if (!options.allowedRepos().some(allowed => allowed.toLowerCase() === repo.toLowerCase())) {
-            store.updateNotification(notification.id, 'blocked', now(), `Repository ${repo} is not configured`);
+            store.updateNotification(notification.id, 'blocked', now(), `Galleon ${repo} is not configured`);
             continue;
           }
           const existing = options.findExistingReview?.(repo, notification.prNumber, pr.headSha);

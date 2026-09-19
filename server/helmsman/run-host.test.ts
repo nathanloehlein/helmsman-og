@@ -17,7 +17,11 @@ describe('detachedHost', () => {
     const ref = await host.launch(spec(dir, 'node', ['-e', 'setTimeout(()=>process.exit(3), 300)']));
     expect(ref.kind).toBe('detached');
     expect(await host.isAlive(ref)).toBe(true);
-    await vi.waitFor(() => expect(existsSync(join(dir, 'run.exit'))).toBe(true), { timeout: 3000 });
+    // Spawns a detached wrapper which spawns node, which exits after 300ms and
+    // only then writes the exit file. Under full-suite load on Windows that
+    // chain can outlast a 3s budget, so wait long enough that a failure here
+    // means the file is never written rather than merely late.
+    await vi.waitFor(() => expect(existsSync(join(dir, 'run.exit'))).toBe(true), { timeout: 30_000 });
     expect(readFileSync(join(dir, 'run.exit'), 'utf8').trim()).toBe('3');
   });
 });

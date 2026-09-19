@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildTriageResponse } from './triage-endpoint';
 import type { TriageGroups } from './jira';
 import type { JiraConfig } from './config';
@@ -63,6 +63,24 @@ describe('buildTriageResponse', () => {
     expect(r.degraded).toBe(true);
     expect(r.groups.unassignedBacklog).toEqual([]);
     expect(r.groups.mineOpen).toEqual([]);
+  });
+
+  it('does not fall back to the default project for an unmapped galleon', async () => {
+    const fetchTriageGroups = vi.fn(OK_DEPS.fetchTriageGroups);
+    const result = await buildTriageResponse(FULL_ENV, { fetchTriageGroups }, 'o/unmapped');
+    expect(fetchTriageGroups).not.toHaveBeenCalled();
+    expect(result.degraded).toBe(false);
+    expect(result.groups).toEqual({ unassignedBacklog: [], unassignedTodo: [], mineOpen: [] });
+  });
+
+  it('matches galleons case-insensitively and filters every triage group by its mapped project', async () => {
+    const rows = [issue('PROJA-1', 'To Do', 'new'), issue('OTHER-2', 'To Do', 'new')];
+    const fetchTriageGroups = vi.fn(async (): Promise<TriageGroups> => ({ unassignedBacklog: rows, unassignedTodo: rows, mineOpen: rows }));
+    const result = await buildTriageResponse({ ...FULL_ENV, JIRA_JQL: 'assignee = currentUser()' }, { fetchTriageGroups }, 'O/A');
+    expect(fetchTriageGroups).toHaveBeenCalledWith(expect.objectContaining({ project: 'PROJA' }), expect.any(String), expect.any(String));
+    for (const group of [result.groups.unassignedBacklog, result.groups.unassignedTodo, result.groups.mineOpen]) {
+      expect(group.map(ticket => [ticket.id, ticket.repo])).toEqual([['PROJA-1', 'O/A']]);
+    }
   });
 
   it('degrades with a null jiraBaseUrl when Jira is not configured', async () => {

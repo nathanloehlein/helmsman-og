@@ -133,7 +133,7 @@ describe('GitHub requested review watcher', () => {
     await watcher.poll();
     expect(fetchPr).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
-    expect(store.listNotifications()[0]).toMatchObject({ status: 'blocked', error: 'Repository other/repo is not configured' });
+    expect(store.listNotifications()[0]).toMatchObject({ status: 'blocked', error: 'Galleon other/repo is not configured' });
   });
 
   it('coalesces an existing review and persists the shared run link', async () => {

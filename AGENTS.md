@@ -1,5 +1,8 @@
 # Repository workflow
 
+- The header galleon selector is the default scope for every panel and action. Only an explicit selection inside a panel may override it; that override must not change the header scope.
+
+- User-facing terminology: call a repository a "galleon" (plural "galleons") in conversation and when Pirate mode is on. Keep UI terminology in `src/logic/terminology.ts`; Pirate mode off uses plain labels. Translate only application copy, never user content, raw logs, code, credentials, or technical identifiers. Preserve technical identifiers, API fields, configuration keys, and Git commands.
 - Helmsman review agents and PR authors must end every PR description, review summary, inline comment, and comment/reply they publish with the compact byline `_Helmsman · <model> - <effort>_` (for example, `_Helmsman · gpt-5.6-sol - med_`). Abbreviate medium as med and minimal as min; omit role labels. Use the actual execution settings; explicitly mark unavailable values as not reported instead of guessing. Keep the byline outside code/suggestion fences and avoid duplicate footers.
 - The user has authorized committing and pushing completed Helmsman changes to GitHub. After each completed change, run appropriate validation, commit, review the commit as a Senior Software Architect, fix any material findings, and push to the branch's upstream. Do not ask for push permission again unless the user revokes this authorization.
 - The canonical remote is `godaddy` (`https://github.com/nloehlein-godaddy/helmsman.git`); `master` tracks `godaddy/master`. For a branch without an upstream, push that branch to `godaddy` and set its upstream.

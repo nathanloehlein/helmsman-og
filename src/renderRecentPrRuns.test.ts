@@ -1,10 +1,11 @@
+import { term } from './logic/terminology';
 import { describe, expect, it } from 'vitest';
 import { renderPrView, renderRecentPrRuns } from './render';
 import { DEFAULT_THEME_ID } from './data/themes';
 import type { RunSummary } from './data/agents';
 
 const run = (id: string, overrides: Partial<RunSummary> = {}): RunSummary => ({
-  id, ticketId: 'PR review', repo: 'org/a', status: 'succeeded', attempt: 1,
+  id, ticketId: 'review', repo: 'org/a', status: 'succeeded', attempt: 1,
   prNumber: 42, startedAt: '2026-09-17T12:00:00Z', costUsd: null, ...overrides,
 });
 const mount = (html: string) => {
@@ -40,16 +41,17 @@ describe('recent PR voyages', () => {
     expect(element.querySelectorAll('.recent-run')).toHaveLength(4);
     for (const [id, label] of [['review-a', 'Approve'], ['review-b', 'Request changes'], ['review-c', 'Comment only']]) {
       const row = element.querySelector(`[data-runid="${id}"]`);
-      expect(row?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`Review recommendation: ${label}`);
+      expect(row?.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(`${term('review')} recommendation: ${label}`);
       expect(row?.querySelector('.app-link')?.getAttribute('href')).toBe(`/runs?run=${id}`);
     }
-    expect(element.querySelector('[data-runid="underway"]')?.textContent).toContain('Underway');
+    expect(element.querySelector('[data-runid="underway"] .voyage-result')?.getAttribute('aria-label')).toBe('Voyage underway');
+    expect(element.querySelector('.recent-run .chip')).toBeNull();
   });
 
   it('renders an empty state for a repository without PR voyages', () => {
     const element = mount(renderRecentPrRuns([run('review-a')], 'org/b'));
-    expect(element.querySelector('.panel-title')?.textContent).toBe('Recent PR voyages');
-    expect(element.querySelector('.empty-note')?.textContent).toContain('No recent PR voyages');
+    expect(element.querySelector('.panel-title')?.textContent).toBe(term('recentPrRuns'));
+    expect(element.querySelector('.empty-note')?.textContent).toContain(term('noRecentPrRuns'));
     expect(element.querySelectorAll('.recent-run')).toHaveLength(0);
   });
 
@@ -61,13 +63,16 @@ describe('recent PR voyages', () => {
     expect(element.querySelector('a [data-retry-run-id]')).toBeNull();
   });
 
-  it('shows a short source ID while retaining the full ID in voyage navigation', () => {
+  it('keeps the repository scope and full source ID in voyage navigation', () => {
     const id = 'github-1234567890abcdef0123456789abcdef';
     const element = mount(renderRecentPrRuns([run(id)], 'org/a'));
     expect(element.querySelector('.voyage-id')?.textContent).toBe('github-1234567890ab');
     expect(element.querySelector('.voyage-id')?.getAttribute('title')).toBe(id);
     expect(element.querySelector('.recent-run')?.getAttribute('data-runid')).toBe(id);
-    expect(element.querySelector('.runs-voyage-link')?.getAttribute('href')).toBe(`/runs?run=${id}`);
+    const voyageUrl = new URL(element.querySelector('.runs-voyage-link')?.getAttribute('href') ?? '', 'https://helmsman.test');
+    expect(voyageUrl.pathname).toBe('/runs');
+    expect(voyageUrl.searchParams.get('run')).toBe(id);
+    expect(voyageUrl.searchParams.get('repo')).toBe('org/a');
   });
 
   it('includes recent voyages on the PR page and escapes their labels', () => {

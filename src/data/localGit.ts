@@ -1,3 +1,4 @@
+import { term } from '../logic/terminology';
 export interface LocalBranch {
   name: string;
   current: boolean;
@@ -91,7 +92,7 @@ export async function fetchLocalGit(repo: string): Promise<LocalGitState> {
   const empty = emptyLocalGit(repo);
   try {
     const response = await fetch(`/api/repo/local?repo=${encodeURIComponent(repo)}`);
-    if (!response.ok) return { ...empty, error: 'Local checkout unavailable for this repository.' };
+    if (!response.ok) return { ...empty, error: term('unavailableCheckout') };
     return normalizeLocalGit(repo, await response.json() as Partial<LocalGitResponse> | null)
       ?? { ...empty, error: 'Unable to load local branches and worktrees.' };
   } catch {

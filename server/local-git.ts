@@ -126,7 +126,7 @@ async function mutationCheckoutError(agentsRoot: string, repo: string, path: str
   const common = await realpath((await git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
   if (common !== canonical && !common.startsWith(`${canonical}${sep}`)) return 'Configured checkout uses Git metadata outside its expected location.';
   const origins = (await git(path, ['config', '--get-all', 'remote.origin.url']).catch(() => '')).trim().split('\n').filter(Boolean);
-  if (origins.length !== 1 || githubOriginRepo(origins[0] ?? '')?.toLowerCase() !== repo.toLowerCase()) return 'Configured checkout origin does not match this GitHub repository.';
+  if (origins.length !== 1 || githubOriginRepo(origins[0] ?? '')?.toLowerCase() !== repo.toLowerCase()) return 'Configured checkout origin does not match this GitHub galleon.';
   return null;
 }
 
@@ -137,10 +137,10 @@ export async function getLocalGit(
   options: LocalGitOptions = {},
 ): Promise<{ status: number; json: LocalGitResponse }> {
   const empty: LocalGitResponse = { repo, path: null, branches: [], worktrees: [], error: null };
-  if (typeof repo !== 'string' || !isGithubRepo(repo)) return { status: 400, json: { ...empty, error: 'Repo must be owner/name.' } };
-  if (!configuredRepos.includes(repo)) return { status: 404, json: { ...empty, error: 'Repository is not configured.' } };
+  if (typeof repo !== 'string' || !isGithubRepo(repo)) return { status: 400, json: { ...empty, error: 'Galleon must be owner/name.' } };
+  if (!configuredRepos.includes(repo)) return { status: 404, json: { ...empty, error: 'Galleon is not configured.' } };
   if (configuredRepos.some(other => other !== repo && repoBasename(other) === repoBasename(repo))) {
-    return { status: 409, json: { ...empty, error: 'Configured repositories share the same local checkout name.' } };
+    return { status: 409, json: { ...empty, error: 'Configured galleons share the same local checkout name.' } };
   }
   const path = resolve(agentsRoot, repoBasename(repo));
   empty.path = path;
@@ -308,7 +308,7 @@ export async function mutateLocalGit(
         }
       } else {
         const tree = state.json.worktrees.find(item => item.path === resolve(action.path)) as Worktree | undefined;
-        if (!tree) return fail(404, 'Worktree is not registered with this repository.');
+        if (!tree) return fail(404, 'Worktree is not registered with this galleon.');
         if (tree.deletionBlockedReason) return fail(409, tree.deletionBlockedReason);
         if (tree.commit !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before deleting.');
         const [common, treeCommon, head, canonicalTree] = await Promise.all([

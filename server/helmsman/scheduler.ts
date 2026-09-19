@@ -60,7 +60,7 @@ export class AutoClaimScheduler {
         });
       } catch (err: unknown) {
         const message: string = err instanceof Error ? err.message : String(err);
-        this.deps.onLog?.(`Error processing repo ${repo}: ${message}`);
+        this.deps.onLog?.(`Error processing galleon ${repo}: ${message}`);
       }
     }
   }

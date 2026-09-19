@@ -11,10 +11,12 @@ function respond(payload: unknown): void {
 }
 
 describe('PR lists transport', () => {
-  it('keeps the personal inbox global and encodes repository requests', async () => {
+  it('supports All galleons and encodes selected galleon requests', async () => {
     respond({ prs: [pr], degraded: false, truncated: true });
     expect(await fetchReviewRequests()).toEqual({ prs: [pr], degraded: false, truncated: true });
     expect(globalThis.fetch).toHaveBeenLastCalledWith('/api/pr/review-requests');
+    await fetchReviewRequests('org/repo');
+    expect(globalThis.fetch).toHaveBeenLastCalledWith('/api/pr/review-requests?repo=org%2Frepo');
     await fetchRepoOpenPrs('org/repo');
     expect(globalThis.fetch).toHaveBeenLastCalledWith('/api/pr/open?repo=org%2Frepo');
   });
