@@ -376,6 +376,9 @@ Available panes are `newrun`, `backlog`, `underway`, `running`, `recent`, `repop
 `review-requests`, `authored`, `lookup`, and `diff` on PRs; and `recent`, `newrun`, and
 `tasks` on Voyages. Terminal contains the terminal controls, currently backed by cmux; existing `/cmux` links still work. Bugs and Config link directly to their page.
 
+For native cmux sidebar Codex cost estimates, see [the local integration](docs/cmux-codex-costs.md).
+It uses recorded session tokens and labeled API estimates, independently of the Helmsman server.
+
 ### Triage filters
 
 Triage has one shared filter bar for all three columns. Combine the P0–P4 checkboxes

@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "helmsman": "tsx server/helmsman/main.ts",
-    "serve": "tsx server/helmsman/main.ts"
+    "serve": "tsx server/helmsman/main.ts",
+    "cmux:costs": "node scripts/cmux-codex-cost.mjs",
+    "cmux:costs:install": "node scripts/install-cmux-codex-cost.mjs",
+    "cmux:costs:uninstall": "node scripts/install-cmux-codex-cost.mjs --uninstall"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
