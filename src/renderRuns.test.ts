@@ -76,7 +76,7 @@ describe('renderRunsView', () => {
     expect(failed?.querySelector('.voyage-result-changes')).toBeNull();
   });
 
-  it('places the task identity on the left and retry, timestamp, and ID copy in that order on the right', () => {
+  it('places the task identity on the left and ID copy, retry, and timestamp in that order on the right', () => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'failed' })] }));
     const row = el.querySelector('.recent-run');
     expect(row?.querySelector('.voyage-identity .ticket-id')?.textContent).toBe('Bounty #42');
@@ -85,11 +85,11 @@ describe('renderRunsView', () => {
     const meta = row?.querySelector('.voyage-row-meta');
     const controls = [...(meta?.querySelectorAll('[data-retry-run-id], time, [data-copy-run-id]') ?? [])];
     expect(controls).toHaveLength(3);
-    expect(controls[0]?.getAttribute('data-retry-run-id')).toBe('run-1');
-    expect(controls[0]?.querySelector('.sr-only')?.textContent).toBe('Retry');
-    expect(controls[1]?.getAttribute('datetime')).toBe('2026-09-17T15:00:00.000Z');
-    expect(controls[1]?.getAttribute('title')).toBeTruthy();
-    expect(controls[2]?.getAttribute('data-copy-run-id')).toBe('run-1');
+    expect(controls[0]?.getAttribute('data-copy-run-id')).toBe('run-1');
+    expect(controls[1]?.getAttribute('data-retry-run-id')).toBe('run-1');
+    expect(controls[1]?.querySelector('.sr-only')?.textContent).toBe('Retry');
+    expect(controls[2]?.getAttribute('datetime')).toBe('2026-09-17T15:00:00.000Z');
+    expect(controls[2]?.getAttribute('title')).toBeTruthy();
     expect(meta?.lastElementChild).toBe(controls[2]);
   });
 

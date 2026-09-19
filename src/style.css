@@ -406,10 +406,10 @@ html, body {
 .voyage-history-row > .runs-voyage-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .voyage-history-row .voyage-identity { gap: 3px; }
 .voyage-history-row .agent-repo { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; color: var(--text-faint); }
-.voyage-row-meta { display: grid; grid-template-columns: 28px 8ch minmax(0, 144px); align-items: center; gap: 8px; max-width: 100%; margin-left: auto; font-size: 10px; }
-.voyage-row-meta > .voyage-retry { grid-column: 1; grid-row: 1; width: 28px; height: 28px; justify-content: center; padding: 5px; }
-.voyage-row-meta > .agent-elapsed { grid-column: 2; grid-row: 1; text-align: right; font-size: 10px; color: var(--text-faint); }
-.voyage-row-meta > .voyage-id { grid-column: 3; grid-row: 1; width: 144px; }
+.voyage-row-meta { display: grid; grid-template-columns: minmax(0, max-content) 28px 8ch; align-items: center; gap: 8px; max-width: 100%; margin-left: auto; font-size: 10px; }
+.voyage-row-meta > .voyage-retry { grid-column: 2; grid-row: 1; width: 28px; height: 28px; justify-content: center; padding: 5px; }
+.voyage-row-meta > .agent-elapsed { grid-column: 3; grid-row: 1; text-align: right; font-size: 10px; color: var(--text-faint); }
+.voyage-row-meta > .voyage-id { grid-column: 1; grid-row: 1; }
 .voyage-row-meta > .voyage-retry-feedback { grid-column: 1 / -1; grid-row: 2; text-align: right; }
 
 /* the amber link rail: grows to fill, ends in a ring; state by stroke pattern */

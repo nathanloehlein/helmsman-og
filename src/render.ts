@@ -849,9 +849,9 @@ export function renderVoyage(run: RunSummary, now: Date = new Date(), selectedRe
       <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
     </a>
     <div class="voyage-row-meta">
+      ${renderVoyageId(run.id)}
       ${run.status === 'failed' ? renderVoyageRetry(run.id, true) : ''}
       ${startedAt}
-      ${renderVoyageId(run.id)}
     </div>
   </li>`;
 }
