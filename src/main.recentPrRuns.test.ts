@@ -63,7 +63,7 @@ describe('recent PR voyages local refresh', () => {
     expect(requests.slice(initialCalls).sort()).toEqual(['/api/agents', '/api/context', '/api/slack']);
     expect(requests.filter(path => path === '/api/agents')).toHaveLength(initialAgentsCalls + 1);
     expect(root.querySelectorAll('.pr-recent-runs .recent-run')).toHaveLength(2);
-    expect(root.querySelector('.pr-recent-runs [data-runid="review-a"] .voyage-result')?.getAttribute('aria-label')).toBe('Review recommendation: Approve');
+    expect(root.querySelector('.pr-recent-runs [data-runid="review-a"] .voyage-result')?.getAttribute('aria-label')).toBe('Inspection recommendation: Approve');
     expect(root.querySelector('.pr-lookup-input')).toBe(lookup);
     expect(lookup.value).toBe('org/a#99');
     expect(root.querySelector('.pr-review-body')).toBe(review);

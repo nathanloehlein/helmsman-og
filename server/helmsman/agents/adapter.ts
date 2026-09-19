@@ -14,6 +14,14 @@ export interface AgentTask {
   prHeadSha?: string;
   reviewComplexity?: 'low' | 'medium' | 'high';
   reviewReason?: string;
+  prePrResume?: {
+    baseSha: string;
+    headSha: string;
+    branch: string;
+    round: number;
+    reviewerReports: Record<string, string>;
+    metadataPath: string;
+  };
   prePr?: {
     stage: 'implement' | 'review' | 'fix';
     baseSha: string;
@@ -21,6 +29,7 @@ export interface AgentTask {
     reportPath: string;
     feedback?: string;
     round?: number;
+    summaryCorrection?: { reportPath: string; actualLength: number };
   };
 }
 

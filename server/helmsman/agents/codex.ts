@@ -11,7 +11,7 @@ export function codexArgs(task: AgentTask): string[] {
     '--dangerously-bypass-approvals-and-sandbox',
     '-m', model,
     '-c', `model_reasoning_effort="${effort}"`,
-    ...(task.review || task.prePr?.stage === 'review' ? ['-c', 'features.multi_agent=true'] : []),
+    ...((task.review || task.prePr?.stage === 'review') && !task.prePr?.summaryCorrection ? ['-c', 'features.multi_agent=true'] : []),
     buildPrompt(task, 'codex'),
   ];
 }

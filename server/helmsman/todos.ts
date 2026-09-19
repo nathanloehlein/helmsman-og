@@ -30,15 +30,15 @@ function validateInput(input: unknown, partial: boolean): Partial<TodoInput> {
   const result: Record<string, string> = {};
   for (const field of FIELDS) {
     if (!(field in values)) continue;
-    if (typeof values[field] !== 'string') throw new TodoValidationError(`${field} must be a string`);
+    if (typeof values[field] !== 'string') throw new TodoValidationError(`${field === 'repo' ? 'Galleon' : field} must be a string`);
     result[field] = values[field].trim();
   }
   for (const field of ['title', 'repo'] as const) {
-    if ((!partial || field in result) && !result[field]) throw new TodoValidationError(`${field} is required`);
+    if ((!partial || field in result) && !result[field]) throw new TodoValidationError(`${field === 'repo' ? 'Galleon' : field} is required`);
   }
   if (result.title && result.title.length > 240) throw new TodoValidationError('Title must be 240 characters or fewer');
   if (result.repo && !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(result.repo)) {
-    throw new TodoValidationError('Repository must use owner/name format');
+    throw new TodoValidationError('Galleon must use owner/name format');
   }
   for (const field of ['description', 'acceptanceCriteria'] as const) {
     if ((result[field]?.length ?? 0) > 20000) throw new TodoValidationError(`${field} must be 20000 characters or fewer`);

@@ -7,10 +7,45 @@ const item = {
   status: 'launched', runId: 'run-42', createdAt: '2026-09-17T12:00:00Z', updatedAt: '2026-09-17T12:00:00Z', readAt: null, error: null,
 };
 const health = { enabled: true, status: 'healthy', channelName: 'airo-editing', intervalMs: 300_000, lastSuccessAt: null, error: null };
+const voyage = {
+  ...item, kind: 'voyage-completed', id: `voyage-${'a'.repeat(64)}`, title: 'Fix task switching',
+  status: 'succeeded', sourceUrl: '/runs?run=run-42', channelName: 'Helmsman voyages', author: 'Helmsman',
+};
 const respond = (value: unknown) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Slack notifications API', () => {
+  it.each(['succeeded', 'failed', 'stopped'])('accepts completed voyages with %s status alongside review requests', async status => {
+    const completed = { ...voyage, status, model: 'gpt-5.6-sol', effort: 'medium' };
+    const withoutPr = { ...completed, id: 'voyage-without-pr', prNumber: null, prUrl: '' };
+    const typedReview = { ...item, kind: 'review-request' };
+    respond({ health, notifications: [item, typedReview, completed, withoutPr] });
+    expect(await fetchSlack()).toEqual({ health, notifications: [item, typedReview, completed, withoutPr] });
+  });
+
+  it('rejects unsafe or malformed completed voyages without discarding valid notifications', async () => {
+    const invalid = [
+      { id: '<script>' }, { id: '../run-42' }, { id: '' }, { repo: 'org/..' }, { repo: 'org/repo/extra' },
+      { runId: '../../escape' }, { runId: null }, { title: '' }, { title: null }, { title: '  ' },
+      { sourceUrl: 'javascript:alert(1)' }, { sourceUrl: '//evil.test/runs?run=run-42' }, { sourceUrl: '/runs?run=other' },
+      { status: 'running' }, { status: 'queued' }, { createdAt: 'invalid' }, { updatedAt: null }, { readAt: false },
+      { prNumber: 0 }, { prNumber: 1.5 }, { prNumber: null }, { prNumber: undefined },
+      { prUrl: 'javascript:alert(1)' }, { prUrl: 'https://github.com/other/repo/pull/42' },
+      { error: 'unexpected' }, { model: {} }, { effort: [] }, { author: null }, { channelName: null },
+      { kind: 'unknown-kind' },
+    ].map(overrides => ({ ...voyage, ...overrides }));
+    respond({ health, notifications: [voyage, ...invalid] });
+    const parsed = await fetchSlack();
+    expect(parsed?.notifications).toEqual([voyage]);
+    expect(parsed?.health.status).toBe('partial');
+  });
+
+  it('preserves external task text as data while validating the completed-voyage envelope', async () => {
+    const completed = { ...voyage, title: '<img src=x onerror=bad()>', model: '<script>bad()</script>' };
+    respond({ health, notifications: [completed] });
+    expect((await fetchSlack())?.notifications).toEqual([completed]);
+  });
+
   it('retains valid notifications and reports partially malformed data', async () => {
     respond({ health, notifications: [null, item, { ...item, id: 'bad', prNumber: -1 }] });
     expect(await fetchSlack()).toEqual({ health: { ...health, status: 'partial', error: 'Some notifications could not be loaded.' }, notifications: [item] });

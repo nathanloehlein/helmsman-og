@@ -4,6 +4,7 @@ import { loadConfig } from './config';
 import type { TriageGroups } from './jira';
 import { fetchTriageGroups } from './jira';
 import { issueToTicket } from './snapshot';
+import type { JiraIssue } from './types';
 
 export interface TriageGroupsView {
   unassignedBacklog: Ticket[];
@@ -38,14 +39,18 @@ export async function buildTriageResponse(
   }
 
   const mappedProject: string | undefined = selectedRepo
-    ? config.repoProjectMap[selectedRepo]
+    ? Object.entries(config.repoProjectMap).find(([repo]) => repo.toLowerCase() === selectedRepo.toLowerCase())?.[1]
     : undefined;
+  if (selectedRepo && !mappedProject) {
+    return { groups: EMPTY_GROUPS, degraded: false, selectedRepo, jiraBaseUrl: config.jira.baseUrl };
+  }
   const jira: JiraConfig = mappedProject
     ? { ...config.jira, project: mappedProject }
     : config.jira;
-  const repoLabel: string = selectedRepo
-    ? (selectedRepo.split('/').pop() ?? selectedRepo)
-    : config.repoLabel;
+  const repoLabel: string = selectedRepo ?? config.repoLabel;
+  const tickets = (issues: JiraIssue[]): Ticket[] => issues
+    .filter(issue => !selectedRepo || (typeof issue?.key === 'string' && issue.key.toLowerCase().startsWith(`${jira.project.toLowerCase()}-`)))
+    .map(issue => issueToTicket(issue, repoLabel));
 
   try {
     const groups: TriageGroups = await deps.fetchTriageGroups(
@@ -55,9 +60,9 @@ export async function buildTriageResponse(
     );
     return {
       groups: {
-        unassignedBacklog: groups.unassignedBacklog.map((i) => issueToTicket(i, repoLabel)),
-        unassignedTodo: groups.unassignedTodo.map((i) => issueToTicket(i, repoLabel)),
-        mineOpen: groups.mineOpen.map((i) => issueToTicket(i, repoLabel)),
+        unassignedBacklog: tickets(groups.unassignedBacklog),
+        unassignedTodo: tickets(groups.unassignedTodo),
+        mineOpen: tickets(groups.mineOpen),
       },
       degraded: false,
       selectedRepo,

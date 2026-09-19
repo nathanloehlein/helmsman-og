@@ -37,6 +37,13 @@ export interface OpenPr {
   reviewDecision: string;
   draft: boolean;
   createdAt: string;
+  comments?: number;
+  reviews?: {
+    approved: number;
+    changesRequested: number;
+    commented: number;
+    requested: number;
+  };
 }
 
 export interface PrFileDiff {

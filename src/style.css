@@ -151,7 +151,13 @@ html, body {
 }
 .nameplate { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .nameplate-scope { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; }
-.nameplate-scope .repo-select { max-width: 100%; width: 220px; padding: 4px 6px; font-size: 11px; }
+.nameplate-scope .repo-select { width: 154px; min-width: 0; max-width: 100%; padding: 4px 6px; font-size: 11px; }
+.helm-greeting { max-width: 220px; color: var(--text-dim); font-size: 11px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminology-reference { max-width: 100%; color: var(--text-dim); font-size: 12px; }
+.terminology-reference summary { cursor: pointer; color: var(--accent); }
+.terminology-reference table { width: 100%; margin-top: 12px; border-collapse: collapse; }
+.terminology-reference th, .terminology-reference td { padding: 7px 10px; border-bottom: 1px solid var(--line-faint); text-align: left; overflow-wrap: anywhere; }
+.terminology-reference th { color: var(--text); }
 .nameplate-mark {
   display: inline-flex;
   width: 52px;
@@ -366,13 +372,11 @@ html, body {
 .voyage-result { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 24px; border: 1px solid currentColor; border-radius: 50%; }
 .voyage-result svg { width: 15px; height: 15px; }
 .voyage-result-approved { color: var(--good); }
-.voyage-result-changes { color: var(--bad); }
+.voyage-result-changes { color: var(--accent); }
+.voyage-result-failed { color: var(--bad); }
+.voyage-result-running { color: var(--review); }
 .voyage-result-commented { color: var(--review); }
 .voyage-result-unknown { color: var(--text-faint); }
-.recent-rerun { flex: 0 0 auto; padding: 3px 6px; line-height: 0; background: none; border: 1px solid var(--line-faint); border-radius: var(--radius); color: var(--text-faint); cursor: pointer; }
-.recent-rerun:hover:not(:disabled) { color: var(--accent); border-color: var(--line-strong); }
-.recent-rerun:disabled { opacity: 0.3; cursor: not-allowed; }
-.recent-rerun svg { width: 13px; height: 13px; }
 .voyage-retry { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 4px 7px; border: 1px solid var(--line-faint); border-radius: var(--radius); background: transparent; color: var(--text-dim); font: inherit; font-size: 11px; cursor: pointer; }
 .voyage-retry svg { width: 13px; height: 13px; }
 .voyage-retry:hover:not(:disabled) { color: var(--text); border-color: var(--review); background: color-mix(in srgb, var(--review) 10%, var(--panel)); }
@@ -395,16 +399,19 @@ html, body {
 .voyage-id[data-copy-state] svg { color: currentColor; }
 .voyage-copy-feedback { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 2; padding: 3px 6px; border: 1px solid currentColor; border-radius: inherit; background: var(--panel); color: inherit; white-space: nowrap; pointer-events: none; }
 .voyage-copy-feedback:empty { display: none; }
-.voyage-history-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-right: 14px; }
-.voyage-history-row > .voyage-retry-feedback { padding: 0 0 8px 14px; }
-.voyage-history-row > .runs-voyage-link { flex: 1; min-width: 0; }
-.voyage-history-row > .runs-voyage-link:hover { background: transparent; }
-.voyage-history-row > .voyage-id { flex: 0 0 auto; max-width: 40%; }
-@media (max-width: 480px) {
-  .voyage-history-row { gap: 4px 8px; padding-bottom: 8px; }
-  .voyage-history-row > .runs-voyage-link { flex-basis: 100%; }
-  .voyage-history-row > .voyage-id { margin-left: 14px; max-width: 60%; }
-}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.voyage-history-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 10px 14px; border-bottom: 1px solid var(--line-faint); }
+.voyage-history-row:last-child { border-bottom: none; }
+.voyage-row-main { display: grid; grid-template-columns: minmax(0, max-content) 28px; align-items: center; gap: 8px 12px; flex: 1 1 180px; min-width: 0; }
+.voyage-row-main > .runs-voyage-link { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 12px; min-width: 0; color: inherit; text-decoration: none; }
+.voyage-row-main > .runs-voyage-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.voyage-history-row .voyage-identity { gap: 3px; }
+.voyage-history-row .agent-repo { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; color: var(--text-faint); }
+.voyage-row-meta { display: grid; grid-template-columns: minmax(0, max-content) 8ch; align-items: center; gap: 8px; max-width: 100%; margin-left: auto; font-size: 10px; }
+.voyage-row-main > .voyage-retry { grid-column: 2; grid-row: 1; width: 28px; height: 28px; justify-content: center; padding: 5px; }
+.voyage-row-meta > .agent-elapsed { grid-column: 2; grid-row: 1; text-align: right; font-size: 10px; color: var(--text-faint); }
+.voyage-row-meta > .voyage-id { grid-column: 1; grid-row: 1; }
+.voyage-row-main > .voyage-retry-feedback { grid-column: 1 / -1; grid-row: 2; }
 
 /* the amber link rail: grows to fill, ends in a ring; state by stroke pattern */
 .lane-rail { flex: 2 1 60px; min-width: 48px; height: 12px; position: relative; margin: 0 4px; }
@@ -534,6 +541,9 @@ select { text-transform: none; }
 .pr-list-summary { display: flex; flex: 1 1 140px; flex-direction: column; min-width: 0; gap: 5px; }
 .pr-list-summary .queue-title { white-space: normal; overflow-wrap: anywhere; }
 .pr-list-summary .agent-repo { white-space: normal; overflow-wrap: anywhere; }
+.pr-list-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--text-faint); font-size: 10px; line-height: 1.4; }
+.pr-list-stat { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.pr-list-stat svg { width: 12px; height: 12px; flex: 0 0 12px; }
 @media (max-width: 1100px) {
   .helm-head { grid-template-columns: minmax(0, 1fr) auto; gap: 14px; }
   .helm-controls { grid-column: 2; grid-row: 1; }
@@ -726,24 +736,27 @@ select { text-transform: none; }
 
 /* ---------- footer ---------- */
 .app-footer {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
   padding: 12px 18px;
-  flex-direction: column;
-  align-items: stretch;
   border-top: 1px solid var(--line);
   background: var(--panel);
   font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--text-faint);
 }
-.footer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.app-footer .operator-note { padding: 0; border: 0; background: none; }
+.footer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.app-footer .operator-note { grid-column: 1 / -1; padding: 0; border: 0; background: none; }
 .app-footer .footer-attr { color: var(--text-dim); }
 .app-footer .footer-dot { color: var(--line-strong, var(--line)); }
+.pirate-mode-toggle { display: inline-flex; align-items: center; justify-content: center; align-self: end; width: 44px; height: 44px; padding: 4px; border: 1px solid transparent; border-radius: var(--radius); color: var(--text); background: transparent; opacity: 1; cursor: pointer; }
+.pirate-mode-toggle svg { width: 30px; height: 34px; }
+.pirate-mode-toggle[aria-pressed="false"] { opacity: 0.3; }
+.pirate-mode-toggle:hover { color: var(--text); background: transparent; border-color: var(--line); }
+.pirate-mode-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
@@ -759,6 +772,7 @@ select { text-transform: none; }
   .nameplate { gap: 9px; }
   .nameplate-mark { width: 44px; height: 44px; }
   .nameplate-name { font-size: 16px; }
+  .nameplate-scope .repo-select { width: 140px; }
   .helm-readout { gap: 12px; font-size: 10px; }
   .page-tabs { padding: 0 5px; gap: 3px; }
   .page-tab { padding: 11px 14px; }
@@ -990,9 +1004,14 @@ select { text-transform: none; }
   .nameplate-mark { width: 40px; height: 40px; }
   .nameplate-name { font-size: 14px; letter-spacing: .08em; }
   .nameplate-alpha { font-size: 9px; padding: 3px 5px; }
+  .nameplate-scope .repo-select { width: 124px; }
 }
 
 @media (max-width: 600px) {
   .pr-panel-status { justify-content: flex-start; margin-left: 0; }
   .pr-panel-meta .pr-open-in-tab { margin-left: 0; }
+}
+
+@media (max-width: 420px) {
+  .helm-greeting { max-width: 150px; font-size: 10px; }
 }

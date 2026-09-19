@@ -1,3 +1,4 @@
+import { term } from '../logic/terminology';
 import { RUN_LOG_LINE_LIMIT } from '../logic/runLog';
 
 export interface LaunchResult {
@@ -35,13 +36,13 @@ export async function launchAgent(ticketId: string, title: string, repo: string)
 }
 
 export async function retryRun(runId: string): Promise<LaunchResult> {
-  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) throw new Error('Invalid voyage ID.');
+  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) throw new Error(term('invalidRunId'));
   const response = await fetch(`/api/agents/${encodeURIComponent(runId)}/retry`, { method: 'POST' });
   const result: unknown = await response.json().catch(() => null);
   const body = result && typeof result === 'object' ? result as Record<string, unknown> : null;
   if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : `Retry failed (${response.status}).`);
   if (typeof body?.runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(body.runId) || body.runId === runId) {
-    throw new Error('The server did not return a new voyage ID. Check recent voyages before retrying.');
+    throw new Error(term('missingRetryRunId'));
   }
   return { runId: body.runId };
 }

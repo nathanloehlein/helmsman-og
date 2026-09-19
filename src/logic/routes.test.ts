@@ -15,7 +15,7 @@ describe('routes', () => {
 
   it('returns explicit nulls for absent parameters', () => {
     expect(parse('/')).toEqual({
-      view: 'dashboard', repo: null, pane: null, pr: null, run: null,
+      view: 'dashboard', repo: null, prRepo: null, pane: null, pr: null, run: null,
       mode: null, ticket: null, surface: null,
     });
   });
@@ -24,6 +24,42 @@ describe('routes', () => {
     expect(parse('/runs?repo=another-org%2Fsome.repo&pane=newrun&pr=10280&mode=review')).toMatchObject({
       view: 'runs', repo: 'another-org/some.repo', pane: 'newrun', pr: 10280, mode: 'review',
     });
+  });
+
+  it.each(['/prs', '/runs'])('keeps header scope separate from an explicit PR panel repository at %s', path => {
+    const route = parse(`${path}?repo=owner/header&prRepo=other/panel&pr=42`);
+    expect(route).toMatchObject({ repo: 'owner/header', prRepo: 'other/panel', pr: 42 });
+    expect(parse(routeHref(route))).toEqual(route);
+  });
+
+  it('preserves All galleons while opening an explicit repository PR', () => {
+    const route = parse('/runs?prRepo=other/panel&pr=42&pane=newrun&mode=review');
+    expect(route).toMatchObject({ repo: null, prRepo: 'other/panel', pr: 42, pane: 'newrun', mode: 'review' });
+    expect(routeHref(route)).toBe('/runs?prRepo=other%2Fpanel&pane=newrun&pr=42&mode=review');
+  });
+
+  it('retains legacy PR links without adding an implicit override', () => {
+    const route = parse('/pr?repo=owner/legacy&pr=42');
+    expect(route).toMatchObject({ repo: 'owner/legacy', prRepo: null, pr: 42 });
+    expect(routeHref(route)).toBe('/prs?repo=owner%2Flegacy&pr=42');
+  });
+
+  it.each(['', 'bad repo', 'owner/..', 'owner/repo/extra'])('does not reinterpret an invalid explicit PR override as the header repository: %j', prRepo => {
+    const route = parse(`/prs?repo=owner/header&prRepo=${encodeURIComponent(prRepo)}&pr=42`);
+    expect(route).toMatchObject({ repo: 'owner/header', prRepo: null, pr: null });
+    expect(routeHref(route)).toBe('/prs?repo=owner%2Fheader');
+  });
+
+  it('validates header scope independently of an explicit PR target', () => {
+    expect(parse('/prs?repo=bad&prRepo=other/panel&pr=42'))
+      .toMatchObject({ repo: null, prRepo: 'other/panel', pr: 42 });
+  });
+
+  it.each(['/helm', '/todos', '/terminal', '/config'])('ignores PR panel overrides outside PR pages: %s', path => {
+    const route = parse(`${path}?prRepo=other/panel&pr=42`);
+    expect(route.prRepo).toBeNull();
+    expect(route.pr).toBeNull();
+    expect(routeHref(route)).toBe(path);
   });
 
   it('retains an existing run identifier independently of a repo', () => {
@@ -109,7 +145,7 @@ describe('routes', () => {
 
   it('round-trips a complete route while discarding unrelated query and fragment values', () => {
     const route: AppRoute = {
-      view: 'runs', repo: 'owner/repo', pane: 'newrun', pr: 123,
+      view: 'runs', repo: 'owner/repo', prRepo: 'other/repo', pane: 'newrun', pr: 123,
       run: 'run_42', mode: 'rerun', ticket: 'AIRO-42', surface: null,
     };
     expect(parse(`${routeHref(route)}&unused=1#other`)).toEqual(route);

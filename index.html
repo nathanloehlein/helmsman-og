@@ -22,7 +22,7 @@
     </style>
   </head>
   <body>
-    <div id="boot" role="status" aria-label="Helmsman preparing to get underway">
+    <div id="boot" role="status" aria-label="Helmsman is starting">
       <div class="boot-stage">
         <svg class="boot-compass" viewBox="0 0 240 240" fill="none" aria-hidden="true">
           <circle class="boot-bearing-ring" cx="120" cy="120" r="99" stroke="currentColor" />
@@ -43,15 +43,15 @@
         <div class="boot-meta">
           <span class="boot-pct seg7">0</span>
           <span class="boot-lamps" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-          <span class="boot-tag">TAKING THE HELM · CHARTING THE COURSE</span>
+          <span class="boot-tag" data-boot-term="bootTagline">LOADING DASHBOARD · PREPARING WORKSPACE</span>
         </div>
         <div class="boot-rail" aria-hidden="true"><i></i></div>
         <ul class="boot-log mono" aria-hidden="true">
-          <li>navigation · ready</li>
-          <li>heading · set</li>
-          <li>course · plotted</li>
-          <li>crew · standing by</li>
-          <li>ready to get underway</li>
+          <li data-boot-term="bootNavigation">navigation · ready</li>
+          <li data-boot-term="bootHeading">settings · loaded</li>
+          <li data-boot-term="bootCourse">workspace · ready</li>
+          <li data-boot-term="bootCrew">agents · standing by</li>
+          <li data-boot-term="bootReady">ready to start</li>
         </ul>
       </div>
     </div>

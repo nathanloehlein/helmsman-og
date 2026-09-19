@@ -126,7 +126,7 @@ export async function publishInlineReview(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   let posting = false;
   try {
-    if (typeof repo !== 'string' || !isGithubRepo(repo) || !positive(prNumber)) throw new Error('Invalid GitHub repository or PR number');
+    if (typeof repo !== 'string' || !isGithubRepo(repo) || !positive(prNumber)) throw new Error('Invalid GitHub galleon or PR number');
     if (typeof github?.token !== 'string' || !github.token.trim()) throw new Error('GitHub token is missing');
     if (typeof body !== 'string' || !body.trim()) throw new Error('Review summary must be nonempty text');
     if (!Array.isArray(input?.comments)) throw new Error('Inline review comments must be an array');

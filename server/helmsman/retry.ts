@@ -37,14 +37,14 @@ export function launchIntentJson(body: LaunchIntent): string {
 
 export function retryIntent(row: RunRow): LaunchIntent {
   if (row.status !== 'failed') throw new RetryError('Only failed voyages can be retried.');
-  if (!isGithubRepo(row.repo)) throw new RetryError('The original repository is invalid. Start a new voyage with a valid repository.');
+  if (!isGithubRepo(row.repo)) throw new RetryError('The original galleon is invalid. Start a new voyage with a valid galleon.');
   const saved = parsedRecord(row.launchJson);
   const task = parsedRecord(row.taskJson);
   if (row.launchJson && !saved || row.taskJson && !task && !saved) {
     throw new RetryError('The original voyage metadata is unreadable. Start a new voyage with its requirements.');
   }
   const source = saved ?? task;
-  if (source?.repo !== undefined && source.repo !== row.repo) throw new RetryError('The saved repository does not match this voyage. Start a new voyage.');
+  if (source?.repo !== undefined && source.repo !== row.repo) throw new RetryError('The saved galleon does not match this voyage. Start a new voyage.');
   const adapter = row.adapter.replace(/^pre-pr:/, '');
   if (adapter !== 'codex' && adapter !== 'claude-code' && adapter !== 'command') throw new RetryError('The original agent provider is unavailable. Start a new voyage with a configured provider.');
   const model = validModel(typeof task?.model === 'string' ? task.model : typeof source?.model === 'string' ? source.model : null);

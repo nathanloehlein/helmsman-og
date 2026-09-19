@@ -22,10 +22,12 @@
 .slack-notification.is-unread { border-left-color: var(--accent); background: var(--face-2); }
 .slack-notification-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .slack-status { font-size: 12px; color: var(--queued); }
-.slack-status--launched { color: var(--good); }
+.slack-status--launched, .slack-status--succeeded { color: var(--good); }
+.slack-status--stopped { color: var(--text-dim); }
 .slack-status--failed, .slack-status--blocked, .slack-error, .slack-action-error { color: var(--bad); }
 .slack-notification time { color: var(--text-faint); font-size: 10px; white-space: nowrap; }
 .slack-pr { margin-top: 7px; overflow-wrap: anywhere; font: 11px var(--mono); }
+.slack-voyage-title { margin-top: 7px; color: var(--text); overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
 .slack-popover a { color: var(--text); text-underline-offset: 3px; }
 .slack-popover a:hover { color: var(--accent); }
 .slack-author { margin-top: 5px; font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }

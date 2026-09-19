@@ -97,7 +97,7 @@ export function createSlackWatcher(options: SlackWatcherOptions): SlackWatcher {
         }
         const repo = allowed.get(notification.repo.toLowerCase());
         if (!repo) {
-          store.updateNotification(notification.id, 'blocked', now(), `Repository ${notification.repo} is not configured`);
+          store.updateNotification(notification.id, 'blocked', now(), `Galleon ${notification.repo} is not configured`);
           continue;
         }
         if (!options.canLaunch(repo)) continue;

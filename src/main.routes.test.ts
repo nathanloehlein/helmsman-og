@@ -75,6 +75,30 @@ afterEach(() => {
 });
 
 describe('URL navigation', () => {
+  it.each([
+    ['/prs', 'org/a'], ['/runs', 'org/a'], ['/prs', null], ['/runs', null],
+  ] as const)('retains header scope %s %j after a panel override and reload', async (path, selectedRepo) => {
+    const initial = await setup(`${path}${selectedRepo ? `?repo=${encodeURIComponent(selectedRepo)}` : ''}`);
+    const input = initial.root.querySelector<HTMLInputElement>('.pr-lookup-input');
+    expect(input).not.toBeNull();
+    input!.value = 'org/b#42';
+    initial.root.querySelector<HTMLButtonElement>('.pr-lookup-go')?.click();
+    await vi.waitFor(() => expect(initial.root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/b'));
+    expect(initial.root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe(selectedRepo ?? '');
+    const url = new URL(window.location.href);
+    expect(url.searchParams.get('repo')).toBe(selectedRepo);
+    expect(url.searchParams.get('prRepo')).toBe('org/b');
+    expect(url.searchParams.get('pr')).toBe('42');
+
+    initial.view.destroy();
+    document.body.innerHTML = '<div id="app"></div>';
+    const reloaded = await setup(url.pathname + url.search);
+    expect(reloaded.root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe(selectedRepo ?? '');
+    expect(reloaded.root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/b');
+    expect(reloaded.root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-number')).toBe('42');
+    expect(reloaded.requests.every(({ method }) => method === 'GET')).toBe(true);
+  });
+
   it('opens a directly linked PR and its diff with matching repository scope', async () => {
     const { root, requests } = await setup('/prs?repo=org/a&pr=11&pane=diff');
     expect(root.querySelector('[data-page="prs"]')).not.toBeNull();
@@ -84,8 +108,14 @@ describe('URL navigation', () => {
     for (const pathname of ['/api/pr', '/api/pr/diff']) {
       expect(requests.some(({ url }) => url.pathname === pathname && url.searchParams.get('repo') === 'org/a' && url.searchParams.get('number') === '11')).toBe(true);
     }
-    expect(document.title).toBe('PR · Helmsman');
+    expect(document.title).toBe('Bounties · Helmsman');
     expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+  });
+
+  it('shows a directly linked galleon in the selector even before discovery includes it', async () => {
+    const { root } = await setup('/prs?repo=org/external&pr=11');
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/external');
+    expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/external');
   });
 
   it.each(['review', 'rerun'])('prefills the %s action without launching a voyage', async (mode) => {

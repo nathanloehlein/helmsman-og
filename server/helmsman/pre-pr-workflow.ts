@@ -2,6 +2,8 @@ import type { AgentTask } from './agents/adapter';
 
 export type PrePrReviewerId = 'codex' | 'claude-code';
 
+export const PRE_PR_REVIEW_SUMMARY_LIMIT = 2000;
+
 export interface PrePrSnapshot {
   baseSha: string;
   headSha: string;
@@ -24,10 +26,19 @@ export interface PrePrReview {
   findings: PrePrFinding[];
 }
 
+export interface PrePrResumeCheckpoint {
+  baseSha: string;
+  headSha: string;
+  branch: string;
+  round: number;
+  reviews: Array<{ reviewer: string; report: unknown }>;
+}
+
 export interface PrePrOptions {
   writerId: PrePrReviewerId;
   reviewerIds: string[];
   maxRounds?: number;
+  resume?: PrePrResumeCheckpoint;
   snapshot(): Promise<PrePrSnapshot>;
   runAuthor(stage: 'implement' | 'fix', context: { baseSha: string; feedback?: string; round: number }): Promise<void>;
   review(reviewerId: string, context: { baseSha: string; headSha: string; round: number }): Promise<unknown>;
@@ -40,6 +51,18 @@ export class PrePrGateError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(`Pre-PR gate: ${message}`, options);
     this.name = 'PrePrGateError';
+  }
+}
+
+export class PrePrSummaryTooLongError extends PrePrGateError {
+  readonly report: PrePrReview;
+  readonly actualLength: number;
+
+  constructor(report: PrePrReview, actualLength: number) {
+    super(`review summary contains ${actualLength} characters; the limit is ${PRE_PR_REVIEW_SUMMARY_LIMIT}. Publication blocked.`);
+    this.name = 'PrePrSummaryTooLongError';
+    this.report = report;
+    this.actualLength = actualLength;
   }
 }
 
@@ -63,7 +86,7 @@ function validPath(value: unknown): value is string {
 export function parsePrePrReview(value: unknown, expected: { baseSha: string; headSha: string }): PrePrReview {
   if (!record(value) || !validSha(value.baseSha) || !validSha(value.headSha)
     || typeof value.verdict !== 'string' || !['APPROVE', 'REQUEST_CHANGES', 'COMMENT'].includes(value.verdict)
-    || !validText(value.summary, 2000) || !Array.isArray(value.findings) || value.findings.length > 40) {
+    || !validText(value.summary, Infinity) || !Array.isArray(value.findings) || value.findings.length > 40) {
     throw new PrePrGateError('review report is missing or malformed; publication blocked.');
   }
   if (value.baseSha !== expected.baseSha || value.headSha !== expected.headSha) {
@@ -83,8 +106,20 @@ export function parsePrePrReview(value: unknown, expected: { baseSha: string; he
     || (value.verdict === 'REQUEST_CHANGES' && findings.length === 0)) {
     throw new PrePrGateError('review verdict contradicts its findings; publication blocked.');
   }
-  return { baseSha: value.baseSha, headSha: value.headSha, verdict: value.verdict as PrePrReview['verdict'],
+  const report: PrePrReview = { baseSha: value.baseSha, headSha: value.headSha, verdict: value.verdict as PrePrReview['verdict'],
     summary: value.summary.trim(), findings };
+  if (value.summary.length > PRE_PR_REVIEW_SUMMARY_LIMIT) throw new PrePrSummaryTooLongError(report, value.summary.length);
+  return report;
+}
+
+export function assertReviewSummaryCorrection(original: PrePrReview, corrected: PrePrReview): void {
+  if (original.baseSha !== corrected.baseSha || original.headSha !== corrected.headSha || original.verdict !== corrected.verdict
+    || original.findings.length !== corrected.findings.length || original.findings.some((finding, index) => {
+      const other = corrected.findings[index];
+      return !other || finding.title !== other.title || finding.body !== other.body || finding.path !== other.path || finding.line !== other.line;
+    })) {
+    throw new PrePrGateError('summary correction changed the reviewed revision, verdict, or findings; publication blocked.');
+  }
 }
 
 function feedbackFor(reviews: Array<{ reviewer: string; report: PrePrReview }>): string {
@@ -148,19 +183,41 @@ export async function runPrePrWorkflow(task: AgentTask, options: PrePrOptions): 
     assertBranch(current);
     if (current.headSha !== expected.headSha) throw new PrePrGateError('code changed after review started; publication blocked.');
   };
-  options.onPhase('Implementing changes before adversarial review');
-  await invoke('implementation', () => options.runAuthor('implement', { baseSha: initial.baseSha, round: 0 }));
-  let revision = await snapshot();
-  assertBranch(revision);
-  if (revision.headSha === initial.headSha || revision.headSha === initial.baseSha) {
-    throw new PrePrGateError('implementation produced no new committed changes.');
+  let revision = initial;
+  let firstRound = 1;
+  let savedReviews: Map<string, PrePrReview> | undefined;
+  if (options.resume !== undefined) {
+    const checkpoint = options.resume;
+    if (!record(checkpoint) || !validSha(checkpoint.baseSha) || !validSha(checkpoint.headSha)
+      || !validText(checkpoint.branch, 255) || !Number.isInteger(checkpoint.round) || checkpoint.round < 1 || checkpoint.round > maxRounds
+      || !Array.isArray(checkpoint.reviews) || checkpoint.reviews.length !== options.reviewerIds.length
+      || checkpoint.reviews.some(entry => !record(entry) || typeof entry.reviewer !== 'string' || !options.reviewerIds.includes(entry.reviewer))
+      || new Set(checkpoint.reviews.map(entry => entry.reviewer)).size !== options.reviewerIds.length) {
+      throw new PrePrGateError('resume checkpoint is malformed or does not contain every selected reviewer; publication blocked.');
+    }
+    if (checkpoint.baseSha !== initial.baseSha || checkpoint.headSha !== initial.headSha || checkpoint.branch !== initial.branch
+      || checkpoint.headSha === checkpoint.baseSha) {
+      throw new PrePrGateError('resume checkpoint does not match the current committed revision and branch; publication blocked.');
+    }
+    savedReviews = new Map(checkpoint.reviews.map(({ reviewer, report }) => [reviewer, parsePrePrReview(report, initial)]));
+    firstRound = checkpoint.round;
+    options.onPhase(`Resuming completed adversarial review round ${firstRound}/${maxRounds}`);
+  } else {
+    options.onPhase('Implementing changes before adversarial review');
+    await invoke('implementation', () => options.runAuthor('implement', { baseSha: initial.baseSha, round: 0 }));
+    revision = await snapshot();
+    assertBranch(revision);
+    if (revision.headSha === initial.headSha || revision.headSha === initial.baseSha) {
+      throw new PrePrGateError('implementation produced no new committed changes.');
+    }
   }
-  for (let round = 1; round <= maxRounds; round++) {
+  for (let round = firstRound; round <= maxRounds; round++) {
     const reviews: Array<{ reviewer: string; report: PrePrReview }> = [];
     for (const reviewer of options.reviewerIds) {
       checkStopped();
-      options.onPhase(`Adversarial review ${round}/${maxRounds}: ${reviewer}`);
-      const report = parsePrePrReview(await invoke(`${reviewer} review`, () => options.review(reviewer,
+      const saved = round === firstRound ? savedReviews?.get(reviewer) : undefined;
+      if (!saved) options.onPhase(`Adversarial review ${round}/${maxRounds}: ${reviewer}`);
+      const report = saved ?? parsePrePrReview(await invoke(`${reviewer} review`, () => options.review(reviewer,
         { baseSha: initial.baseSha, headSha: revision.headSha, round })), revision);
       await assertUnchanged(revision);
       if (report.verdict === 'COMMENT') throw new PrePrGateError(`${reviewer} did not approve or provide actionable change requests; publication blocked. ${report.summary}`);

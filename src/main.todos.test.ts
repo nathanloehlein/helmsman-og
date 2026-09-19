@@ -163,6 +163,54 @@ describe('todo workflow', () => {
     await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('.newrun-mode[value=freeform]')?.checked).toBe(true));
   });
 
+  it('follows the header repository for a new todo after its title has been drafted', async () => {
+    const { root, view, writes, fill, submit } = await setup({ items: [] });
+    fill('title', 'Keep the drafted title');
+    fill('description', 'Use the currently selected repository.');
+    const header = root.querySelector<HTMLSelectElement>('.repo-select')!;
+    header.value = 'org/b';
+    header.dispatchEvent(new Event('change', { bubbles: true }));
+    await view.refresh();
+    await vi.waitFor(() => expect(root.querySelector<HTMLInputElement>('[data-todo-form] [name=repo]')?.value).toBe('org/b'));
+    expect(root.querySelector<HTMLInputElement>('[data-todo-form] [name=title]')?.value).toBe('Keep the drafted title');
+    submit();
+    await vi.waitFor(() => expect(writes).toContainEqual(expect.objectContaining({
+      path: '/api/todos', method: 'POST', body: expect.objectContaining({ repo: 'org/b', title: 'Keep the drafted title' }),
+    })));
+  });
+
+  it('preserves an explicit new-todo repository override when the header changes', async () => {
+    const { root, view, writes, fill, submit } = await setup({ items: [] });
+    fill('title', 'Keep the explicit target');
+    fill('description', 'This task belongs to repository A.');
+    fill('repo', 'org/a');
+    const header = root.querySelector<HTMLSelectElement>('.repo-select')!;
+    header.value = 'org/b';
+    header.dispatchEvent(new Event('change', { bubbles: true }));
+    await view.refresh();
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/b');
+    expect(root.querySelector<HTMLInputElement>('[data-todo-form] [name=repo]')?.value).toBe('org/a');
+    submit();
+    await vi.waitFor(() => expect(writes).toContainEqual(expect.objectContaining({
+      path: '/api/todos', method: 'POST', body: expect.objectContaining({ repo: 'org/a', title: 'Keep the explicit target' }),
+    })));
+  });
+
+  it('keeps an edited todo assigned to its saved repository when the header changes', async () => {
+    const { root, view, writes, click, fill, submit } = await setup();
+    click('[data-todo-edit=TODO-1]');
+    fill('title', 'Edited in repository A');
+    const header = root.querySelector<HTMLSelectElement>('.repo-select')!;
+    header.value = 'org/b';
+    header.dispatchEvent(new Event('change', { bubbles: true }));
+    await view.refresh();
+    expect(root.querySelector<HTMLInputElement>('[data-todo-form] [name=repo]')?.value).toBe('org/a');
+    submit();
+    await vi.waitFor(() => expect(writes).toContainEqual(expect.objectContaining({
+      path: '/api/todos/TODO-1', method: 'PUT', body: expect.objectContaining({ repo: 'org/a', title: 'Edited in repository A' }),
+    })));
+  });
+
   it('creates and edits a todo with its voyage details', async () => {
     const { root, writes, fill, submit, click } = await setup({ items: [] });
     fill('title', 'Improve keyboard navigation');

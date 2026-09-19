@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helmsman voyage flow</title>
+<style>
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #183248; background: #eef3f7; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1280px; margin: 32px auto; padding: 32px 28px; background: #fff; border: 1px solid #d8e2eb; border-radius: 20px; }
+h1 { font-size: clamp(26px, 3vw, 38px); margin: 0 0 10px; letter-spacing: -.025em; }
+.subtitle { margin: 0; color: #486174; font-size: 17px; line-height: 1.5; }
+.defaults { display: flex; flex-wrap: wrap; gap: 10px; list-style: none; padding: 0; margin: 24px 0 14px; }
+.defaults li { background: #edf5fd; border: 1px solid #c8ddec; border-radius: 8px; padding: 10px 14px; font-size: 15px; }
+a { color: #126297; text-underline-offset: 3px; }
+.toolbar { margin: 0 0 20px; font-size: 14px; color: #486174; }
+.diagram { overflow-x: auto; border: 1px solid #dbe5ed; border-radius: 12px; background: #fcfdff; }
+svg { display: block; width: 100%; min-width: 0; height: auto; }
+.node rect { fill: #fff; stroke: #8ba2b6; stroke-width: 1.7; }
+.node-title { font-size: 18px; font-weight: 650; fill: #19394e; }
+.node-detail { font-size: 15.5px; fill: #355269; }
+.start rect, .gate rect { fill: #173e5b; stroke: #173e5b; }
+.start text, .gate text { fill: #fff; }
+.source rect, .review rect { fill: #edf6ff; stroke: #7da9cf; }
+.success rect { fill: #eff9f5; stroke: #75a791; }
+.stop rect { fill: #fff3f2; stroke: #c89391; }
+.edge { fill: none; stroke: #526d86; stroke-width: 1.8; }
+.edge-label { fill: #304f67; font-size: 13px; font-weight: 600; paint-order: stroke; stroke: #fcfdff; stroke-width: 5px; stroke-linejoin: round; }
+.notes { margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; }
+.notes h2 { font-size: 17px; margin: 0 0 7px; }
+.notes p { font-size: 14px; line-height: 1.6; margin: 0; color: #486174; }
+footer { font-size: 13px; color: #587082; margin-top: 24px; }
+@media (max-width: 700px) { main { margin: 0; padding: 24px 16px; border: 0; border-radius: 0; } .notes { grid-template-columns: 1fr; } }
+@media print { @page { size: A3 portrait; margin: 10mm; } body { background: #fff; } main { margin: 0; padding: 0; max-width: none; border: 0; } h1 { font-size: 24px; } .subtitle { font-size: 13px; } .defaults { margin: 12px 0; } .defaults li { padding: 6px 9px; font-size: 12px; } .toolbar { display: none; } .diagram { overflow: visible; border: 0; } svg { min-width: 0; width: 100%; max-height: 295mm; } .notes { margin-top: 12px; gap: 12px; } .notes h2 { font-size: 12px; } .notes p, footer { font-size: 10px; } * { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Helmsman voyage flow</h1>
+<p class="subtitle">From a task in your selected galleon to an approved commit, a published PR, and follow-up reviews.</p>
+<ul class="defaults" aria-label="Default settings">
+<li><strong>2</strong> desired reviewer CLIs</li><li><strong>3</strong> review rounds</li><li><strong>45 min</strong> per agent session</li>
+</ul>
+<p class="toolbar">Defaults shown; live configuration may differ. <a href="helmsman-process.md">Mermaid source and full notes</a> · Works offline · Print or save as PDF from your browser.</p>
+</header>
+<div class="diagram">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1970" role="img" aria-labelledby="diagram-title diagram-desc">
+<title id="diagram-title">Helmsman voyage from task selection to published PR and follow-up reviews</title>
+<desc id="diagram-desc">Select a galleon and task source, prepare a managed worktree, implement and commit. Review leads run sequentially. Validate reports, correct an oversized summary once, and fix findings within the review-round limit. After all reviewers approve, push the exact commit, verify it, and create the PR. Finish with Jira and Copilot actions and a queued Helmsman review. Failure blocks publication and preserves work.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#526d86"/></marker></defs>
+<path d="M600 85 V115" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 180 V205 H200 V230" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 180 V230" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 180 V205 H1000 V230" class="edge " marker-end="url(#arrow)"/>
+<path d="M200 315 V340 H600 V365" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 315 V365" class="edge " marker-end="url(#arrow)"/>
+<path d="M1000 315 V340 H600" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 430 V460" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 575 V605" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 700 V735" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 880 V900" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 995 V1070" class="edge " marker-end="url(#arrow)"/>
+<text x="660" y="1035" text-anchor="middle" class="edge-label">Valid report</text>
+<path d="M825 944 H885" class="edge " marker-end="url(#arrow)"/>
+<text x="855" y="930" text-anchor="middle" class="edge-label">Too long</text>
+<path d="M885 995 H850 V1048 H745 V1070" class="edge " marker-end="url(#arrow)"/>
+<text x="950" y="1045" text-anchor="middle" class="edge-label">Corrected + valid</text>
+<path d="M375 944 H310" class="edge " marker-end="url(#arrow)"/>
+<text x="344" y="930" text-anchor="middle" class="edge-label">Invalid</text>
+<path d="M375 1120 H310" class="edge " marker-end="url(#arrow)"/>
+<text x="343" y="1105" text-anchor="middle" class="edge-label">Blocked</text>
+<path d="M825 1120 H885" class="edge " marker-end="url(#arrow)"/>
+<text x="855" y="1105" text-anchor="middle" class="edge-label">Fixable</text>
+<path d="M1025 1205 V1235 H1182 V717 H660 V735" class="edge " marker-end="url(#arrow)"/>
+<text x="1010" y="706" text-anchor="middle" class="edge-label">New commit → fresh reviews</text>
+<path d="M600 1170 V1265" class="edge " marker-end="url(#arrow)"/>
+<text x="600" y="1225" text-anchor="middle" class="edge-label">All approve · no findings</text>
+<path d="M600 1360 V1390" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 1480 V1510" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 1605 V1640" class="edge " marker-end="url(#arrow)"/>
+<path d="M600 1780 V1810" class="edge " marker-end="url(#arrow)"/>
+<g class="node start"><rect x="470" y="25" width="260" height="60" rx="14"/>
+<text x="600.0" y="54" text-anchor="middle" class="node-title">User</text>
+</g>
+<g class="node normal"><rect x="390" y="115" width="420" height="65" rx="14"/>
+<text x="600.0" y="144" text-anchor="middle" class="node-title">1 · Select galleon</text>
+</g>
+<g class="node source"><rect x="50" y="230" width="300" height="85" rx="14"/>
+<text x="200.0" y="259" text-anchor="middle" class="node-title">Jira ticket</text>
+<text x="200.0" y="285" text-anchor="middle" class="node-detail">Jira enabled</text>
+</g>
+<g class="node source"><rect x="450" y="230" width="300" height="85" rx="14"/>
+<text x="600.0" y="259" text-anchor="middle" class="node-title">Freeform task</text>
+<text x="600.0" y="285" text-anchor="middle" class="node-detail">Direct task requirements</text>
+</g>
+<g class="node source"><rect x="850" y="230" width="300" height="85" rx="14"/>
+<text x="1000.0" y="259" text-anchor="middle" class="node-title">Local todo</text>
+<text x="1000.0" y="285" text-anchor="middle" class="node-detail">Jira disabled</text>
+</g>
+<g class="node normal"><rect x="390" y="365" width="420" height="65" rx="14"/>
+<text x="600.0" y="394" text-anchor="middle" class="node-title">2 · Launch voyage</text>
+</g>
+<g class="node normal"><rect x="375" y="460" width="450" height="115" rx="14"/>
+<text x="600.0" y="489" text-anchor="middle" class="node-title">3 · Prepare context and worktree</text>
+<text x="600.0" y="515" text-anchor="middle" class="node-detail">Load task requirements; managed branch</text>
+<text x="600.0" y="538" text-anchor="middle" class="node-detail">Validate clean checkout, base, remote</text>
+<text x="600.0" y="561" text-anchor="middle" class="node-detail">and installed writer CLI</text>
+</g>
+<g class="node normal"><rect x="375" y="605" width="450" height="95" rx="14"/>
+<text x="600.0" y="634" text-anchor="middle" class="node-title">4 · Writer implements</text>
+<text x="600.0" y="660" text-anchor="middle" class="node-detail">Run checks and commit locally</text>
+<text x="600.0" y="683" text-anchor="middle" class="node-detail">Write PR metadata; no publication yet</text>
+</g>
+<g class="node review"><rect x="375" y="735" width="450" height="145" rx="14"/>
+<text x="600.0" y="764" text-anchor="middle" class="node-title">5 · Review the pinned committed diff</text>
+<text x="600.0" y="790" text-anchor="middle" class="node-detail">Sequential leads: writer CLI → alternate</text>
+<text x="600.0" y="813" text-anchor="middle" class="node-detail">Fresh detached worktree for each lead</text>
+<text x="600.0" y="836" text-anchor="middle" class="node-detail">Prompts request focused sub-agents</text>
+<text x="600.0" y="859" text-anchor="middle" class="node-detail">Independent scopes may run concurrently</text>
+</g>
+<g class="node review"><rect x="375" y="900" width="450" height="95" rx="14"/>
+<text x="600.0" y="929" text-anchor="middle" class="node-title">6 · Validate each report</text>
+<text x="600.0" y="955" text-anchor="middle" class="node-detail">JSON, exact SHA, verdict and findings</text>
+<text x="600.0" y="978" text-anchor="middle" class="node-detail">Reviewer and author revisions unchanged</text>
+</g>
+<g class="node review"><rect x="885" y="880" width="280" height="140" rx="14"/>
+<text x="1025.0" y="909" text-anchor="middle" class="node-title">Summary-only correction</text>
+<text x="1025.0" y="935" text-anchor="middle" class="node-detail">Otherwise valid; &gt;2,000 chars</text>
+<text x="1025.0" y="958" text-anchor="middle" class="node-detail">One attempt per report</text>
+<text x="1025.0" y="981" text-anchor="middle" class="node-detail">Revalidate; retain findings/verdict</text>
+<text x="1025.0" y="1004" text-anchor="middle" class="node-detail">Original report stays saved</text>
+</g>
+<g class="node stop"><rect x="30" y="900" width="280" height="285" rx="14"/>
+<text x="170.0" y="929" text-anchor="middle" class="node-title">Stop · preserve work</text>
+<text x="170.0" y="955" text-anchor="middle" class="node-detail">Malformed or stale report</text>
+<text x="170.0" y="978" text-anchor="middle" class="node-detail">Changed worktree / revision</text>
+<text x="170.0" y="1001" text-anchor="middle" class="node-detail">Failed summary correction</text>
+<text x="170.0" y="1024" text-anchor="middle" class="node-detail">COMMENT / incomplete review</text>
+<text x="170.0" y="1047" text-anchor="middle" class="node-detail">Findings at final review round</text>
+<text x="170.0" y="1093" text-anchor="middle" class="node-detail">Any stage or publication failure</text>
+<text x="170.0" y="1116" text-anchor="middle" class="node-detail">also stops the flow.</text>
+<text x="170.0" y="1139" text-anchor="middle" class="node-detail">No automatic voyage restart.</text>
+</g>
+<g class="node gate"><rect x="375" y="1070" width="450" height="100" rx="14"/>
+<text x="600.0" y="1099" text-anchor="middle" class="node-title">7 · Approval gate</text>
+<text x="600.0" y="1125" text-anchor="middle" class="node-detail">Every selected reviewer must approve</text>
+<text x="600.0" y="1148" text-anchor="middle" class="node-detail">with no remaining findings</text>
+</g>
+<g class="node review"><rect x="885" y="1070" width="280" height="135" rx="14"/>
+<text x="1025.0" y="1099" text-anchor="middle" class="node-title">Writer fixes findings</text>
+<text x="1025.0" y="1125" text-anchor="middle" class="node-detail">REQUEST_CHANGES</text>
+<text x="1025.0" y="1148" text-anchor="middle" class="node-detail">Only when review rounds remain</text>
+<text x="1025.0" y="1171" text-anchor="middle" class="node-detail">Deduplicate findings, run checks</text>
+<text x="1025.0" y="1194" text-anchor="middle" class="node-detail">Commit a new revision</text>
+</g>
+<g class="node success"><rect x="375" y="1265" width="450" height="95" rx="14"/>
+<text x="600.0" y="1294" text-anchor="middle" class="node-title">8 · Push approved commit</text>
+<text x="600.0" y="1320" text-anchor="middle" class="node-detail">Recheck branch, base, head and clean state</text>
+<text x="600.0" y="1343" text-anchor="middle" class="node-detail">Push the exact approved SHA</text>
+</g>
+<g class="node success"><rect x="375" y="1390" width="450" height="90" rx="14"/>
+<text x="600.0" y="1419" text-anchor="middle" class="node-title">9 · Verify publication target</text>
+<text x="600.0" y="1445" text-anchor="middle" class="node-detail">Remote SHA must match approved commit</text>
+<text x="600.0" y="1468" text-anchor="middle" class="node-detail">Verify PR base and head</text>
+</g>
+<g class="node success"><rect x="375" y="1510" width="450" height="95" rx="14"/>
+<text x="600.0" y="1539" text-anchor="middle" class="node-title">10 · Create and verify PR</text>
+<text x="600.0" y="1565" text-anchor="middle" class="node-detail">Or reuse a matching existing PR</text>
+<text x="600.0" y="1588" text-anchor="middle" class="node-detail">Apply the managed author byline</text>
+</g>
+<g class="node success"><rect x="300" y="1640" width="600" height="140" rx="14"/>
+<text x="600.0" y="1669" text-anchor="middle" class="node-title">11 · Finish the creation voyage</text>
+<text x="600.0" y="1695" text-anchor="middle" class="node-detail">Queue a separate Helmsman PR review → record success</text>
+<text x="600.0" y="1718" text-anchor="middle" class="node-detail">Eligible Jira ticket → configured review status</text>
+<text x="600.0" y="1741" text-anchor="middle" class="node-detail">Request Copilot review → complete parent voyage</text>
+<text x="600.0" y="1764" text-anchor="middle" class="node-detail">Queue / Copilot request failures are non-fatal</text>
+</g>
+<g class="node success"><rect x="300" y="1810" width="600" height="145" rx="14"/>
+<text x="600.0" y="1839" text-anchor="middle" class="node-title">12 · Run queued Helmsman review when eligible</text>
+<text x="600.0" y="1865" text-anchor="middle" class="node-detail">Wait for parent completion, capacity and GitHub availability</text>
+<text x="600.0" y="1888" text-anchor="middle" class="node-detail">Require open, non-draft PR; pin its current head</text>
+<text x="600.0" y="1911" text-anchor="middle" class="node-detail">Reuse a matching existing review when available</text>
+<text x="600.0" y="1934" text-anchor="middle" class="node-detail">This flow does not auto-merge the PR</text>
+</g>
+</svg>
+</div>
+<section class="notes" aria-label="Flow boundaries">
+<div><h2>Review selection and concurrency</h2><p>The writer CLI is required. If the alternate CLI is unavailable, one reviewer is allowed even when two are configured. Lead sessions run sequentially; prompts request concurrent focused sub-agents, but runtime does not verify delegation.</p></div>
+<div><h2>Round and session limits</h2><p>Configuration allows 1–2 reviewers, 1–5 rounds, and 5–180 minutes per session. Summary correction gets one separate session per report and does not use another review round. The 2,000-character limit uses JavaScript string length, including whitespace and bylines.</p></div>
+<div><h2>Resume preserved work</h2><p>A valid checkpoint skips implementation and reuses the original reports for its saved review round. The current branch, base, head, and complete reviewer set must match. Oversized saved summaries can use the same correction step.</p></div>
+<div><h2>Publication and follow-up boundaries</h2><p>Pre-PR voyages have one outer attempt. Failures preserve work; a push may already have happened if a later publication check fails. Jira transitions apply to eligible Jira tasks, not todos or freeform tasks. The separate Helmsman review waits for availability and may reuse an existing review of the current head.</p></div>
+</section>
+<footer>Static SVG diagram · No external scripts, fonts, or network dependencies.</footer>
+</main>
+</body>
+</html>

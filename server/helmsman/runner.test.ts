@@ -106,6 +106,31 @@ function deps(db: Db, adapter: AgentAdapter, host: RunHost, runsDir: string): Ru
 }
 
 describe('startRun', () => {
+  it('persists final bytes consumed after exit before the log tail next polls', async () => {
+    vi.useFakeTimers();
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const line = JSON.stringify({ kind: 'error', text: 'Échec final', costUsd: 0.25 });
+      const host: RunHost = {
+        ...singleAttemptHost([], false),
+        launch: async spec => {
+          writeFileSync(spec.logPath, '');
+          setTimeout(() => {
+            appendFileSync(spec.logPath, line);
+            writeFileSync(spec.exitPath, '1');
+          }, 10);
+          return { kind: 'detached', pid: 1 };
+        },
+      };
+      const running = startRun(task, { ...deps(db, jsonAdapter(), host, runsDir), preserveWorktreeOnFailure: true });
+      await vi.advanceTimersByTimeAsync(20);
+      const id = await running;
+      expect(db.getRun(id)).toMatchObject({ status: 'failed', costUsd: 0.25, logOffset: Buffer.byteLength(line) });
+      expect(db.listEvents(id).filter(event => event.text === 'Échec final')).toHaveLength(1);
+    } finally { db.close(); vi.useRealTimers(); }
+  });
+
   it('retains original launch intent when worktree preparation fails before agent execution', async () => {
     const db = openDb(':memory:');
     try {
@@ -960,6 +985,28 @@ describe('reattachRun', () => {
       hostKind: 'detached', hostRef: JSON.stringify({ kind: 'detached', pid: 1 }),
     };
   }
+
+  it('persists recovered exit-log bytes so a subsequent attachment does not replay costs or events', async () => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const prefix = JSON.stringify({ kind: 'result', text: 'Already consumed', costUsd: 1 }) + '\n';
+      const final = JSON.stringify({ kind: 'error', text: 'Dernière erreur', costUsd: 0.25 });
+      const row = { ...baseRow(runsDir), costUsd: 1, logOffset: Buffer.byteLength(prefix) };
+      writeFileSync(row.logPath!, prefix + final);
+      writeFileSync(row.exitPath!, '1');
+      db.insertRun(row);
+      const d = { ...deps(db, jsonAdapter(), fakeHost(() => ({ events: [], ok: false })), runsDir), preserveWorktreeOnFailure: true };
+      await reattachRun(row, d);
+      const updated = db.getRun(row.id);
+      expect(updated).toMatchObject({ status: 'failed', costUsd: 1.25, logOffset: Buffer.byteLength(prefix + final) });
+      expect(updated).not.toBeNull();
+      await reattachRun(updated!, d);
+      expect(db.getRun(row.id)?.costUsd).toBe(1.25);
+      expect(db.listEvents(row.id).filter(event => event.text === 'Dernière erreur')).toHaveLength(1);
+      expect(db.listEvents(row.id).some(event => event.text === 'Already consumed')).toBe(false);
+    } finally { db.close(); }
+  });
 
   it('retains failed gated work after recovery without relaunching the author', async () => {
     const db = openDb(':memory:');
