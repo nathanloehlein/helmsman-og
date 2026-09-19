@@ -38,6 +38,7 @@ import { jiraTask } from './jira-task';
 import { launchIntentJson, RetryError, type LaunchIntent } from './retry';
 import { createBridge } from './cmux/bridge';
 import { openSlackStore } from './slack/store';
+import { openVoyageNotifications } from './voyage-notifications';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { createSlackBrowserReader } from './slack/browser';
 import { createSlackBrowserReviewSender } from './slack/browser-review';
@@ -64,6 +65,7 @@ const db = openDb(dbPath);
 const todos = openTodoStore(dbPath);
 reconcileTodoRuns(todos, db);
 const slackStore = openSlackStore(dbPath);
+const voyageNotifications = openVoyageNotifications(dbPath);
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
@@ -444,7 +446,7 @@ function slackSnapshot(): SlackState {
       lastSuccessAt: null, error: settings.error,
     },
     githubHealth: githubReviewWatcher.health(),
-    notifications: slackStore.listNotifications().map((notification) => {
+    notifications: [...slackStore.listNotifications().map((notification) => {
       const run = notification.runId ? db.getRun(notification.runId) : null;
       let task: Partial<AgentTask> | null = null;
       try {
@@ -453,7 +455,7 @@ function slackSnapshot(): SlackState {
       } catch { task = null; }
       return { ...notification, runId: run?.id ?? null,
         model: task?.model ?? null, effort: task?.effort ?? null, complexity: task?.reviewComplexity ?? null };
-    }),
+    }), ...voyageNotifications.listNotifications()].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || b.id.localeCompare(a.id)),
   };
 }
 
@@ -534,7 +536,10 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
           jiraBaseUrl: cfg.jira?.baseUrl ?? null,
         };
       },
-      slack: { snapshot: slackSnapshot, markRead: (id) => slackStore.markRead(id, new Date().toISOString()) },
+      slack: { snapshot: slackSnapshot, markRead: (id) => {
+        const now = new Date().toISOString();
+        return id.startsWith('voyage-') ? voyageNotifications.markRead(id, now) : slackStore.markRead(id, now);
+      } },
       slackReviewRequest: (input) => slackReviewRequester.request(input),
       todos,
       jiraEnabled: () => configStore.current().jiraEnabled,

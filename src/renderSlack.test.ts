@@ -1,24 +1,80 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setPirateMode } from './logic/terminology';
 import { renderSlack } from './renderSlack';
-import { unavailableSlack, type SlackNotification } from './data/slack';
+import { unavailableSlack, type SlackNotification, type VoyageNotification } from './data/slack';
 
 const item: SlackNotification = {
   id: 'one', repo: 'org/repo', prNumber: 42, prUrl: 'https://github.com/org/repo/pull/42',
   sourceUrl: 'https://company.slack.com/archives/C123/p123456789', author: '<script>bad()</script>', channelName: 'airo-editing',
   status: 'launched', runId: 'run-42', createdAt: '2026-09-17T12:00:00Z', updatedAt: '2026-09-17T12:00:00Z', readAt: null, error: null,
 };
+const voyage: VoyageNotification = {
+  ...item, kind: 'voyage-completed', id: 'voyage-42', title: 'Fix task switching', status: 'succeeded', runId: 'run-42',
+  sourceUrl: '/runs?run=run-42', author: 'Helmsman', channelName: 'Helmsman voyages', error: null,
+};
 
 beforeEach(() => setPirateMode(true));
 afterEach(() => localStorage.removeItem('helmsman.pirateMode'));
 
 describe('Slack notification center', () => {
+  it.each([true, false])('renders completed voyage outcomes with mode-specific labels (%s)', pirate => {
+    setPirateMode(pirate);
+    const state = unavailableSlack();
+    state.notifications = (['succeeded', 'failed', 'stopped'] as const).map(status => ({
+      ...voyage, id: status, status, updatedAt: '2026-09-17T12:10:00Z',
+    }));
+    document.body.innerHTML = renderSlack(state, true, null, new Date('2026-09-17T12:15:00Z'));
+    expect([...document.querySelectorAll('.slack-status')].map(node => node.textContent)).toEqual(
+      pirate ? ['Shipshape', 'Marooned', 'Stopped'] : ['Succeeded', 'Failed', 'Stopped'],
+    );
+    expect(document.querySelector('h2')?.textContent).toBe('Notifications');
+    expect(document.querySelector('.slack-voyage-title')?.textContent).toBe(voyage.title);
+    expect(document.querySelector('.slack-author')?.textContent).toBe(`${pirate ? 'Voyage' : 'Run'} · org/repo`);
+    expect(document.querySelector('.app-link')?.textContent).toBe(pirate ? 'View voyage' : 'View run');
+    expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-09-17T12:10:00Z');
+    expect(document.querySelector('time')?.textContent).toBe('5m ago');
+    expect(document.querySelector('a[target="_blank"]')?.textContent).toBe(pirate ? 'Bounty #42' : 'PR #42');
+    expect(document.querySelectorAll('[data-slack-read]')).toHaveLength(3);
+  });
+
+  it('scopes mixed completed voyages and reviews and unread counts to the header selection', () => {
+    const state = unavailableSlack();
+    state.notifications = [item, { ...voyage, prNumber: null, prUrl: '' },
+      { ...voyage, id: 'read', readAt: voyage.createdAt }, { ...voyage, id: 'other', repo: 'org/other' }];
+    document.body.innerHTML = renderSlack(state, true, null, new Date(), 'ORG/REPO');
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 2 unread');
+    expect(document.querySelectorAll('.slack-notification')).toHaveLength(3);
+    expect(document.querySelector('[data-notification-id="other"]')).toBeNull();
+    const completed = document.querySelector('[data-notification-id="voyage-42"]');
+    expect(completed?.querySelector('.app-link')?.getAttribute('href')).toBe('/runs?repo=ORG%2FREPO&run=run-42');
+    expect(completed?.querySelector('a[target="_blank"]')).toBeNull();
+    expect(document.querySelector('[data-notification-id="read"] [data-slack-read]')).toBeNull();
+    expect(document.querySelector('[data-notification-id="read"] .slack-read')?.textContent).toBe('Read');
+  });
+
+  it('escapes completed-voyage text and ignores unsafe PR or source links', () => {
+    const state = unavailableSlack();
+    state.notifications = [{ ...voyage, title: '<img src=x onerror=bad()>', model: '<script>bad()</script>',
+      sourceUrl: 'javascript:bad()', prUrl: 'https://evil.test/org/repo/pull/42' }];
+    document.body.innerHTML = renderSlack(state, true);
+    expect(document.querySelector('img, script, a[href^="javascript:"], a[target="_blank"]')).toBeNull();
+    expect(document.querySelector('.slack-voyage-title')?.textContent).toBe('<img src=x onerror=bad()>');
+    expect(document.querySelector('.slack-routing')?.textContent).toBe('<script>bad()</script>');
+    expect(document.querySelector('.app-link')?.getAttribute('href')).toBe('/runs?run=run-42');
+  });
+
+  it('uses a general empty state for the notification center', () => {
+    document.body.innerHTML = renderSlack(unavailableSlack(), true);
+    expect(document.querySelector('.slack-popover')?.getAttribute('aria-label')).toBe('Notifications');
+    expect(document.querySelector('.slack-empty')?.textContent).toBe('No notifications yet.');
+  });
+
   it.each([true, false])('uses mode-specific labels without rewriting external notification text (%s)', pirate => {
     setPirateMode(pirate);
     const state = unavailableSlack();
     state.notifications = [{ ...item, status: 'failed', channelName: 'Helmsman created PRs', sourceUrl: '/runs?run=parent-42', error: 'PR review failed for agent in galleon', model: 'agent-review-model' }];
     document.body.innerHTML = renderSlack(state, true);
-    expect(document.querySelector('h2')?.textContent).toBe(pirate ? 'Automatic inspections' : 'Automatic reviews');
+    expect(document.querySelector('h2')?.textContent).toBe('Notifications');
     expect(document.querySelector('.slack-status')?.textContent).toBe(pirate ? 'Inspection: Marooned' : 'Review: Failed');
     expect(document.querySelector('.slack-notification-actions')?.textContent).toContain(pirate ? 'Original voyage' : 'Original run');
     expect(document.querySelector('.slack-notification .slack-error')?.textContent).toBe('PR review failed for agent in galleon');
@@ -111,7 +167,7 @@ describe('Slack notification center', () => {
     state.notifications = [{ ...item, sourceUrl: item.prUrl, channelName: 'GitHub requested reviews', model: 'gpt-5.6-sol', effort: 'medium', complexity: 'low' }];
     document.body.innerHTML = renderSlack(state, true);
     expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 1 unread');
-    expect(document.querySelector('h2')?.textContent).toBe('Automatic inspections');
+    expect(document.querySelector('h2')?.textContent).toBe('Notifications');
     const health = Array.from(document.querySelectorAll('.slack-health'));
     expect(health[0]?.textContent).toContain('Slack #airo-editing');
     expect(health[1]?.textContent).toContain('GitHub requested inspections');

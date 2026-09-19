@@ -8,6 +8,7 @@ export interface SlackHealth {
 }
 
 export interface SlackNotification {
+  kind?: 'review-request';
   id: string;
   repo: string;
   prNumber: number;
@@ -26,10 +27,21 @@ export interface SlackNotification {
   complexity?: 'low' | 'medium' | 'high' | null;
 }
 
+export interface VoyageNotification extends Omit<SlackNotification, 'kind' | 'prNumber' | 'status' | 'runId' | 'error' | 'complexity'> {
+  kind: 'voyage-completed';
+  title: string;
+  prNumber: number | null;
+  status: 'succeeded' | 'failed' | 'stopped';
+  runId: string;
+  error: null;
+}
+
+export type Notification = SlackNotification | VoyageNotification;
+
 export interface SlackState {
   health: SlackHealth;
   githubHealth?: SlackHealth;
-  notifications: SlackNotification[];
+  notifications: Notification[];
 }
 
 export const unavailableSlack = (): SlackState => ({
@@ -70,10 +82,29 @@ export function safePrUrl(value: unknown, repo: string, number: number): string 
   } catch { return null; }
 }
 
-function notification(value: unknown): SlackNotification | null {
+function voyageNotification(value: Partial<VoyageNotification>): VoyageNotification | null {
+  if (typeof value.id !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(value.id)
+    || typeof value.repo !== 'string' || !/^[a-z\d-]+\/[a-z\d_.-]+$/i.test(value.repo)
+    || ['.', '..'].includes(value.repo.split('/')[1] ?? '')
+    || typeof value.title !== 'string' || !value.title.trim()
+    || typeof value.runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(value.runId)
+    || value.sourceUrl !== `/runs?run=${value.runId}`
+    || !['succeeded', 'failed', 'stopped'].includes(value.status ?? '')
+    || typeof value.author !== 'string' || typeof value.channelName !== 'string'
+    || !timestamp(value.createdAt) || !timestamp(value.updatedAt) || !optionalTimestamp(value.readAt)
+    || value.error !== null || !optionalString(value.model) || !optionalString(value.effort)) return null;
+  if (value.prNumber === null ? value.prUrl !== ''
+    : typeof value.prNumber !== 'number' || !Number.isSafeInteger(value.prNumber) || value.prNumber < 1
+      || !safePrUrl(value.prUrl, value.repo, value.prNumber)) return null;
+  return value as VoyageNotification;
+}
+
+function notification(value: unknown): Notification | null {
   if (!value || typeof value !== 'object') return null;
+  if ('kind' in value && value.kind === 'voyage-completed') return voyageNotification(value as Partial<VoyageNotification>);
   const item = value as Partial<SlackNotification>;
-  if (typeof item.id !== 'string' || !item.id || typeof item.repo !== 'string'
+  if (item.kind !== undefined && item.kind !== 'review-request'
+    || typeof item.id !== 'string' || !item.id || typeof item.repo !== 'string'
     || !/^[a-z\d-]+\/[a-z\d_.-]+$/i.test(item.repo) || ['.', '..'].includes(item.repo.split('/')[1] ?? '')
     || typeof item.prNumber !== 'number' || !Number.isSafeInteger(item.prNumber) || item.prNumber < 1
     || !safePrUrl(item.prUrl, item.repo, item.prNumber) || typeof item.sourceUrl !== 'string'
@@ -97,7 +128,7 @@ export async function fetchSlack(): Promise<SlackState | null> {
     const health = data.health;
     if (!validHealth(health) || data.githubHealth !== undefined && !validHealth(data.githubHealth)
       || !Array.isArray(data.notifications)) return null;
-    const notifications = data.notifications.map(notification).filter((item): item is SlackNotification => item !== null);
+    const notifications = data.notifications.map(notification).filter((item): item is Notification => item !== null);
     return {
       health: notifications.length === data.notifications.length ? health : { ...health, status: 'partial', error: 'Some notifications could not be loaded.' },
       ...(data.githubHealth ? { githubHealth: data.githubHealth } : {}),

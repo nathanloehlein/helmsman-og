@@ -1,4 +1,4 @@
-import { safePrUrl, safeSlackUrl, type SlackHealth, type SlackNotification, type SlackState } from './data/slack';
+import { safePrUrl, safeSlackUrl, type Notification, type SlackHealth, type SlackNotification, type SlackState, type VoyageNotification } from './data/slack';
 import { escapeHtml as esc } from './logic/html';
 import { routeHref } from './logic/routes';
 import { term } from './logic/terminology';
@@ -10,7 +10,25 @@ const labels = (): Record<SlackNotification['status'], string> => ({
   failed: `${term('review')}: ${term('failed')}`, blocked: `${term('review')} blocked`,
 });
 
-function renderNotification(item: SlackNotification, now: Date, selectedRepo: string | null): string {
+function renderVoyageNotification(item: VoyageNotification, now: Date, selectedRepo: string | null): string {
+  const prUrl = item.prNumber !== null ? safePrUrl(item.prUrl, item.repo, item.prNumber) : null;
+  const status = item.status === 'succeeded' ? term('success') : item.status === 'failed' ? term('failed') : term('stopped');
+  const routing = [item.model, item.effort ? `${item.effort} effort` : null].filter(Boolean).join(' · ');
+  return `<li class="slack-notification slack-voyage-notification${item.readAt ? '' : ' is-unread'}" data-notification-id="${esc(item.id)}">
+    <div class="slack-notification-top"><strong class="slack-status slack-status--${item.status}">${status}</strong><time datetime="${esc(item.updatedAt)}" title="${esc(new Date(item.updatedAt).toLocaleString())}">${esc(formatRelativeTime(item.updatedAt, now))}</time></div>
+    <div class="slack-voyage-title">${esc(item.title)}</div>
+    <div class="slack-author">${term('run')} · ${esc(item.repo)}</div>
+    ${routing ? `<div class="slack-routing" aria-label="${term('run')} model selection">${esc(routing)}</div>` : ''}
+    <div class="slack-notification-actions">
+      <a class="app-link" href="${esc(routeHref({ view: 'runs', repo: selectedRepo, run: item.runId }))}">View ${term('run').toLowerCase()}</a>
+      ${prUrl ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer">${term('pr')} #${item.prNumber}</a>` : ''}
+      ${item.readAt ? '<span class="slack-read">Read</span>' : `<button type="button" data-slack-read="${esc(item.id)}">Mark read</button>`}
+    </div>
+  </li>`;
+}
+
+function renderNotification(item: Notification, now: Date, selectedRepo: string | null): string {
+  if (item.kind === 'voyage-completed') return renderVoyageNotification(item, now, selectedRepo);
   const slackSource = safeSlackUrl(item.sourceUrl);
   const source = slackSource ?? safePrUrl(item.sourceUrl, item.repo, item.prNumber);
   const prUrl = safePrUrl(item.prUrl, item.repo, item.prNumber);
@@ -48,11 +66,11 @@ export function renderSlack(state: SlackState, open: boolean, error: string | nu
   return `<button type="button" class="slack-toggle${unread ? ' has-unread' : ''}" data-slack-toggle aria-expanded="${open}" aria-controls="slack-notifications" aria-label="Notifications, ${unread} unread">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8a5 5 0 0 1 10 0v4l2 3H3l2-3zM8 17h4"/></svg>${unread ? `<span class="slack-count" aria-hidden="true">${unread}</span>` : ''}
   </button>
-  <section id="slack-notifications" class="slack-popover" aria-label="Automatic ${term('review').toLowerCase()} notifications"${open ? '' : ' hidden'}>
-    <div class="slack-popover-head"><h2>Automatic ${term('reviews').toLowerCase()}</h2><button type="button" data-slack-close aria-label="Close notifications">×</button></div>
+  <section id="slack-notifications" class="slack-popover" aria-label="Notifications"${open ? '' : ' hidden'}>
+    <div class="slack-popover-head"><h2>Notifications</h2><button type="button" data-slack-close aria-label="Close notifications">×</button></div>
     ${renderHealth(state.health, channelName ? `Slack #${channelName}` : 'Slack', now)}
     ${state.githubHealth ? renderHealth(state.githubHealth, `GitHub requested ${term('reviews').toLowerCase()}`, now) : ''}
     ${error ? `<p class="slack-action-error" role="alert">${esc(error)}</p>` : ''}
-    ${notifications.length ? `<ol class="slack-notification-list">${notifications.map(item => renderNotification(item, now, selectedRepo)).join('')}</ol>` : `<p class="slack-empty">No ${term('review').toLowerCase()} notifications yet.</p>`}
+    ${notifications.length ? `<ol class="slack-notification-list">${notifications.map(item => renderNotification(item, now, selectedRepo)).join('')}</ol>` : '<p class="slack-empty">No notifications yet.</p>'}
   </section>`;
 }

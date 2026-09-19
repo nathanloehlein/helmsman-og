@@ -1,6 +1,7 @@
 export const TERMINOLOGY = {
   success: { plain: 'Succeeded', pirate: 'Shipshape' },
   failed: { plain: 'Failed', pirate: 'Marooned' },
+  stopped: { plain: 'Stopped', pirate: 'Stopped' },
   tokens: { plain: 'Tokens', pirate: 'Pieces of eight' },
   agent: { plain: 'Agent', pirate: 'Deckhand' },
   agents: { plain: 'Agents', pirate: 'Deckhands' },
