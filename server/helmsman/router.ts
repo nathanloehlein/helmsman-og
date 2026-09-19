@@ -66,7 +66,7 @@ export interface RouterDeps {
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
   caps: () => { maxAttempts: number; maxCostUsd: number | null };
-  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean; slackTokenSet?: boolean };
+  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean };
   setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
   prStatus: (repo: string, prNumber: number) => Promise<PrStatus | null>;
   reviewRequestedPrs: (repo: string | null) => Promise<PrListResponse>;

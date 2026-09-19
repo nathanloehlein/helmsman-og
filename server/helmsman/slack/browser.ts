@@ -17,6 +17,19 @@ export interface SlackBrowserMessage {
 
 export type SlackBrowserTransport = (args: string[]) => Promise<string>;
 
+export function slackBrowserEvaluation(expression: string): string {
+  // tsx inserts this name-preservation helper into serialized functions.
+  return `JSON.stringify(((__name) => (${expression}))((value) => value))`;
+}
+
+let browserQueue: Promise<unknown> = Promise.resolve();
+
+export function withSlackBrowserLock<T>(work: () => Promise<T>): Promise<T> {
+  const result = browserQueue.then(work);
+  browserQueue = result.catch(() => undefined);
+  return result;
+}
+
 export const runSlackBrowserCommand: SlackBrowserTransport = (args) => new Promise((resolve, reject) => {
   execFile('cmux', args, { timeout: 15_000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8', env: { ...process.env, CMUX_QUIET: '1' } }, (error, stdout) => {
     if (error) reject(new Error(`Slack browser command failed: ${error.message}`));
@@ -62,7 +75,7 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function surfaceSelection(tree: unknown, target: string): { surface: string; selected: string; active: string } | null {
+export function surfaceSelection(tree: unknown, target: string): { surface: string; selected: string; active: string } | null {
   const root = object(tree);
   const active = object(root?.active)?.surface_ref;
   for (const window of Array.isArray(root?.windows) ? root.windows : []) {
@@ -95,7 +108,9 @@ export function findSlackBrowserSurface(tree: unknown, config: SlackBrowserConfi
           if (surface?.type !== 'browser' || typeof surface.ref !== 'string' || typeof surface.url !== 'string') continue;
           try {
             const url = new URL(surface.url);
-            if (url.origin === 'https://app.slack.com' && [`/client/${config.clientId}/${config.channelId}`, `/client/${config.clientId}/search`].includes(url.pathname)) candidates.add(surface.ref);
+            const route = url.pathname.split('/');
+            if (url.origin === 'https://app.slack.com' && route.length === 4 && route[1] === 'client' && route[2] === config.clientId
+              && (route[3] === 'search' || /^[CG][A-Z\d]+$/.test(route[3] ?? ''))) candidates.add(surface.ref);
           } catch { continue; }
         }
       }
@@ -151,6 +166,7 @@ export function createSlackBrowserReader(config: SlackBrowserConfig, transport: 
   async function scan({ since }: { since: string | null }): Promise<{ messages: SlackBrowserMessage[]; complete: boolean }> {
     if (scanning) throw new Error('Slack browser scan already in progress');
     scanning = true;
+    return withSlackBrowserLock(async () => {
     let restore: (() => Promise<void>) | null = null;
     try {
       const sinceMs = since === null ? Date.now() : /^\d+\.\d+$/.test(since) ? Number(since) * 1000 : Date.parse(since);
@@ -164,12 +180,14 @@ export function createSlackBrowserReader(config: SlackBrowserConfig, transport: 
       const deadline = Date.now() + 120_000;
       const evaluate = async <T>(script: string): Promise<T> => {
         if (Date.now() > deadline) throw new Error('Slack browser scan timed out');
-        return JSON.parse(await transport(['browser', surface, 'eval', `JSON.stringify(${script})`])) as T;
+        return JSON.parse(await transport(['browser', surface, 'eval', slackBrowserEvaluation(script)])) as T;
       };
       const state = (): Promise<SearchState> => evaluate(`(${inspectSlackSearch.toString()})(document)`);
       const validate = (view: SearchState): void => {
         const url = new URL(view.href);
-        if (url.origin !== 'https://app.slack.com' || ![`/client/${config.clientId}/${config.channelId}`, `/client/${config.clientId}/search`].includes(url.pathname)) {
+        const route = url.pathname.split('/');
+        if (url.origin !== 'https://app.slack.com' || route.length !== 4 || route[1] !== 'client' || route[2] !== config.clientId
+          || (route[3] !== 'search' && !/^[CG][A-Z\d]+$/.test(route[3] ?? ''))) {
           throw new Error('Slack browser is signed out or outside the configured client/channel');
         }
       };
@@ -263,6 +281,7 @@ export function createSlackBrowserReader(config: SlackBrowserConfig, transport: 
         scanning = false;
       }
     }
+    });
   }
   return { scan };
 }

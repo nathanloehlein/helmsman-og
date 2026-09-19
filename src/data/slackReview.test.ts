@@ -19,8 +19,8 @@ describe('Slack review request client', () => {
   });
 
   it('preserves actionable server errors', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ error: 'Invite the Slack bot to #airo-editing.' }, 409)));
-    await expect(requestSlackReview('org/repo', 42, requestId)).rejects.toThrow('Invite the Slack bot to #airo-editing.');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ error: 'Open #airo-editing in your signed-in Slack browser.' }, 409)));
+    await expect(requestSlackReview('org/repo', 42, requestId)).rejects.toThrow('Open #airo-editing in your signed-in Slack browser.');
   });
 
   it.each([[undefined, true], [true, true], [false, false]])('preserves server delivery certainty (%s)', async (uncertain, expected) => {

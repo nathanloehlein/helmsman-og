@@ -39,6 +39,7 @@ import { createBridge } from './cmux/bridge';
 import { openSlackStore } from './slack/store';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { createSlackBrowserReader } from './slack/browser';
+import { createSlackBrowserReviewSender } from './slack/browser-review';
 import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
 import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings } from './slack/review-request';
 import type { SlackState } from '../../src/data/slack';
@@ -71,6 +72,7 @@ const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.u
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const slackReviewRequester = openSlackReviewRequester(dbPath, {
   settings: () => slackReviewSettings(configStore.effectiveEnv()),
+  send: input => createSlackBrowserReviewSender(slackSettings(configStore.effectiveEnv())).send(input),
   getPr: (repo, prNumber) => {
     const github = configStore.current().github;
     return github ? fetchPrStatus(github, repo, prNumber) : Promise.resolve(null);
@@ -531,7 +533,6 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), ...publicSlackReviewSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
         overridden: Object.keys(configStore.overrides()),
         jiraTokenSet: configStore.hasJiraToken(),
-        slackTokenSet: configStore.hasSlackToken(),
       }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {

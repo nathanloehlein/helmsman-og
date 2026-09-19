@@ -42,7 +42,7 @@ describe('pirate interface wording', () => {
     expect(runTabStatus('failed')).toEqual({ kind: 'failed', label: enabled ? 'Marooned' : 'Failed' });
   });
 
-  it.each([true, false])('reflects mode=%s in the footer and keeps the Appearance reference and credential tokens literal', enabled => {
+  it.each([true, false])('reflects mode=%s in the footer and keeps the Appearance reference and browser setup literal', enabled => {
     setPirateMode(enabled);
     const element = mount(renderConfigView({ config: {}, overridden: [] }, opts));
     expect(element.querySelectorAll('[data-pirate-mode]')).toHaveLength(1);
@@ -56,7 +56,7 @@ describe('pirate interface wording', () => {
       ['Agents', 'Crew'], ['Running', 'Underway'], ['System status', 'Fleet status'],
       ['Completed work', 'Out to sea'], ['Activity log', "Ship's log"],
     ]));
-    expect(element.querySelector('#config-SLACK_BOT_TOKEN')?.getAttribute('placeholder')).toBe('Paste bot token to update');
+    expect(element.querySelector('#slack-review-setup')?.textContent).toContain('signed-in Slack browser');
     expect(element.querySelector('#work-source-title')?.textContent).toBe(enabled ? 'Voyage source' : 'Run source');
   });
 

@@ -45,7 +45,7 @@ export const CONFIG_HELP: Record<string, string> = {
   SLACK_CHANNEL_NAME: 'Channel name used in the Slack search query, without #. Example: pr-reviews',
   SLACK_BROWSER_SURFACE: 'Optional cmux browser surface containing signed-in Slack. Set this when multiple Slack browser surfaces are open. Example: surface:17',
   SLACK_REVIEW_CHANNEL: 'Slack channel for manual PR review requests. Use a channel name or ID. Example: airo-editing',
-  SLACK_REVIEW_MENTION: 'Slack user group to mention in manual PR review requests. Use a group handle or ID. Example: airo-editing-squad',
+  SLACK_REVIEW_MENTION: 'Slack user group handle to mention in manual PR review requests. Example: airo-editing-squad',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
   AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
   get AGENT_MAX_ATTEMPTS() { return `Total attempts for existing-PR ${term('runs').toLowerCase()}, including the initial attempt. New coding ${term('runs').toLowerCase()} use the separate pre-PR review rounds. Example: 1`; },
@@ -1223,19 +1223,14 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
         <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack ${term('reviewRequests').toLowerCase()}</span></div>
         <p class="config-warning">The button on your open ${term('prs')} posts the ${term('pr')} link and tags your ${term('review').toLowerCase()} group. Requests are sent only when you click it.</p>
         <div class="config-list">
-          ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', 'Review group', 'airo-editing-squad']].map(([key, label, fallback]) => `
+          ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
               <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup">
               <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
             </div>`).join('')}
-          <div class="config-row config-secret-row" data-key="SLACK_BOT_TOKEN">
-            <label class="config-key" for="config-SLACK_BOT_TOKEN">Bot token <span class="config-secret-status ${uiConfig.slackTokenSet ? 'is-set' : 'is-unset'}">${uiConfig.slackTokenSet ? 'set ✓' : 'not set'}</span></label>
-            <input id="config-SLACK_BOT_TOKEN" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste bot token to update" aria-describedby="slack-review-setup">
-            <button class="config-save" data-key="SLACK_BOT_TOKEN">Update</button><span class="config-error" role="alert"></span>
-          </div>
         </div>
-        <p class="config-warning" id="slack-review-setup">Install a Slack app with chat:write, channels:read, and usergroups:read permissions, then invite its bot to the channel. Channel and group names or IDs are accepted. For a private channel, use its ID and add groups:read. The saved token is never displayed.</p>
+        <p class="config-warning" id="slack-review-setup">Uses your signed-in Slack browser and the Slack client and browser settings below. Set a channel name or ID and an @group handle. Existing message drafts are preserved.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">

@@ -32,7 +32,7 @@ async function setup(post: (body: Record<string, unknown>) => Response | Promise
       repo: 'org/repo', number: 42, state: 'open', isOwnPr: true, draft: false, merged: false, headRefName: 'search',
       reviewDecision: '', comments: 0, checks: { passed: 1, failed: 0, pending: 0 }, url: 'https://github.com/org/repo/pull/42',
     });
-    if (url.pathname === '/api/config') return json({ config: {}, overridden: [], slackTokenSet: true });
+    if (url.pathname === '/api/config') return json({ config: {}, overridden: [] });
     if (url.pathname === '/api/slack') return json({ health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null }, notifications: [] });
     if (url.pathname === '/api/pr/review-requests' || url.pathname === '/api/pr/open') return json({ prs: [], degraded: false, truncated: false });
     return json({}, 404);
@@ -118,12 +118,12 @@ describe('Slack review requests from authored PRs', () => {
   it('shows actionable errors across polling and reuses the request ID on an explicit retry', async () => {
     let attempt = 0;
     const { root, view, writes, button } = await setup(() => ++attempt === 1
-      ? json({ error: 'Invite the Slack bot to #airo-editing.' }, 409) : json(success));
+      ? json({ error: 'Open #airo-editing in your signed-in Slack browser.' }, 409) : json(success));
     button().click();
-    await vi.waitFor(() => expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Invite the Slack bot to #airo-editing.'));
+    await vi.waitFor(() => expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Open #airo-editing in your signed-in Slack browser.'));
     expect(button().disabled).toBe(false);
     await view.refresh();
-    expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Invite the Slack bot to #airo-editing.');
+    expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Open #airo-editing in your signed-in Slack browser.');
     expect(writes).toHaveLength(1);
     button().click();
     await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
@@ -147,9 +147,9 @@ describe('Slack review requests from authored PRs', () => {
   it('uses a fresh request ID only after the server confirms nothing was sent', async () => {
     let attempt = 0;
     const { root, writes, button } = await setup(() => ++attempt === 1
-      ? json({ error: 'Configure a bot token first.', uncertain: false }, 409) : json(success));
+      ? json({ error: 'Open your signed-in Slack browser first.', uncertain: false }, 409) : json(success));
     button().click();
-    await vi.waitFor(() => expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Configure a bot token first.'));
+    await vi.waitFor(() => expect(root.querySelector('.slack-review-result[role=alert]')?.textContent).toBe('Open your signed-in Slack browser first.'));
     button().click();
     await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
     expect(writes).toHaveLength(2);
