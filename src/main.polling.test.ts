@@ -108,6 +108,40 @@ describe('view-aware polling', () => {
     expect(root.querySelector<HTMLSelectElement>('.newrun-model')?.value).toBe(modelChoice);
   });
 
+  it('releases a repainted new-run button after an overlapping backlog launch supersedes its result', async () => {
+    const { root, fetcher } = await setup();
+    const original = fetcher.getMockImplementation()!;
+    let resolveNewRun!: (response: Response) => void;
+    let resolveBacklog!: (response: Response) => void;
+    const pendingNewRun = new Promise<Response>(resolve => { resolveNewRun = resolve; });
+    const pendingBacklog = new Promise<Response>(resolve => { resolveBacklog = resolve; });
+    let launches = 0;
+    fetcher.mockImplementation(async input => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === '/api/agents/launch') return ++launches === 1 ? pendingNewRun : pendingBacklog;
+      return original(input);
+    });
+    root.querySelector<HTMLInputElement>('.newrun-mode[value="freeform"]')!.checked = true;
+    root.querySelector<HTMLTextAreaElement>('.newrun-task')!.value = 'First task';
+    const originalButton = root.querySelector<HTMLButtonElement>('.newrun-launch')!;
+    originalButton.click();
+    expect(originalButton.disabled).toBe(true);
+    root.querySelector<HTMLButtonElement>('.panel-collapse[data-panel="activity"]')!.click();
+    const replacement = root.querySelector<HTMLButtonElement>('.newrun-launch')!;
+    expect(replacement).not.toBe(originalButton);
+    expect(replacement.disabled).toBe(true);
+    const backlogLaunch = root.querySelector<HTMLButtonElement>('.launch-btn')!;
+    expect(backlogLaunch).not.toBeNull();
+    backlogLaunch.click();
+    resolveNewRun(json({ runId: 'superseded-new-run' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(root.querySelector<HTMLButtonElement>('.newrun-launch')?.disabled).toBe(false);
+    expect(root.querySelector('[data-tabid="superseded-new-run"]')).toBeNull();
+    resolveBacklog(json({ runId: 'backlog-run' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(root.querySelector('[data-tabid="backlog-run"]')).not.toBeNull();
+  });
+
   it('stops hidden polling and refreshes only overdue data upon return', async () => {
     const { count } = await setup();
     visible(false);

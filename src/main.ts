@@ -154,6 +154,7 @@ export class DashboardView {
   private rackLayout: RackLayout = deserializeRack(loadRackLayoutRaw());
   private collapsed: Set<string> = loadCollapsed();
   private launchSeq: number = 0;
+  private newRunPending = false;
   private refreshSeq: number = 0;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private refreshPending: { repo: string | null; view: PageView; promise: Promise<void> } | null = null;
@@ -1055,7 +1056,6 @@ export class DashboardView {
         selection: input instanceof HTMLTextAreaElement || (input instanceof HTMLInputElement && input.type === 'text')
           ? [input.selectionStart, input.selectionEnd] as const : null,
       })) : [];
-    const launchPending = preserveNewRun && newRun?.querySelector<HTMLButtonElement>('.newrun-launch')?.disabled === true;
     const page = document.createElement('div');
     renderDashboard(
       page,
@@ -1087,7 +1087,7 @@ export class DashboardView {
       }
     }
     const launch = this.root.querySelector<HTMLButtonElement>('.newrun-launch');
-    if (launch && launchPending) launch.disabled = true;
+    if (launch) launch.disabled = this.newRunPending;
     this.bindHeadControls();
     this.bindRackDnD();
     this.rehomeRunDrawer();
@@ -1759,7 +1759,7 @@ export class DashboardView {
   private async loadCmuxTabs(): Promise<void> {
     const seq = ++this.cmuxTabsSeq;
     try {
-      const res: Response = await fetch('/api/cmux/tabs');
+      const res: Response = await fetch('/api/cmux/tabs', { signal: AbortSignal.timeout(10_000) });
       const data = res.ok ? parseCmuxTabs(await res.json()) : null;
       if (seq !== this.cmuxTabsSeq || this.destroyed) return;
       if (!data) throw new Error('Terminal tabs unavailable');
@@ -1815,12 +1815,16 @@ export class DashboardView {
   private repaintCmuxPreservingInput(): void {
     const prevInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.cmux-input');
     const hadFocus: boolean = document.activeElement === prevInput;
+    const screenFocused = document.activeElement === this.root.querySelector('.cmux-screen');
+    const previousSurface = this.root.querySelector<HTMLElement>('.cmux-tab.is-selected')?.dataset.surface;
     const value: string = prevInput?.value ?? '';
     const selectionStart: number | null = prevInput?.selectionStart ?? null;
     const selectionEnd: number | null = prevInput?.selectionEnd ?? null;
 
     this.paint();
 
+    if (!previousSurface || previousSurface !== this.cmuxPanelState.selectedSurface) return;
+    if (screenFocused) this.root.querySelector<HTMLElement>('.cmux-screen')?.focus({ preventScroll: true });
     if (!value && !hadFocus) return;
     const nextInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.cmux-input');
     if (!nextInput) return;
@@ -2017,7 +2021,7 @@ export class DashboardView {
     this.cmuxCapturing = !this.cmuxCapturing;
     if (this.cmuxCapturing) this.startCapture();
     else this.stopCapture();
-    this.paint();
+    this.repaintCmuxPreservingInput();
     this.root.querySelector<HTMLElement>(this.cmuxCapturing ? '.cmux-screen' : '[data-cmux-capture]')?.focus();
   }
 
@@ -2926,6 +2930,7 @@ export class DashboardView {
   }
 
   private async handleNewRun(btn: HTMLButtonElement): Promise<void> {
+    if (this.newRunPending) return;
     const modeInput: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.newrun-mode:checked');
     const mode: 'ticket' | 'freeform' = modeInput?.value === 'freeform' ? 'freeform' : 'ticket';
     const payload: { body: LaunchRunBody; ticketId: string; title: string } | null =
@@ -2933,6 +2938,7 @@ export class DashboardView {
     if (!payload) return;
     const { body, ticketId, title } = payload;
 
+    this.newRunPending = true;
     const seq: number = ++this.launchSeq;
     btn.disabled = true;
     try {
@@ -2944,8 +2950,9 @@ export class DashboardView {
       const message: string = err instanceof Error ? err.message : term('launchFailed');
       this.openErrorTab(ticketId || title, message);
     } finally {
+      this.newRunPending = false;
       btn.disabled = false;
-      if (seq === this.launchSeq) {
+      if (!this.destroyed) {
         const current = this.root.querySelector<HTMLButtonElement>('.newrun-launch');
         if (current) current.disabled = false;
       }
