@@ -16,6 +16,7 @@ import { ProcessManager } from './process-manager';
 import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
+import { resumeFailedPrePrRun, ResumeError } from './resume';
 import { hasCmux, pickHost, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
@@ -37,8 +38,10 @@ import { jiraTask } from './jira-task';
 import { launchIntentJson, RetryError, type LaunchIntent } from './retry';
 import { createBridge } from './cmux/bridge';
 import { openSlackStore } from './slack/store';
+import { openVoyageNotifications } from './voyage-notifications';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { createSlackBrowserReader } from './slack/browser';
+import { createSlackBrowserReviewSender } from './slack/browser-review';
 import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
 import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings } from './slack/review-request';
 import type { SlackState } from '../../src/data/slack';
@@ -62,6 +65,7 @@ const db = openDb(dbPath);
 const todos = openTodoStore(dbPath);
 reconcileTodoRuns(todos, db);
 const slackStore = openSlackStore(dbPath);
+const voyageNotifications = openVoyageNotifications(dbPath);
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
@@ -71,6 +75,7 @@ const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.u
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 const slackReviewRequester = openSlackReviewRequester(dbPath, {
   settings: () => slackReviewSettings(configStore.effectiveEnv()),
+  send: input => createSlackBrowserReviewSender(slackSettings(configStore.effectiveEnv())).send(input),
   getPr: (repo, prNumber) => {
     const github = configStore.current().github;
     return github ? fetchPrStatus(github, repo, prNumber) : Promise.resolve(null);
@@ -168,10 +173,9 @@ function pollCreatedPrReviews(): Promise<void> {
   return createdPrReviews.poll().catch((error: unknown) => { process.stderr.write(`Created PR review queue failed: ${String(error)}\n`); });
 }
 
-function dispatchReattach(row: RunRow): Promise<void> {
+function dispatchReattach(row: RunRow, control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null }): Promise<void> {
   const cfg: AppConfig = configStore.current();
   const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
-  const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
   pm.add(row.id, row.repo, () => {
     control.stopped = true;
     void control.stop?.();
@@ -193,6 +197,28 @@ function dispatchReattach(row: RunRow): Promise<void> {
     pm.remove(row.id);
     void pollCreatedPrReviews();
   });
+}
+
+async function resumeVoyage(runId: string): Promise<void> {
+  const row = db.getRun(runId);
+  if (!row) throw new ResumeError('Voyage not found.');
+  const cfg = configStore.current();
+  const repos = [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
+  if (!repos.some(repo => repo.toLowerCase() === row.repo.toLowerCase())) throw new ResumeError('Configure this galleon before continuing the voyage.');
+  const gate = pm.canStart(row.repo);
+  if (!gate.ok) throw new ResumeError(gate.reason ?? 'Cannot continue this voyage while another voyage is active.');
+  if (cfg.maxCostUsd !== null && (row.costUsd ?? 0) >= cfg.maxCostUsd) throw new ResumeError('The voyage has reached its cost cap. Update the cap before continuing.');
+  const task = row.taskJson ? JSON.parse(row.taskJson) as Partial<AgentTask> | null : null;
+  if (!task?.task && !task?.todoId && !cfg.jira) throw new ResumeError('Configure Jira before continuing this Jira voyage.');
+  const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
+  pm.add(row.id, row.repo, () => { control.stopped = true; void control.stop?.(); });
+  try {
+    const resumed = await resumeFailedPrePrRun(row, { db, host, runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped });
+    void dispatchReattach(resumed, control).catch(error => { process.stderr.write(`Voyage continuation failed: ${String(error)}\n`); });
+  } catch (error) {
+    pm.remove(row.id);
+    throw error;
+  }
 }
 
 const reattachIds: string[] = db.reattachableRuns().map((r: RunRow) => r.id);
@@ -420,7 +446,7 @@ function slackSnapshot(): SlackState {
       lastSuccessAt: null, error: settings.error,
     },
     githubHealth: githubReviewWatcher.health(),
-    notifications: slackStore.listNotifications().map((notification) => {
+    notifications: [...slackStore.listNotifications().map((notification) => {
       const run = notification.runId ? db.getRun(notification.runId) : null;
       let task: Partial<AgentTask> | null = null;
       try {
@@ -429,7 +455,7 @@ function slackSnapshot(): SlackState {
       } catch { task = null; }
       return { ...notification, runId: run?.id ?? null,
         model: task?.model ?? null, effort: task?.effort ?? null, complexity: task?.reviewComplexity ?? null };
-    }),
+    }), ...voyageNotifications.listNotifications()].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || b.id.localeCompare(a.id)),
   };
 }
 
@@ -510,7 +536,10 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
           jiraBaseUrl: cfg.jira?.baseUrl ?? null,
         };
       },
-      slack: { snapshot: slackSnapshot, markRead: (id) => slackStore.markRead(id, new Date().toISOString()) },
+      slack: { snapshot: slackSnapshot, markRead: (id) => {
+        const now = new Date().toISOString();
+        return id.startsWith('voyage-') ? voyageNotifications.markRead(id, now) : slackStore.markRead(id, now);
+      } },
       slackReviewRequest: (input) => slackReviewRequester.request(input),
       todos,
       jiraEnabled: () => configStore.current().jiraEnabled,
@@ -520,6 +549,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       db,
       canStart: (repo: string) => pm.canStart(repo),
       launch,
+      resumeRun: resumeVoyage,
       stop: (id: string) => pm.stop(id),
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),
@@ -531,7 +561,6 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), ...publicSlackReviewSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
         overridden: Object.keys(configStore.overrides()),
         jiraTokenSet: configStore.hasJiraToken(),
-        slackTokenSet: configStore.hasSlackToken(),
       }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {

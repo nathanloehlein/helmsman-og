@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { PrePrSettings } from '../../src/logic/prePrSettings';
 import type { AgentTask } from './agents/adapter';
-import type { PrePrReviewerId } from './pre-pr-workflow';
+import { PRE_PR_REVIEW_SUMMARY_LIMIT, type PrePrReviewerId } from './pre-pr-workflow';
 import { gitBin, hasShebangShims } from '../test-support/platform';
 
 const exec = promisify(execFile);
@@ -16,7 +16,8 @@ const GIT = gitBin();
 const cliPath = fileURLToPath(new URL('./pre-pr-cli.ts', import.meta.url));
 const tsx = import.meta.resolve('tsx');
 
-async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote' | 'existing', settings?: PrePrSettings,
+async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote' | 'existing'
+  | 'summary-approval' | 'summary-fix' | 'summary-still-long' | 'summary-mutated-findings' | 'summary-mutated-verdict', settings?: PrePrSettings,
   options: { task?: Partial<AgentTask>; writerId?: PrePrReviewerId; body?: string; existingBody?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'helmsman-runtime-'));
   const cwd = join(root, 'author');
@@ -80,18 +81,27 @@ if(id === 'git') {
   } else process.exit(5);
 } else {
   const prompt = args.find(value => value.startsWith('# '));
-  const reportPath = JSON.parse(prompt.match(/external report path ("(?:[^"\\]|\\.)*")/)[1]);
+  const correction = prompt.startsWith('# Correct');
+  const reportPath = JSON.parse(prompt.match(correction ? /Write the corrected complete JSON object only to ("(?:[^"\\]|\\.)*")/ : /external report path ("(?:[^"\\]|\\.)*")/)[1]);
   const review = prompt.startsWith('# Independent');
   const fix = prompt.startsWith('# Resolve');
-  log({stage:review?'review':fix?'fix':'implement',id,cwd:process.cwd(),args:args.filter(value=>value!==prompt)});
+  log({stage:correction?'correction':review?'review':fix?'fix':'implement',id,cwd:process.cwd(),reportPath,head:runGit(['rev-parse','HEAD']),args:args.filter(value=>value!==prompt)});
   if (id === 'claude' && env.TEST_MODE === 'auth') { console.error('authentication unavailable'); process.exit(7); }
-  if(review) {
+  if(correction) {
+    const priorPath = JSON.parse(prompt.match(/Read the prior complete JSON report from ("(?:[^"\\]|\\.)*")/)[1]);
+    const report = JSON.parse(fs.readFileSync(priorPath,'utf8'));
+    report.summary = env.TEST_MODE==='summary-still-long' ? 'x'.repeat(Number(env.TEST_SUMMARY_LIMIT)+1) : 'Concise review result';
+    if(env.TEST_MODE==='summary-mutated-findings') report.findings[0].body='Changed evidence';
+    if(env.TEST_MODE==='summary-mutated-verdict') report.verdict='COMMENT';
+    fs.writeFileSync(reportPath,JSON.stringify(report));
+  } else if(review) {
     const baseSha = prompt.match(/Base revision: ([a-f0-9]+)/)[1];
     const headSha = prompt.match(/Head revision: ([a-f0-9]+)/)[1];
     const round = Number(prompt.match(/Round: (\d+)/)[1]);
     if(env.TEST_MODE === 'modified') fs.appendFileSync('code.txt','reviewer edit\n');
-    const findings = env.TEST_MODE === 'fix' && round===1 ? [{title:'Missing guard',body:'Empty input breaks the primary workflow.',path:'code.txt',line:1}] : [];
-    fs.writeFileSync(reportPath,JSON.stringify({baseSha,headSha,verdict:findings.length?'REQUEST_CHANGES':'APPROVE',summary:findings.length?'Guard required':'No material findings',findings}));
+    const findings = ['fix','summary-fix','summary-mutated-findings'].includes(env.TEST_MODE) && round===1 ? [{title:'Missing guard',body:'Empty input breaks the primary workflow.',path:'code.txt',line:1}] : [];
+    const summary = env.TEST_MODE.startsWith('summary-') && round===1 ? 'x'.repeat(Number(env.TEST_SUMMARY_LIMIT)+1) : findings.length?'Guard required':'No material findings';
+    fs.writeFileSync(reportPath,JSON.stringify({baseSha,headSha,verdict:findings.length?'REQUEST_CHANGES':'APPROVE',summary,findings}));
   } else {
     fs.appendFileSync('code.txt',fix?'fixed\n':'implemented\n');
     runGit(['add','code.txt']); runGit(['commit','-m',fix?'fix':'implement']);
@@ -107,11 +117,11 @@ if(id === 'git') {
     await writeFile(join(bin, executable), script); await chmod(join(bin, executable), 0o755);
   }
   const input = { task: { ticketId: 'T-1', title: 'Fix issue', repo: 'example/project', jiraBaseUrl: '', model: 'author-model', effort: 'medium', ...options.task }, writerId: options.writerId ?? 'codex', runsDir: join(root, 'runs'), settings };
-  return { root, cwd, state, transcript, async run() {
+  return { root, cwd, state, transcript, async run(task: Partial<AgentTask> = {}) {
     try {
-      const output = await exec(process.execPath, ['--import', tsx, cliPath, JSON.stringify(input)], {
+      const output = await exec(process.execPath, ['--import', tsx, cliPath, JSON.stringify({ ...input, task: { ...input.task, ...task } })], {
         cwd, timeout: 30_000, env: { ...process.env, PATH: bin, TEST_MODE: mode, TEST_REMOTE: mode==='named-remote'?'godaddy':'origin', TEST_BARE: bare, TEST_STATE: state, TEST_TRANSCRIPT: transcript, TEST_GIT_BIN: GIT,
-          TEST_BODY: options.body ?? 'Implemented and checked.', TEST_EXISTING_BODY: options.existingBody ?? 'Human-maintained PR description.' },
+          TEST_SUMMARY_LIMIT: String(PRE_PR_REVIEW_SUMMARY_LIMIT), TEST_BODY: options.body ?? 'Implemented and checked.', TEST_EXISTING_BODY: options.existingBody ?? 'Human-maintained PR description.' },
       });
       return { code: 0, output: output.stdout };
     } catch (error) {
@@ -124,6 +134,136 @@ if(id === 'git') {
 // The fake git/gh CLIs are shebang scripts placed on PATH under those names,
 // which Windows cannot execute at all.
 describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', () => {
+  it.each(['codex', 'claude-code'] as const)('repairs an overlong %s approval once and preserves the original report', async writerId => {
+    const env = await fixture('summary-approval', { reviewerCount: 1, maxRounds: 2, stageTimeoutMinutes: 10 }, { writerId });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(0);
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.map(step => step.stage)).toEqual(['implement', 'review', 'correction', 'push', 'publish']);
+      const review = steps.find(step => step.stage === 'review');
+      const correction = steps.find(step => step.stage === 'correction');
+      const original = JSON.parse(await readFile(review.reportPath, 'utf8'));
+      const corrected = JSON.parse(await readFile(correction.reportPath, 'utf8'));
+      expect(original.summary).toBe('x'.repeat(PRE_PR_REVIEW_SUMMARY_LIMIT + 1));
+      expect(corrected).toEqual({ ...original, summary: 'Concise review result' });
+      expect(correction.reportPath).not.toBe(review.reportPath);
+      expect(correction.id).toBe(review.id);
+      expect(correction.head).toBe(review.head);
+      expect(correction.args).not.toContain('features.multi_agent=true');
+      expect(result.output).toContain('"prNumber":42');
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('retains request-changes findings through correction and requires remediation and a fresh review', async () => {
+    const env = await fixture('summary-fix', { reviewerCount: 1, maxRounds: 2, stageTimeoutMinutes: 10 });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(0);
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.map(step => step.stage)).toEqual(['implement', 'review', 'correction', 'fix', 'review', 'push', 'publish']);
+      const original = JSON.parse(await readFile(steps[1].reportPath, 'utf8'));
+      const corrected = JSON.parse(await readFile(steps[2].reportPath, 'utf8'));
+      expect(corrected).toEqual({ ...original, summary: 'Concise review result' });
+      expect(corrected.verdict).toBe('REQUEST_CHANGES');
+      expect(corrected.findings).toHaveLength(1);
+      expect(steps[4].head).not.toBe(steps[1].head);
+      expect(await readFile(join(env.cwd, 'code.txt'), 'utf8')).toBe('initial\nimplemented\nfixed\n');
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it.each(['summary-still-long', 'summary-mutated-findings', 'summary-mutated-verdict'] as const)('blocks %s after one correction attempt', async mode => {
+    const env = await fixture(mode, { reviewerCount: 1, maxRounds: 2, stageTimeoutMinutes: 10 });
+    try {
+      const result = await env.run();
+      expect(result.code, result.output).toBe(1);
+      expect(result.output).toContain('summary correction failed after one attempt; publication blocked');
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.map(step => step.stage)).toEqual(['implement', 'review', 'correction']);
+      const original = JSON.parse(await readFile(steps[1].reportPath, 'utf8'));
+      expect(original.summary).toHaveLength(PRE_PR_REVIEW_SUMMARY_LIMIT + 1);
+      expect(original.verdict).toBe(mode === 'summary-mutated-findings' ? 'REQUEST_CHANGES' : 'APPROVE');
+      if (mode === 'summary-mutated-findings') expect(original.findings[0]?.body).toBe('Empty input breaks the primary workflow.');
+      expect(JSON.parse(await readFile(steps[2].reportPath, 'utf8'))).toBeTruthy();
+      await expect(readFile(env.state)).rejects.toThrow();
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it('continues saved round-two reports without repeating implementation, then fixes and reviews round three', async () => {
+    const env = await fixture('summary-fix', { reviewerCount: 2, maxRounds: 3, stageTimeoutMinutes: 10 });
+    try {
+      const git = async (args: string[]) => (await exec('/usr/bin/git', args, { cwd: env.cwd })).stdout.trim();
+      const baseSha = await git(['rev-parse', 'HEAD']);
+      await writeFile(join(env.cwd, 'code.txt'), 'initial\npreserved implementation\n');
+      await git(['add', 'code.txt']);
+      await git(['commit', '-m', 'preserved implementation']);
+      const headSha = await git(['rev-parse', 'HEAD']);
+      const artifacts = join(env.root, 'runs', 'author.pre-pr');
+      await mkdir(artifacts, { recursive: true });
+      const metadataPath = join(artifacts, 'implement-1.json');
+      await writeFile(metadataPath, JSON.stringify({ title: 'T-1 Preserved implementation', body: 'Existing implementation.' }));
+      const reviewerReports = { codex: join(artifacts, 'review-2-codex.json'), 'claude-code': join(artifacts, 'review-2-claude-code.json') };
+      const pending = { baseSha, headSha, verdict: 'REQUEST_CHANGES', summary: 'x'.repeat(PRE_PR_REVIEW_SUMMARY_LIMIT + 1),
+        findings: [{ title: 'Missing guard', body: 'Empty input breaks the primary workflow.', path: 'code.txt', line: 1 }] };
+      const approved = { baseSha, headSha, verdict: 'APPROVE', summary: 'No material findings', findings: [] };
+      await writeFile(reviewerReports.codex, JSON.stringify(pending));
+      await writeFile(reviewerReports['claude-code'], JSON.stringify(approved));
+      const result = await env.run({ prePrResume: { baseSha, headSha, branch: 'voyage/test', round: 2, reviewerReports, metadataPath } });
+      expect(result.code, result.output).toBe(0);
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.map(step => step.stage)).toEqual(['correction', 'fix', 'review', 'review', 'push', 'publish']);
+      expect(steps[0].head).toBe(headSha);
+      expect(steps[1].head).toBe(headSha);
+      expect(steps[1].reportPath).toBe(join(artifacts, 'fix-2.json'));
+      expect(steps.filter(step => step.stage === 'review').map(step => step.reportPath)).toEqual([
+        join(artifacts, 'review-3-codex.json'), join(artifacts, 'review-3-claude-code.json'),
+      ]);
+      expect(steps[2].head).not.toBe(headSha);
+      expect(steps[3].head).toBe(steps[2].head);
+      expect(JSON.parse(await readFile(reviewerReports.codex, 'utf8'))).toEqual(pending);
+      expect(JSON.parse(await readFile(reviewerReports['claude-code'], 'utf8'))).toEqual(approved);
+      expect(await readFile(join(env.cwd, 'code.txt'), 'utf8')).toBe('initial\npreserved implementation\nfixed\n');
+      expect(await git(['rev-list', '--count', `${headSha}..HEAD`])).toBe('1');
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it.each(['baseSha', 'headSha', 'branch'] as const)('rejects a stale continuation %s before running an agent', async field => {
+    const env = await fixture('named-remote');
+    try {
+      const headSha = (await exec('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: env.cwd })).stdout.trim();
+      const checkpoint = { baseSha: headSha, headSha, branch: 'voyage/test', round: 2, reviewerReports: {}, metadataPath: '' };
+      checkpoint[field] = field === 'branch' ? 'voyage/stale' : 'a'.repeat(40);
+      const result = await env.run({ prePrResume: checkpoint });
+      expect(result.code, result.output).toBe(1);
+      expect(result.output).toContain('continuation checkpoint does not match');
+      await expect(readFile(env.transcript)).rejects.toThrow();
+      await expect(readFile(env.state)).rejects.toThrow();
+      expect((await exec('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: env.cwd })).stdout.trim()).toBe(headSha);
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it.each(['review-2-claude-code.json', 'review-1-codex.json', 'review-2-codex.corrected.json'])(
+    'rejects mismatched saved reviewer path %s before running an agent', async filename => {
+      const env = await fixture('named-remote', { reviewerCount: 1, maxRounds: 3, stageTimeoutMinutes: 10 });
+      try {
+        const headSha = (await exec('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: env.cwd })).stdout.trim();
+        const artifacts = join(env.root, 'runs', 'author.pre-pr');
+        await mkdir(artifacts, { recursive: true });
+        const metadataPath = join(artifacts, 'implement-1.json');
+        await writeFile(metadataPath, JSON.stringify({ title: 'T-1 Existing implementation', body: 'Existing implementation.' }));
+        const reportPath = join(artifacts, filename);
+        await writeFile(reportPath, JSON.stringify({ baseSha: headSha, headSha, verdict: 'APPROVE', summary: 'Approved', findings: [] }));
+        const result = await env.run({ prePrResume: {
+          baseSha: headSha, headSha, branch: 'voyage/test', round: 2, reviewerReports: { codex: reportPath }, metadataPath,
+        } });
+        expect(result.code, result.output).toBe(1);
+        expect(result.output).toContain('each reviewer’s original report for the checkpoint round');
+        await expect(readFile(env.transcript)).rejects.toThrow();
+        await expect(readFile(env.state)).rejects.toThrow();
+      } finally { await rm(env.root, { recursive: true, force: true }); }
+    }, 30_000,
+  );
+
   it.each(['codex', 'claude-code'] as const)('enforces the %s writer byline while preserving code and suggestions', async writerId => {
     const body = '## Outcome\n\n```ts\nconst value = "unchanged";\n```\n\n```suggestion\nreturn value;\n```';
     const env = await fixture('named-remote', undefined, { writerId, body, task: { model: 'author-model', effort: 'high' } });

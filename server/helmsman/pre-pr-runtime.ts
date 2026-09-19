@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import type { AgentAdapter, AgentEvent, AgentTask } from './agents/adapter';
 import { codexAdapter } from './agents/codex';
 import { claudeCodeAdapter } from './agents/claude-code';
-import { runPrePrWorkflow, type PrePrReviewerId } from './pre-pr-workflow';
+import { assertReviewSummaryCorrection, parsePrePrReview, PrePrGateError, PrePrSummaryTooLongError, runPrePrWorkflow, type PrePrReviewerId, type PrePrResumeCheckpoint } from './pre-pr-workflow';
 import { selectReviewModel, type ReviewScope } from './review-policy';
 import { agentAttribution, appendAgentByline } from './agent-attribution';
 import { DEFAULT_PRE_PR_SETTINGS, normalizePrePrSettings, type PrePrSettings } from '../../src/logic/prePrSettings';
@@ -182,7 +182,12 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
     await git(['check-ref-format', '--branch', baseBranch]);
     if (branch === baseBranch) throw new Error('Voyage must use a feature branch');
     await git(['fetch', '--no-tags', remote, `refs/heads/${baseBranch}`]);
-    const baseSha = await git(['merge-base', initialHead, 'FETCH_HEAD']);
+    const currentBaseSha = await git(['merge-base', initialHead, 'FETCH_HEAD']);
+    const checkpoint = input.task.prePrResume;
+    const baseSha = checkpoint?.baseSha ?? currentBaseSha;
+    if (checkpoint && (checkpoint.headSha !== initialHead || checkpoint.branch !== branch || checkpoint.baseSha !== currentBaseSha)) {
+      throw new PrePrGateError('continuation checkpoint does not match the current branch, base, and head; work preserved.');
+    }
     const artifactDir = resolve(input.runsDir, `${basename(cwd)}.pre-pr`);
     const relativeArtifacts = relative(cwd, artifactDir);
     if (!relativeArtifacts || (!relativeArtifacts.startsWith('..') && !isAbsolute(relativeArtifacts))) throw new Error('Pre-PR artifacts must be outside the author worktree');
@@ -203,8 +208,87 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
       await git(['merge-base', '--is-ancestor', baseSha, headSha]);
       return { baseSha, headSha, branch: await git(['symbolic-ref', '--quiet', '--short', 'HEAD']), clean: !(await git(['status', '--porcelain', '--untracked-files=all'])) };
     };
+    const review = async (reviewerId: string, context: { baseSha: string; headSha: string; round: number }, savedReportPath?: string) => {
+      if (reviewerId !== 'codex' && reviewerId !== 'claude-code') throw new Error('Unsupported reviewer');
+      const scope = localReviewScope(await git(['diff', '--numstat', '--no-renames', '-z', context.baseSha, context.headSha]), context.headSha);
+      const choice = selectReviewModel(scope, reviewerId);
+      emit({ kind: 'phase', text: `${reviewerId} review: ${choice.effort} effort — ${choice.reason}` });
+      const root = await mkdtemp(join(tmpdir(), 'helmsman-review-'));
+      const worktree = join(root, 'checkout');
+      const reportPath = savedReportPath ?? join(artifactDir, `review-${context.round}-${reviewerId}.json`);
+      try {
+        if (!savedReportPath) await rm(reportPath, { force: true });
+        await git(['worktree', 'add', '--detach', worktree, context.headSha]);
+        const reviewTask: AgentTask = { ...input.task, model: choice.model, effort: choice.effort,
+          prePr: { stage: 'review', ...context, reportPath } };
+        const assertReviewUnchanged = async () => {
+          if ((await git(['rev-parse', 'HEAD'], worktree)) !== context.headSha
+            || await git(['status', '--porcelain', '--untracked-files=all'], worktree)) throw new Error('Reviewer modified its immutable worktree');
+        };
+        if (!savedReportPath) await runStage(reviewerId, reviewTask, worktree);
+        await assertReviewUnchanged();
+        const originalReport = await readPrePrReport(reportPath);
+        try {
+          return parsePrePrReview(originalReport, context);
+        } catch (error) {
+          if (!(error instanceof PrePrSummaryTooLongError)) throw error;
+          emit({ kind: 'phase', text: `${reviewerId}: ${error.message} Requesting one summary-only correction.` });
+          const correctedPath = join(artifactDir, `review-${context.round}-${reviewerId}.corrected.json`);
+          if (correctedPath === reportPath) throw new PrePrGateError('saved corrected summary is still too long; publication blocked.');
+          await rm(correctedPath, { force: true });
+          try {
+            await runStage(reviewerId, { ...reviewTask, prePr: { stage: 'review', ...context, reportPath: correctedPath,
+              summaryCorrection: { reportPath, actualLength: error.actualLength } } }, worktree);
+            await assertReviewUnchanged();
+            if (JSON.stringify(await readPrePrReport(reportPath)) !== JSON.stringify(originalReport)) {
+              throw new PrePrGateError('summary correction modified the original report; publication blocked.');
+            }
+            const corrected = parsePrePrReview(await readPrePrReport(correctedPath), context);
+            assertReviewSummaryCorrection(error.report, corrected);
+            return corrected;
+          } catch (correctionError) {
+            throw new PrePrGateError(`${reviewerId} summary correction failed after one attempt; publication blocked. ${correctionError instanceof Error ? correctionError.message : String(correctionError)}`);
+          }
+        }
+      } finally {
+        try { await exec('git', ['worktree', 'remove', '--force', worktree], { cwd, timeout: 15_000 }); } catch { /* Failed worktree creation needs no git cleanup. */ }
+        await rm(root, { recursive: true, force: true });
+      }
+    };
+    let resume: PrePrResumeCheckpoint | undefined;
+    if (checkpoint) {
+      if (!Number.isInteger(checkpoint.round) || checkpoint.round < 1 || checkpoint.round > settings.maxRounds
+        || !checkpoint.reviewerReports || typeof checkpoint.reviewerReports !== 'object'
+        || Object.keys(checkpoint.reviewerReports).length !== reviewerIds.length
+        || reviewerIds.some(id => typeof checkpoint.reviewerReports[id] !== 'string')) {
+        throw new PrePrGateError('continuation requires the original complete reviewer set and a valid review round.');
+      }
+      const assertArtifactPath = (path: string) => {
+        if (typeof path !== 'string' || !isAbsolute(path) || resolve(path, '..') !== artifactDir) {
+          throw new PrePrGateError('continuation report must be in this voyage artifact directory.');
+        }
+      };
+      assertArtifactPath(checkpoint.metadataPath);
+      parsePrMetadata(await readPrePrReport(checkpoint.metadataPath), input.task);
+      metadataPath = checkpoint.metadataPath;
+      const reviews: PrePrResumeCheckpoint['reviews'] = [];
+      for (const reviewer of reviewerIds) {
+        const path = checkpoint.reviewerReports[reviewer]!;
+        assertArtifactPath(path);
+        if (path !== join(artifactDir, `review-${checkpoint.round}-${reviewer}.json`)) {
+          throw new PrePrGateError('continuation must use each reviewer’s original report for the checkpoint round.');
+        }
+        try { parsePrePrReview(await readPrePrReport(path), checkpoint); }
+        catch (error) { if (!(error instanceof PrePrSummaryTooLongError)) throw error; }
+      }
+      emit({ kind: 'phase', text: `Continuing preserved revision ${initialHead} from review round ${checkpoint.round}; implementation will not be repeated` });
+      for (const reviewer of reviewerIds) {
+        reviews.push({ reviewer, report: await review(reviewer, checkpoint, checkpoint.reviewerReports[reviewer]) });
+      }
+      resume = { baseSha, headSha: initialHead, branch, round: checkpoint.round, reviews };
+    }
     return await runPrePrWorkflow(input.task, {
-      writerId: input.writerId, reviewerIds, maxRounds: settings.maxRounds, snapshot, isStopped: () => abort.signal.aborted,
+      writerId: input.writerId, reviewerIds, maxRounds: settings.maxRounds, resume, snapshot, isStopped: () => abort.signal.aborted,
       onPhase: text => emit({ kind: 'phase', text }),
       runAuthor: async (stage, context) => {
         metadataPath = join(artifactDir, `${stage}-${context.round}.json`);
@@ -213,27 +297,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
         parsePrMetadata(await readPrePrReport(metadataPath), input.task);
         if (!(await git(['diff', '--name-only', baseSha, 'HEAD']))) throw new Error('Author produced an empty overall diff');
       },
-      review: async (reviewerId, context) => {
-        if (reviewerId !== 'codex' && reviewerId !== 'claude-code') throw new Error('Unsupported reviewer');
-        const scope = localReviewScope(await git(['diff', '--numstat', '--no-renames', '-z', context.baseSha, context.headSha]), context.headSha);
-        const choice = selectReviewModel(scope, reviewerId);
-        emit({ kind: 'phase', text: `${reviewerId} review: ${choice.effort} effort — ${choice.reason}` });
-        const root = await mkdtemp(join(tmpdir(), 'helmsman-review-'));
-        const worktree = join(root, 'checkout');
-        const reportPath = join(artifactDir, `review-${context.round}-${reviewerId}.json`);
-        try {
-          await rm(reportPath, { force: true });
-          await git(['worktree', 'add', '--detach', worktree, context.headSha]);
-          await runStage(reviewerId, { ...input.task, model: choice.model, effort: choice.effort,
-            prePr: { stage: 'review', ...context, reportPath } }, worktree);
-          if ((await git(['rev-parse', 'HEAD'], worktree)) !== context.headSha
-            || await git(['status', '--porcelain', '--untracked-files=all'], worktree)) throw new Error('Reviewer modified its immutable worktree');
-          return await readPrePrReport(reportPath);
-        } finally {
-          try { await exec('git', ['worktree', 'remove', '--force', worktree], { cwd, timeout: 15_000 }); } catch { /* Failed worktree creation needs no git cleanup. */ }
-          await rm(root, { recursive: true, force: true });
-        }
-      },
+      review,
       publish: async expected => {
         const metadata = parsePrMetadata(await readPrePrReport(metadataPath), input.task);
         const assertApproved = async () => {

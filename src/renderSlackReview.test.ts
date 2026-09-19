@@ -35,14 +35,12 @@ describe('Slack review controls', () => {
     expect(Boolean(mount(renderPrPanel(status(overrides), true)).querySelector('[data-slack-review-request]'))).toBe(allowed);
   });
 
-  it('renders Slack defaults and write-only token status without exposing a token', () => {
-    const root = mount(renderConfigView({ config: {}, overridden: [], slackTokenSet: true }, { repos: [], selectedRepo: null, themeId: 'quarterdeck' }));
+  it('renders Slack destinations with browser setup and no bot credentials', () => {
+    const root = mount(renderConfigView({ config: {}, overridden: [] }, { repos: [], selectedRepo: null, themeId: 'quarterdeck' }));
     expect(root.querySelector<HTMLInputElement>('#config-SLACK_REVIEW_CHANNEL')?.value).toBe('airo-editing');
     expect(root.querySelector<HTMLInputElement>('#config-SLACK_REVIEW_MENTION')?.value).toBe('airo-editing-squad');
-    const token = root.querySelector<HTMLInputElement>('#config-SLACK_BOT_TOKEN');
-    expect(token?.type).toBe('password');
-    expect(token?.value).toBe('');
-    expect(root.querySelector('.slack-review-config .config-secret-status')?.textContent).toBe('set ✓');
+    expect(root.querySelector('#config-SLACK_BOT_TOKEN')).toBeNull();
+    expect(root.querySelector('#slack-review-setup')?.textContent).toContain('signed-in Slack browser');
     expect(root.querySelector('.slack-review-config')?.textContent).toContain('only when you click');
   });
 
@@ -51,6 +49,6 @@ describe('Slack review controls', () => {
     const root = mount(renderConfigView({ config: { SLACK_REVIEW_CHANNEL: payload, SLACK_REVIEW_MENTION: payload }, overridden: [] }, { repos: [], selectedRepo: null, themeId: 'quarterdeck' }));
     expect(root.querySelector('img')).toBeNull();
     expect(root.querySelector<HTMLInputElement>('#config-SLACK_REVIEW_CHANNEL')?.value).toBe(payload);
-    expect(root.querySelector('.slack-review-config .config-secret-status')?.textContent).toBe('not set');
+    expect(root.querySelector('.slack-review-config input[type=password]')).toBeNull();
   });
 });

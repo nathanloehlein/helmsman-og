@@ -530,17 +530,17 @@ user group. Sending is manual; the button reports delivery or an actionable erro
 and links to the message when Slack provides a permalink.
 
 In **Config → Slack review requests**, set the destination channel and review group.
-Defaults are `airo-editing` and `airo-editing-squad`. Names or Slack IDs are accepted;
-private channels require their channel ID. Install a Slack app with `chat:write`,
-`channels:read`, and `usergroups:read` scopes (`groups:read` for private channels),
-invite its bot to the destination, and save its bot token in the write-only field.
-The outbound sender uses Slack's official API and is independent of the browser reader.
+Defaults are `airo-editing` and `airo-editing-squad`. Use a channel name or ID and
+the user group's handle.
+Requests use the signed-in Slack browser, sharing `SLACK_CLIENT_ID` and
+`SLACK_BROWSER_SURFACE` with the Slack reader. Browser reading and sending are
+serialized so they do not interfere. Existing message drafts are preserved.
+Sending works independently of whether automatic Slack watching is enabled.
 
 | Value | Default | Purpose |
 | --- | --- | --- |
 | `SLACK_REVIEW_CHANNEL` | `airo-editing` | Destination channel name or ID; live-editable. |
-| `SLACK_REVIEW_MENTION` | `airo-editing-squad` | User group handle or ID; resolved to an actual Slack mention. |
-| `SLACK_BOT_TOKEN` | Empty | Slack bot token; Config stores it in SQLite and never returns its value. |
+| `SLACK_REVIEW_MENTION` | `airo-editing-squad` | User group handle; selected as an actual Slack mention. |
 
 The server verifies that the PR is open and authored by the configured GitHub user.
 Persisted request receipts prevent repeated delivery for the same request ID, and a

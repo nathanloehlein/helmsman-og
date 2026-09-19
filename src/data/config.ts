@@ -2,7 +2,6 @@ export interface UiConfig {
   config: Record<string, unknown>;
   overridden: string[];
   jiraTokenSet?: boolean;
-  slackTokenSet?: boolean;
 }
 
 export async function getConfig(): Promise<UiConfig> {

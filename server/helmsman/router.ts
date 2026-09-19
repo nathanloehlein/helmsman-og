@@ -10,6 +10,7 @@ import { isAllowedKey } from './cmux/keys';
 import type { SlackState } from '../../src/data/slack';
 import type { GithubProfile } from '../../src/data/profile';
 import { retryIntent, RetryError, type LaunchIntent } from './retry';
+import { ResumeError } from './resume';
 
 export interface ApiResult {
   status: number;
@@ -49,6 +50,7 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  resumeRun?: (runId: string) => Promise<void>;
   githubProfile?: () => Promise<GithubProfile>;
   slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
   todos?: TodoStore;
@@ -66,7 +68,7 @@ export interface RouterDeps {
   setAutoClaim: (repo: string, enabled: boolean) => void;
   autoClaimRepos: () => string[];
   caps: () => { maxAttempts: number; maxCostUsd: number | null };
-  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean; slackTokenSet?: boolean };
+  getConfig: () => { config: Record<string, unknown>; overridden: string[]; jiraTokenSet: boolean };
   setConfig: (key: string, value: string) => { ok: true } | { ok: false; error: string };
   prStatus: (repo: string, prNumber: number) => Promise<PrStatus | null>;
   reviewRequestedPrs: (repo: string | null) => Promise<PrListResponse>;
@@ -187,6 +189,21 @@ export async function handleApi(
     if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'invalid run ID' } };
     const run = deps.db.getRun(runId);
     return run ? { status: 200, json: toRunSummary(run, deps.db) } : { status: 404, json: { error: 'run not found' } };
+  }
+  const resumeMatch = path.match(/^\/api\/agents\/([^/]+)\/resume$/);
+  if (resumeMatch && method === 'POST') {
+    const runId = resumeMatch[1];
+    if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'invalid run ID' } };
+    const run = deps.db.getRun(runId);
+    if (!run) return { status: 404, json: { error: 'Voyage not found.' } };
+    if (!deps.resumeRun) return { status: 503, json: { error: 'Voyage continuation is unavailable.' } };
+    try {
+      await deps.resumeRun(runId);
+      return { status: 200, json: { runId } };
+    } catch (error) {
+      if (error instanceof ResumeError) return { status: 409, json: { error: error.message } };
+      throw error;
+    }
   }
   const retryMatch = path.match(/^\/api\/agents\/([^/]+)\/retry$/);
   if (retryMatch && method === 'POST') {

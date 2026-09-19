@@ -146,16 +146,15 @@ it('switches Jira source live while preserving saved credentials', () => {
   expect(store.current().jira?.apiToken).toBe('secret');
 });
 
-it('stores Slack bot credentials only through the secret path and validates review destinations', () => {
+it('rejects obsolete bot credentials and validates browser review destinations', () => {
   db = openDb(':memory:');
-  const store = new ConfigStore({}, db);
-  expect(store.hasSlackToken()).toBe(false);
+  const store = new ConfigStore({ SLACK_BOT_TOKEN: 'legacy-secret' }, db);
   expect(() => store.setOverride('SLACK_BOT_TOKEN', 'secret', () => 'now')).toThrow();
-  store.setSecret('SLACK_BOT_TOKEN', 'secret', () => 'now');
-  expect(store.hasSlackToken()).toBe(true);
+  expect(() => store.setSecret('SLACK_BOT_TOKEN', 'secret', () => 'now')).toThrow();
   expect(publicConfig(store.current())).not.toHaveProperty('SLACK_BOT_TOKEN');
   store.setOverride('SLACK_REVIEW_CHANNEL', '#airo-editing', () => 'now');
   store.setOverride('SLACK_REVIEW_MENTION', '@airo-editing-squad', () => 'now');
   expect(() => store.setOverride('SLACK_REVIEW_CHANNEL', '@wrong-prefix', () => 'now')).toThrow();
   expect(() => store.setOverride('SLACK_REVIEW_MENTION', '<!channel>', () => 'now')).toThrow();
+  expect(() => store.setOverride('SLACK_REVIEW_MENTION', 'S12345', () => 'now')).toThrow('handle');
 });

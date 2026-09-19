@@ -76,21 +76,24 @@ describe('renderRunsView', () => {
     expect(failed?.querySelector('.voyage-result-changes')).toBeNull();
   });
 
-  it('places the task identity on the left and retry, timestamp, and ID copy in that order on the right', () => {
+  it('places retry beside the task identity and keeps ID copy and timestamp on the right', () => {
     const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'failed' })] }));
     const row = el.querySelector('.recent-run');
     expect(row?.querySelector('.voyage-identity .ticket-id')?.textContent).toBe('Bounty #42');
     expect(row?.querySelector('.runs-voyage-link .agent-repo')?.textContent).toBe('alpha');
     expect(row?.querySelector('.runs-voyage-link time, .runs-voyage-link button')).toBeNull();
     const meta = row?.querySelector('.voyage-row-meta');
-    const controls = [...(meta?.querySelectorAll('[data-retry-run-id], time, [data-copy-run-id]') ?? [])];
-    expect(controls).toHaveLength(3);
-    expect(controls[0]?.getAttribute('data-retry-run-id')).toBe('run-1');
-    expect(controls[0]?.querySelector('.sr-only')?.textContent).toBe('Retry');
+    const retry = row?.querySelector('.voyage-row-main > [data-retry-run-id]');
+    expect(retry?.previousElementSibling?.classList.contains('runs-voyage-link')).toBe(true);
+    expect(retry?.getAttribute('data-retry-run-id')).toBe('run-1');
+    expect(retry?.querySelector('.sr-only')?.textContent).toBe('Retry');
+    expect(meta?.querySelector('[data-retry-run-id]')).toBeNull();
+    const controls = [...(meta?.querySelectorAll('time, [data-copy-run-id]') ?? [])];
+    expect(controls).toHaveLength(2);
+    expect(controls[0]?.getAttribute('data-copy-run-id')).toBe('run-1');
     expect(controls[1]?.getAttribute('datetime')).toBe('2026-09-17T15:00:00.000Z');
     expect(controls[1]?.getAttribute('title')).toBeTruthy();
-    expect(controls[2]?.getAttribute('data-copy-run-id')).toBe('run-1');
-    expect(meta?.lastElementChild).toBe(controls[2]);
+    expect(meta?.lastElementChild).toBe(controls[1]);
   });
 
   it.each([

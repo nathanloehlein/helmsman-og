@@ -110,6 +110,7 @@ describe('Slack browser discovery', () => {
   const tree = (surfaces: unknown[]) => ({ windows: [{ workspaces: [{ panes: [{ surfaces }] }] }] });
   it('discovers the browser again after search changes its route', () => {
     expect(findSlackBrowserSurface(tree([{ type: 'browser', ref: 'surface:99', url: 'https://app.slack.com/client/ET123/search' }]), config)).toBe('surface:99');
+    expect(findSlackBrowserSurface(tree([{ type: 'browser', ref: 'surface:99', url: 'https://app.slack.com/client/ET123/COTHER' }]), config)).toBe('surface:99');
   });
   it('rejects missing, malformed, ambiguous and other-client surfaces', () => {
     expect(() => findSlackBrowserSurface(null, config)).toThrow('unavailable');
@@ -181,6 +182,20 @@ describe('Slack browser scans', () => {
     await expect(reader.scan({ since: null })).rejects.toThrow('signed out');
     expired = false;
     await expect(reader.scan({ since: null })).resolves.toMatchObject({ complete: true });
+  });
+
+  it('resumes channel-scoped searches after sending in another channel', async () => {
+    const browser = fakeBrowser([[]], 0);
+    let initial = true;
+    const reader = createSlackBrowserReader(config, async args => {
+      const result = await browser.transport(args);
+      if (initial && args[3]?.includes('function inspectSlackSearch')) {
+        initial = false;
+        return JSON.stringify({ ...JSON.parse(result), href: 'https://app.slack.com/client/ET123/COTHER', full: false });
+      }
+      return result;
+    });
+    expect(await reader.scan({ since: null })).toMatchObject({ complete: true });
   });
 
   it('propagates command timeout failures and rejects invalid cursors before touching the browser', async () => {

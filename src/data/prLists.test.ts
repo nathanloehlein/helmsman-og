@@ -26,6 +26,14 @@ describe('PR lists transport', () => {
     expect(await fetchReviewRequests()).toEqual({ prs: [pr], degraded: true, truncated: false });
   });
 
+  it('preserves available statistics without requiring them on every bounty', async () => {
+    const withStats = { ...pr, comments: 7, reviews: { approved: 2, changesRequested: 1, commented: 3, requested: 1 } };
+    respond({ prs: [withStats, { ...pr, number: 43 }], degraded: false, truncated: false });
+    expect(await fetchRepoOpenPrs('org/repo')).toEqual({
+      prs: [withStats, { ...pr, number: 43 }], degraded: false, truncated: false,
+    });
+  });
+
   it.each([null, {}, { prs: null }, { prs: [], degraded: false }])('marks malformed responses unavailable: %j', async (payload) => {
     respond(payload);
     expect(await fetchReviewRequests()).toEqual({ prs: [], degraded: true, truncated: false });

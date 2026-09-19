@@ -45,7 +45,7 @@ export const CONFIG_HELP: Record<string, string> = {
   SLACK_CHANNEL_NAME: 'Channel name used in the Slack search query, without #. Example: pr-reviews',
   SLACK_BROWSER_SURFACE: 'Optional cmux browser surface containing signed-in Slack. Set this when multiple Slack browser surfaces are open. Example: surface:17',
   SLACK_REVIEW_CHANNEL: 'Slack channel for manual PR review requests. Use a channel name or ID. Example: airo-editing',
-  SLACK_REVIEW_MENTION: 'Slack user group to mention in manual PR review requests. Use a group handle or ID. Example: airo-editing-squad',
+  SLACK_REVIEW_MENTION: 'Slack user group handle to mention in manual PR review requests. Example: airo-editing-squad',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
   AGENT_CMD: 'Shell command for the "command" adapter, run no-shell (argv only). Placeholders {ticket} {repo} {title} are substituted, then it receives the task prompt. Example: my-agent --repo {repo} --ticket {ticket}',
   get AGENT_MAX_ATTEMPTS() { return `Total attempts for existing-PR ${term('runs').toLowerCase()}, including the initial attempt. New coding ${term('runs').toLowerCase()} use the separate pre-PR review rounds. Example: 1`; },
@@ -116,6 +116,10 @@ const ICON_X_MARK: string =
 
 const ICON_DOTS: string =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>'
+
+const ICON_COMMENT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 2.5h-11v8h3v3l3-3h5z"/></svg>';
+
+const ICON_REVIEW_PENDING = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/></svg>';
 
 export function renderVoyageResult(run: RunSummary): string {
   const results: Record<string, { label: string; tone: string; icon: string }> = {
@@ -732,14 +736,29 @@ function slackReviewButton(repo: string, number: number): string {
   </span>`;
 }
 
+function prListStats(pr: OpenPr): { html: string; label: string } {
+  const stats = [
+    { key: 'comments', value: pr.comments, icon: ICON_COMMENT, label: 'comments', detail: 'Discussion and inline comments', includeZero: true },
+    { key: 'approved', value: pr.reviews?.approved, icon: ICON_CHECK, label: 'approvals', detail: 'Approvals', includeZero: true },
+    { key: 'changes', value: pr.reviews?.changesRequested, icon: ICON_X_MARK, label: 'changes requested', detail: 'Changes requested', includeZero: false },
+    { key: 'pending', value: pr.reviews?.requested, icon: ICON_REVIEW_PENDING, label: `pending ${term('reviews').toLowerCase()}`, detail: `Pending ${term('reviews').toLowerCase()}`, includeZero: false },
+  ].flatMap(stat => typeof stat.value === 'number' && Number.isSafeInteger(stat.value) && stat.value >= 0 && (stat.includeZero || stat.value > 0)
+    ? [{ ...stat, value: stat.value }] : []);
+  return {
+    label: stats.map(stat => `${stat.label}: ${stat.value}`).join('; '),
+    html: stats.length ? `<span class="pr-list-stats mono">${stats.map(stat => `<span class="pr-list-stat" data-pr-stat="${stat.key}" role="img" aria-label="${esc(stat.label)}: ${stat.value}" title="${esc(stat.detail)}: ${stat.value}">${stat.icon}<span aria-hidden="true">${stat.value}</span></span>`).join('')}</span>` : '',
+  };
+}
+
 function renderPrList(state: PrListState | undefined, emptyMessage: string, requestReview: boolean = false, selectedRepo: string | null = null): string {
   const prs: OpenPr[] = validListPrs(state);
   const rows: string = prs.map((pr) => {
     const chip = reviewChip(pr.reviewDecision ?? '');
     const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
-    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}">
+    const stats = prListStats(pr);
+    return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}${stats.label ? `; ${esc(stats.label)}` : ''}">
       <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
-      <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span></span>
+      <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span>${stats.html}</span>
       ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
       ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
       ${requestReview ? slackReviewButton(pr.repo, pr.number) : ''}
@@ -825,14 +844,16 @@ export function renderVoyage(run: RunSummary, now: Date = new Date(), selectedRe
     ? `<time class="agent-elapsed mono" datetime="${esc(run.startedAt)}" title="${esc(new Date(run.startedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}">${esc(formatRelativeTime(run.startedAt, now))}</time>` : '';
   const href = routeHref({ view: 'runs', run: run.id, repo: selectedRepo });
   return `<li class="recent-run voyage-history-row" data-runid="${esc(run.id)}">
-    <a class="app-link runs-voyage-link" href="${esc(href)}">
-      ${renderVoyageResult(run)}
-      <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
-    </a>
-    <div class="voyage-row-meta">
+    <div class="voyage-row-main">
+      <a class="app-link runs-voyage-link" href="${esc(href)}">
+        ${renderVoyageResult(run)}
+        <span class="voyage-identity"><span class="ticket-id">${esc(label)}</span><span class="agent-repo mono" title="${esc(run.repo)}">${esc(run.repo.split('/').pop() ?? run.repo)}</span></span>
+      </a>
       ${run.status === 'failed' ? renderVoyageRetry(run.id, true) : ''}
-      ${startedAt}
+    </div>
+    <div class="voyage-row-meta">
       ${renderVoyageId(run.id)}
+      ${startedAt}
     </div>
   </li>`;
 }
@@ -1204,19 +1225,14 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
         <div class="panel-head"><span class="panel-title" id="slack-review-config-title">Slack ${term('reviewRequests').toLowerCase()}</span></div>
         <p class="config-warning">The button on your open ${term('prs')} posts the ${term('pr')} link and tags your ${term('review').toLowerCase()} group. Requests are sent only when you click it.</p>
         <div class="config-list">
-          ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', 'Review group', 'airo-editing-squad']].map(([key, label, fallback]) => `
+          ${[['SLACK_REVIEW_CHANNEL', 'Channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
               <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup">
               <button class="config-save" data-key="${key}">Save</button><span class="config-error" role="alert"></span>
             </div>`).join('')}
-          <div class="config-row config-secret-row" data-key="SLACK_BOT_TOKEN">
-            <label class="config-key" for="config-SLACK_BOT_TOKEN">Bot token <span class="config-secret-status ${uiConfig.slackTokenSet ? 'is-set' : 'is-unset'}">${uiConfig.slackTokenSet ? 'set ✓' : 'not set'}</span></label>
-            <input id="config-SLACK_BOT_TOKEN" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste bot token to update" aria-describedby="slack-review-setup">
-            <button class="config-save" data-key="SLACK_BOT_TOKEN">Update</button><span class="config-error" role="alert"></span>
-          </div>
         </div>
-        <p class="config-warning" id="slack-review-setup">Install a Slack app with chat:write, channels:read, and usergroups:read permissions, then invite its bot to the channel. Channel and group names or IDs are accepted. For a private channel, use its ID and add groups:read. The saved token is never displayed.</p>
+        <p class="config-warning" id="slack-review-setup">Uses your signed-in Slack browser and the Slack client and browser settings below. Set a channel name or ID and an @group handle. Existing message drafts are preserved.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">
