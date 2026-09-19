@@ -17,6 +17,26 @@ interface ComposerState {
   otherDraft: boolean;
 }
 
+export function prepareSlackReview(doc: Document, expected: Omit<PreparedReview, 'groupId'>, inspect: (doc: Document) => ComposerState): boolean {
+  const view = inspect(doc);
+  const url = new URL(view.href);
+  if (url.origin !== 'https://app.slack.com' || url.pathname !== `/client/${expected.clientId}/${expected.channelId}`
+    || view.name !== expected.channelName || view.channelId !== expected.channelId || view.editors !== 1
+    || view.draft || view.groups.length || view.attachments || view.otherDraft) return false;
+  const editors = doc.querySelectorAll<HTMLElement>('[data-helmsman-review-editor="true"]');
+  const editor = editors.length === 1 ? editors[0] : undefined;
+  const selection = doc.getSelection();
+  if (!editor?.isConnected || editor.getAttribute('contenteditable') !== 'true'
+    || editor.textContent?.trim() || !selection || typeof doc.execCommand !== 'function') return false;
+  editor.focus();
+  if (editor.textContent?.trim()) return false;
+  const range = doc.createRange();
+  range.selectNodeContents(editor);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return doc.execCommand('insertText', false, expected.text);
+}
+
 export function sendPreparedSlackReview(doc: Document, expected: PreparedReview, inspect: (doc: Document) => ComposerState): boolean {
   const view = inspect(doc);
   const url = new URL(view.href);

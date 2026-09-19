@@ -1,6 +1,6 @@
 import { findSlackBrowserSurface, runSlackBrowserCommand, slackBrowserEvaluation, surfaceSelection, withSlackBrowserLock, type SlackBrowserConfig, type SlackBrowserTransport } from './browser';
 import { SlackReviewError } from './review-request';
-import { sendPreparedSlackReview } from './browser-review-send';
+import { prepareSlackReview, sendPreparedSlackReview } from './browser-review-send';
 
 interface ReviewInput { repo: string; prNumber: number; requestId: string; channel: string; mention: string }
 interface ReviewResult { channel: string; mention: string; permalink: string | null }
@@ -128,12 +128,12 @@ export function createSlackBrowserReviewSender(config: SlackBrowserConfig, trans
         view = await poll(state, value => workspace(value).pathname === `/client/${config.clientId}/${channel?.id}` && value.name === channel?.name && value.channelId === channel?.id && value.editors === 1);
       }
       if (view.draft || view.otherDraft || view.attachments) throw new SlackReviewError('The Slack channel has an existing draft or attachment. Finish or clear it before requesting a review.', 409);
-      const editor = '[data-helmsman-review-editor="true"]';
       const marked = await evaluate<boolean>(`(() => { const editors = Array.from(document.querySelectorAll('[contenteditable="true"]:not([aria-hidden="true"])')).filter(e => !e.closest('[data-qa="thread_view"], .p-threads_view, .p-thread_view') && (e.matches('[data-qa="message_input"], .ql-editor') || e.closest('[data-qa="message_input"]'))); if (editors.length !== 1 || editors[0].textContent.trim()) return false; editors[0].setAttribute('data-helmsman-review-editor', 'true'); return true; })()`);
       if (!marked) throw new SlackReviewError('Slack channel composer is unavailable or contains a draft.', 409);
       const body = `Could you review this PR? https://github.com/${input.repo}/pull/${input.prNumber}`;
       const expected = `@${input.mention} ${body}`;
-      await transport(['browser', surface, 'fill', editor, expected]);
+      const prepared = await evaluate<boolean>(`(${prepareSlackReview.toString()})(document, ${JSON.stringify({ clientId: config.clientId, channelId: channel.id, channelName: channel.name, text: expected })}, ${inspectSlackReviewPage.toString()})`);
+      if (!prepared) throw new SlackReviewError('Slack composer or destination changed. Nothing was sent; inspect the draft before retrying.', 409);
       const resolved = await poll(async () => {
         const current = await state();
         workspace(current);

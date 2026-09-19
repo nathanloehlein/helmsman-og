@@ -19,6 +19,7 @@ function fakeBrowser(options: { draft?: string; wrongGroup?: boolean; sendError?
     commands.push(args);
     if (args.includes('tree')) return JSON.stringify({ active: { surface_ref: 'surface:4' }, windows: [{ workspaces: [{ panes: [{ selected_surface_ref: 'surface:4', surfaces: [{ ref: 'surface:4', type: 'browser', url: 'https://app.slack.com/client/ET123/C123' }] }] }] }] });
     const script = args[3] ?? '';
+    if (script.includes('function prepareSlackReview')) { draft = text; typed = true; return 'true'; }
     if (script.includes('function sendPreparedSlackReview')) {
       if (options.invalidSend) return 'false';
       sent = true; draft = ''; sendCount++;
@@ -69,7 +70,7 @@ describe('Slack browser review sender', () => {
     const browser = fakeBrowser();
     await expect(createSlackBrowserReviewSender(config, browser.transport).send(input)).resolves.toEqual({ channel: 'reviews', mention: 'reviewers', permalink: 'https://example.slack.com/archives/C123/p1700000000000001' });
     expect(browser.sendCount).toBe(1);
-    expect(browser.commands.some(args => args[2] === 'fill' && args[4] === text)).toBe(true);
+    expect(browser.commands.some(args => args[2] === 'eval' && args[3]?.includes('function prepareSlackReview'))).toBe(true);
     expect(browser.commands.some(args => args.join(' ').includes('slack.com/api/'))).toBe(false);
   });
 
