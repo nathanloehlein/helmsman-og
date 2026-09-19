@@ -130,7 +130,7 @@ function readExitCode(exitPath: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-function pumpRemaining(logPath: string, fromOffset: number, onLine: (line: string) => void): void {
+function pumpRemaining(logPath: string, fromOffset: number, onLine: (line: string) => void): number {
   let offset: number = fromOffset;
   let fd: number | null = null;
   try {
@@ -140,7 +140,6 @@ function pumpRemaining(logPath: string, fromOffset: number, onLine: (line: strin
       const len: number = size - offset;
       const buf: Buffer = Buffer.alloc(len);
       const read: number = readSync(fd, buf, 0, len, offset);
-      offset += read;
       let buffer: string = buf.subarray(0, read).toString('utf8');
       let nl: number = buffer.indexOf('\n');
       while (nl !== -1) {
@@ -149,12 +148,14 @@ function pumpRemaining(logPath: string, fromOffset: number, onLine: (line: strin
         nl = buffer.indexOf('\n');
       }
       if (buffer.length > 0) onLine(buffer);
+      offset += read;
     }
   } catch {
     void 0;
   } finally {
     if (fd !== null) closeSync(fd);
   }
+  return offset;
 }
 
 interface WaitForExitOptions {
@@ -196,8 +197,9 @@ async function tailUntilExit(
 ): Promise<number | 'stopped' | 'capped'> {
   const tail: Tail = tailLog(logPath, startOffset, consume, (off) => deps.db.updateRun(runId, { logOffset: off }));
   const outcome: number | 'stopped' | 'capped' = await waitForExit(exitPath, waitOpts);
-  pumpRemaining(logPath, deps.db.getRun(runId)?.logOffset ?? startOffset, consume);
   tail.stop();
+  const logOffset = pumpRemaining(logPath, deps.db.getRun(runId)?.logOffset ?? startOffset, consume);
+  deps.db.updateRun(runId, { logOffset });
   return outcome;
 }
 
@@ -440,7 +442,8 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
 
     const existingCode: number | null = readExitCode(exitPath);
     if (existingCode != null) {
-      pumpRemaining(logPath, row.logOffset ?? 0, consume);
+      const logOffset = pumpRemaining(logPath, row.logOffset ?? 0, consume);
+      deps.db.updateRun(runId, { logOffset });
       const ok: boolean = existingCode === 0;
       prNumber = await resolvePrNumber(row.repo, branch, prNumber, ok, deps, onEvent);
       await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped: false, ok, worktreePath: worktreePath ?? '', onEvent });
