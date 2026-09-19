@@ -127,8 +127,7 @@ async function fetchReviews(
   github: GithubConfig,
   repo: string,
   prNumber: number,
-  cached = false,
-  strict = false,
+  options: { cached?: boolean; strict?: boolean; isActive?: () => boolean } = {},
 ): Promise<RawReview[] | null> {
   const endpoint = `${API}/repos/${repo}/pulls/${prNumber}/reviews`;
   let url: string = `${endpoint}?per_page=100`;
@@ -136,13 +135,13 @@ async function fetchReviews(
   const reviews: RawReview[] = [];
   try {
     for (let page = 0; page < 10; page++) {
-      if (visited.has(url)) return null;
+      if (options.isActive?.() === false || visited.has(url)) return null;
       visited.add(url);
-      const res: Response = cached ? await cachedGithubRead(github, url) : await fetch(url, { headers: headers(github) });
+      const res: Response = options.cached ? await cachedGithubRead(github, url) : await fetch(url, { headers: headers(github) });
       if (!res.ok) return null;
       const body: unknown = await res.json();
       if (!Array.isArray(body)) return null;
-      if (strict && body.some(review => !review || typeof review !== 'object'
+      if (options.strict && body.some(review => !review || typeof review !== 'object'
         || !['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING'].includes(review.state)
         || review.user !== null && (typeof review.user?.login !== 'string' || !review.user.login.trim()))) return null;
       reviews.push(...body.filter((review): review is RawReview => review !== null && typeof review === 'object' && typeof review.state === 'string'));
@@ -227,12 +226,12 @@ export interface PrListStats {
   reviews?: ReviewTally;
 }
 
-export async function fetchPrListStats(github: GithubConfig, repo: string, prNumber: number): Promise<PrListStats> {
+export async function fetchPrListStats(github: GithubConfig, repo: string, prNumber: number, isActive?: () => boolean): Promise<PrListStats> {
   const [detail, reviews] = await Promise.all([
     cachedGithubRead(github, `${API}/repos/${repo}/pulls/${prNumber}`)
       .then(async response => response.ok ? await response.json() as unknown : null)
       .catch(() => null),
-    fetchReviews(github, repo, prNumber, true, true),
+    fetchReviews(github, repo, prNumber, { cached: true, strict: true, isActive }),
   ]);
   if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return {};
   const body = detail as Record<string, unknown>;
@@ -268,7 +267,7 @@ async function latestReviewDecision(
   repo: string,
   prNumber: number,
 ): Promise<PrReviewDecision> {
-  const reviews: RawReview[] | null = await fetchReviews(github, repo, prNumber, true);
+  const reviews: RawReview[] | null = await fetchReviews(github, repo, prNumber, { cached: true });
   if (reviews === null) return null;
   return decisionFromTally(tallyReviews(effectiveReviews(reviews), 0));
 }

@@ -12,7 +12,10 @@ const searchItem = (number: number, extra: Record<string, unknown> = {}) =>
 const response = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('fetchRepoOpenPrs', () => {
   it('lists all authors, preserves drafts, and leaves unavailable statistics omitted', async () => {
@@ -129,6 +132,57 @@ describe('fetchRepoOpenPrs', () => {
     expect(peak).toBeLessThanOrEqual(8);
     expect(result.truncated).toBe(false);
     expect(result.degraded).toBe(false);
+  });
+
+  it.each([false, true])('returns by the enrichment deadline and ignores late statistics (completed row=%s)', async completeFirst => {
+    vi.useFakeTimers();
+    const late: { url: URL; resolve: (value: Response) => void }[] = [];
+    const detail = { comments: 2, review_comments: 3, requested_reviewers: [], requested_teams: [] };
+    const fetchMock = vi.fn(async (url: URL) => {
+      if (url.pathname.endsWith('/pulls')) return response(Array.from({ length: 10 }, (_, index) => pull(index + 1)));
+      if (completeFirst && /\/pulls\/1(?:\/reviews)?$/.test(url.pathname)) {
+        return response(url.pathname.endsWith('/reviews') ? [] : detail);
+      }
+      return new Promise<Response>(resolve => late.push({ url, resolve }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const finished = vi.fn();
+    const pending = fetchRepoOpenPrs(github, 'org/app').then(result => { finished(); return result; });
+    await vi.advanceTimersByTimeAsync(0);
+    const expectedReads = completeFirst ? 11 : 9;
+    expect(fetchMock).toHaveBeenCalledTimes(expectedReads);
+    expect(late).toHaveLength(8);
+    await vi.advanceTimersByTimeAsync(7_999);
+    expect(finished).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await pending;
+    expect(result.prs).toHaveLength(10);
+    expect(result.degraded).toBe(false);
+    expect(result.truncated).toBe(false);
+    expect(finished).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    if (completeFirst) expect(result.prs[0]).toMatchObject({ comments: 5, reviews: { approved: 0, commented: 0, changesRequested: 0, requested: 0 } });
+    const incomplete = result.prs.slice(completeFirst ? 1 : 0);
+    expect(incomplete.every(pr => !('comments' in pr) && !('reviews' in pr))).toBe(true);
+    const returned = JSON.stringify(result);
+    for (const { url, resolve } of late) {
+      resolve(url.pathname.endsWith('/reviews')
+        ? response([{ state: 'APPROVED', user: { login: 'alice' } }], 200, { link: `<${url.origin}${url.pathname}?per_page=100&page=2>; rel="next"` })
+        : response(detail));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(expectedReads);
+    expect(JSON.stringify(result)).toBe(returned);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clears the enrichment deadline when all statistics finish quickly', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async (url: URL) => response(url.pathname.endsWith('/pulls') ? [pull(1)]
+      : url.pathname.endsWith('/reviews') ? [] : { comments: 0, review_comments: 0, requested_reviewers: [], requested_teams: [] })));
+    const result = await fetchRepoOpenPrs(github, 'org/app');
+    expect(result.prs[0]).toMatchObject({ comments: 0, reviews: { approved: 0, commented: 0, changesRequested: 0, requested: 0 } });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('bounds pagination and signals truncation when more repository PRs exist', async () => {
