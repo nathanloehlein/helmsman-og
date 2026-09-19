@@ -29,7 +29,7 @@ The goal is to implement every recommendation. This checklist records evidence, 
 - [x] Relevant unit/integration tests exercise real application entry points, not only standalone helpers.
 - [x] `npm run build` (TypeScript + Vite) and required checks pass.
 - [x] UI verified in browser for Costs & Outcomes, campaigns, clarifications, empty/error states, scope changes and terminology modes.
-- [ ] Commit reviewed as Senior Software Architect; material findings fixed and reverified.
+- [x] Commit reviewed as Senior Software Architect; material findings fixed and reverified.
 - [x] Final requirement-by-requirement audit includes file/test/runtime evidence and remaining limitations.
 
 ## Human-input todos
@@ -70,4 +70,4 @@ The goal is to implement every recommendation. This checklist records evidence, 
 - Docker image built successfully. Real offline RunHost smoke passed with host-visible log and exit marker. Credential gateway forwarding, expiry, revocation, persistence and scope checks tested with fake upstreams.
 - UI verified in cmux browser against a temporary database on port 8799: empty pages, known/unknown costs, scoped clarification answer, campaign import preview/confirm, and Pirate terminology. Screenshots saved under `/tmp/helmsman-ui-ekdio3/`.
 - Final full suite: 146 files / 2,248 tests passed. Final recovery/output-reader and UI polish then passed `npm run build` and 107 focused tests. Build emits an existing Vite config-loader compatibility warning; no build or TypeScript errors.
-- Final browser screenshots inspected: Costs & Outcomes, campaigns and clarifications. Commit and post-commit architectural review are the remaining release gates.
+- Final browser screenshots inspected: Costs & Outcomes, campaigns and clarifications. Post-commit Senior Software Architect review found and fixed Claude beta-request forwarding, stale automatic outcome evidence after resume, and unpinned known Codex defaults. Final fixes pass the build and 91 focused tests. A real pinned Claude container reached a mocked upstream with its beta flags and host credential substitution verified; no provider request was made.

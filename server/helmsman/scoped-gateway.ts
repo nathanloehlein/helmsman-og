@@ -70,9 +70,16 @@ export function createScopedGateway(input: ScopedGatewayOptions) {
         key = typeof input.openaiKey === 'function' ? input.openaiKey() : input.openaiKey;
         url = `https://api.openai.com${path.slice('/openai'.length)}`;
         headers = { Authorization: `Bearer ${key}`, 'content-type': 'application/json' };
-      } else if (req.method === 'POST' && path === '/anthropic/v1/messages') {
-        key = input.anthropicKey?.(); url = 'https://api.anthropic.com/v1/messages';
+      } else if (req.method === 'POST' && ['/anthropic/v1/messages', '/anthropic/v1/messages?beta=true'].includes(path)) {
+        key = input.anthropicKey?.(); url = `https://api.anthropic.com/v1/messages${path.endsWith('?beta=true') ? '?beta=true' : ''}`;
         headers = { 'x-api-key': key ?? '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
+        const beta = req.headers['anthropic-beta'];
+        if (beta !== undefined) {
+          if (typeof beta !== 'string' || beta.length > 2048 || !/^[a-z0-9][a-z0-9-]{0,127}(?:,\s*[a-z0-9][a-z0-9-]{0,127})*$/.test(beta)) {
+            reply(res, 400, { error: 'Invalid Anthropic beta header' }); return;
+          }
+          headers['anthropic-beta'] = beta;
+        }
       } else if (req.method === 'GET' && path.startsWith('/github/repos/')) {
         const scope = input.scope?.(cap.runId);
         const prefix = scope ? `/github/repos/${scope.repo}/` : '';

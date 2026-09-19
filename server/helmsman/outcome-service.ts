@@ -69,7 +69,7 @@ export function createOutcomeService(deps: {
       if (!deps.db.getRun(runId)) throw new OutcomeValidationError('Voyage not found');
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new OutcomeValidationError('Provide an assessment');
       if ('runId' in input && input.runId !== runId) throw new OutcomeValidationError('Assessment belongs to another voyage');
-      return deps.store.saveAssessment({ ...input, runId });
+      return deps.store.saveAssessment({ ...input, runId, source: 'manual' });
     },
   };
 }

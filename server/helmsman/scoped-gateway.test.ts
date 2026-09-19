@@ -28,6 +28,32 @@ afterEach(async () => {
 });
 
 describe('scoped gateway', () => {
+  it('accepts the pinned Claude CLI beta messages request with scoped credentials and validated beta headers', async () => {
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) => new Response('{"type":"message"}', { headers: { 'content-type': 'application/json' } }));
+    const { gateway, base } = await open({ openaiKey: 'openai-key', anthropicKey: () => 'host-anthropic-key', active: () => true, fetcher: fetcher as typeof fetch });
+    const cap = gateway.issue('run_1', 60_000);
+    const beta = 'claude-code-20250219, interleaved-thinking-2025-05-14';
+    const response = await request(base, cap.token, '/anthropic/v1/messages?beta=true', { method: 'POST',
+      headers: { 'content-type': 'application/json', 'anthropic-beta': beta, 'x-api-key': 'guest-key', 'x-extra': 'discard' }, body: '{"model":"claude-sonnet-4-6"}' });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ type: 'message' });
+    expect(fetcher).toHaveBeenCalledWith('https://api.anthropic.com/v1/messages?beta=true', expect.objectContaining({ redirect: 'error',
+      headers: { 'x-api-key': 'host-anthropic-key', 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-beta': beta } }));
+  });
+
+  it('rejects unapproved Anthropic queries and malformed or oversized beta headers before upstream access', async () => {
+    const fetcher = vi.fn();
+    const { gateway, base } = await open({ openaiKey: 'key', anthropicKey: () => 'key', active: () => true, fetcher: fetcher as typeof fetch });
+    const cap = gateway.issue('run_1', 60_000);
+    for (const suffix of ['?beta=false', '?beta=true&target=evil', '?beta=true&beta=true', '?%62eta=true', '/count_tokens?beta=true']) {
+      expect((await request(base, cap.token, `/anthropic/v1/messages${suffix}`, { method: 'POST' })).status).toBe(403);
+    }
+    for (const beta of ['flag;target=evil', 'flag,,other', 'x'.repeat(129), Array(20).fill('x'.repeat(120)).join(',')]) {
+      expect((await request(base, cap.token, '/anthropic/v1/messages?beta=true', { method: 'POST', headers: { 'anthropic-beta': beta } })).status).toBe(400);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('replaces inbound credentials, fixes the upstream origin, and streams the response', async () => {
     const fetcher = vi.fn(async (_url: string, _init: RequestInit) => new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('first')); controller.enqueue(new TextEncoder().encode(' second')); controller.close(); } }), { status: 201, headers: { 'content-type': 'text/plain' } }));
     const { gateway, base } = await open({ openaiKey: 'actual-key', active: () => true, fetcher: fetcher as typeof fetch });

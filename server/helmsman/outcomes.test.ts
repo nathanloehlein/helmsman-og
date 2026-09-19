@@ -29,7 +29,7 @@ function run(id: string, patch: Partial<RunRow> = {}): RunRow {
     prNumber: null, startedAt: from, endedAt: '2026-09-01T00:01:00.000Z', costUsd: null, worktreePath: null, ...patch };
 }
 function report(patch: Partial<OutcomeAssessment> = {}): OutcomeAssessment {
-  return { runId: 'one', state: 'complete', outcome: 'achieved', summary: 'Acceptance criteria verified',
+  return { source: 'manual', runId: 'one', state: 'complete', outcome: 'achieved', summary: 'Acceptance criteria verified',
     evidence: ['artifact:checks.json'], failureStage: null, correctionRounds: 0, updatedAt: from, ...patch };
 }
 function usage(patch: Partial<ProviderUsage> = {}): ProviderUsage {

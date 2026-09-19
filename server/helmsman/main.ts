@@ -301,7 +301,7 @@ async function resumeVoyage(runId: string): Promise<void> {
     const resumed = await resumeFailedPrePrRun(row, { db, host: host.kind === 'docker' && row.hostKind === 'detached' ? { ...host, kind: 'detached' } : host,
       runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped,
       prepareTask: async task => {
-        const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task, workflow: 'coding', reviewSettings: cfg.prePr, model: task.model, effort: task.effort });
+        const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task, provider: row.adapter === 'pre-pr:codex' ? 'codex' : 'claude-code', workflow: 'coding', reviewSettings: cfg.prePr, model: task.model, effort: task.effort });
         if (prepared.task.dockerExecution) {
           if (host.kind !== 'docker') throw new ResumeError('Select the Docker host before continuing an isolated voyage.');
           prepared.task.dockerExecution = { ...prepared.task.dockerExecution, capability: gateway.issue(runId, 86_400_000).token };
@@ -475,7 +475,7 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
       }
       taskObj.clarification = { ...clarificationPaths(RUNS_DIR, runId), gateUrl: `http://127.0.0.1:${PORT}/api/runs/${runId}/clarification-gate` };
       const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task: taskObj,
-        workflow: taskObj.review ? 'review' : 'coding', reviewSettings: cfg.prePr, model: taskObj.model, effort: taskObj.effort,
+        provider: adapter.id === 'codex' ? 'codex' : adapter.id === 'claude-code' ? 'claude-code' : undefined, workflow: taskObj.review ? 'review' : 'coding', reviewSettings: cfg.prePr, model: taskObj.model, effort: taskObj.effort,
         skills: adapter.id === 'codex' && taskObj.review || !taskObj.review && !taskObj.prBranch && (adapter.id === 'codex' || cfg.prePr.reviewerCount > 1) ? ['review-agent'] : [] });
       taskObj = prepared.task;
       const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, prepared.reviewSettings) : taskObj.review && taskObj.dockerExecution ? dockerReviewAdapter(adapter) : adapter;

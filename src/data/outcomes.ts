@@ -2,6 +2,7 @@ export const ASSESSMENT_STATES = ['complete', 'partial', 'failed', 'not-assessed
 export const TASK_OUTCOMES = ['achieved', 'partial', 'not-achieved', 'unknown'] as const;
 
 export interface OutcomeAssessment {
+  source?: 'manual' | 'telemetry';
   runId: string;
   state: typeof ASSESSMENT_STATES[number];
   outcome: typeof TASK_OUTCOMES[number];

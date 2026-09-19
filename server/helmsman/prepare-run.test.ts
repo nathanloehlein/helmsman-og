@@ -28,4 +28,18 @@ describe('prepare execution', () => {
     const retry = await prepareExecution({ runId: 'run_1', runsDir: join(f.root, 'runs'), workflowDbPath: join(f.root, 'workflow.db'), task: initial.task, workflow: 'review', reviewSettings: { ...f.settings, maxRounds: 1 }, model: 'other', effort: 'low', skillsRoots: [f.skills] });
     expect(retry).toMatchObject({ snapshotId: initial.snapshotId, model: 'gpt-6-astra', effort: 'high', reviewSettings: f.settings });
   });
+  it('pins known Codex defaults and retains them when retry preferences change', async () => {
+    const f = await fixture();
+    const base = { runId: 'run_1', runsDir: join(f.root, 'runs'), workflowDbPath: join(f.root, 'workflow.db'), task: f.task, workflow: 'coding' as const, provider: 'codex' as const, reviewSettings: f.settings, skillsRoots: [f.skills] };
+    const initial = await prepareExecution(base);
+    expect(initial.task).toMatchObject({ model: 'gpt-6-astra', effort: 'medium' });
+    const retry = await prepareExecution({ ...base, task: initial.task, model: 'gpt-5.5', effort: 'high' });
+    expect(retry.task).toMatchObject({ model: 'gpt-6-astra', effort: 'medium', workflowSnapshotId: initial.snapshotId });
+  });
+  it('keeps unreported Claude defaults unknown', async () => {
+    const f = await fixture();
+    const result = await prepareExecution({ runId: 'run_1', runsDir: join(f.root, 'runs'), workflowDbPath: join(f.root, 'workflow.db'), task: f.task, workflow: 'coding', provider: 'claude-code', reviewSettings: f.settings, skillsRoots: [f.skills] });
+    expect(result.task.model).toBeUndefined(); expect(result.task.effort).toBeUndefined();
+  });
+
 });

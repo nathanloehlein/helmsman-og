@@ -19,7 +19,7 @@ export function openRunTelemetry(path: string, outcomes: OutcomeStore): RunTelem
   )`);
   const insert = sql.prepare(`INSERT OR IGNORE INTO run_lifecycle
     (runId,attempt,byteOffset,kind,provider,model,effort,stage,round,providerEventId) VALUES (?,?,?,?,?,?,?,?,?,?)`);
-  const latestFailure = sql.prepare("SELECT stage FROM run_lifecycle WHERE runId = ? AND kind = 'error' AND stage IS NOT NULL ORDER BY attempt DESC, byteOffset DESC LIMIT 1");
+  const latestFailure = sql.prepare("SELECT stage FROM run_lifecycle WHERE runId = ? AND attempt = ? AND kind = 'error' AND stage IS NOT NULL ORDER BY attempt DESC, byteOffset DESC LIMIT 1");
   const rounds = sql.prepare('SELECT MAX(round) AS round FROM run_lifecycle WHERE runId = ?');
   return {
     record(run, task, event, byteOffset) {
@@ -37,10 +37,11 @@ export function openRunTelemetry(path: string, outcomes: OutcomeStore): RunTelem
       return costs.length ? costs.reduce((sum, value) => sum + value, 0) : run.costUsd;
     },
     complete(run) {
-      if (outcomes.getAssessment(run.id)) return;
-      const failure = latestFailure.get(run.id) as { stage: string | null } | undefined;
+      const existing = outcomes.getAssessment(run.id);
+      if (existing && existing.source !== 'telemetry') return;
+      const failure = latestFailure.get(run.id, run.attempt) as { stage: string | null } | undefined;
       const corrections = rounds.get(run.id) as { round: number | null } | undefined;
-      outcomes.saveAssessment({ runId: run.id, state: 'not-assessed', outcome: 'unknown',
+      outcomes.saveAssessment({ runId: run.id, source: 'telemetry', state: 'not-assessed', outcome: 'unknown',
         summary: 'Execution finished; task outcome has not been assessed against evidence.', evidence: [],
         failureStage: run.status === 'failed' ? failure?.stage ?? 'execution' : null,
         correctionRounds: corrections?.round === null || corrections?.round === undefined ? null : Math.max(0, corrections.round - 1) });

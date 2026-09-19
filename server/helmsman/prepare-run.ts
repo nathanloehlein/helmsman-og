@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { PrePrSettings } from '../../src/logic/prePrSettings';
 import type { AgentTask } from './agents/adapter';
+import { codexSettings } from './agent-attribution';
 import { hashSkillDirectory, installVerifiedSkills, preflightSkills, type VerifiedSkill } from './skills-preflight';
 import { openWorkflowStore, type FixedWorkflowId, type SkillDeclaration, type WorkflowStore } from './workflow-snapshots';
 
@@ -16,6 +17,7 @@ export interface PrepareExecutionInput {
   reviewSettings: PrePrSettings;
   model?: string;
   effort?: string;
+  provider?: 'codex' | 'claude-code';
   skills?: readonly string[];
   skillsRoots?: readonly string[];
   store?: WorkflowStore;
@@ -41,7 +43,7 @@ export function defaultSkillsRoots(cwd = process.cwd()): string[] {
 
 async function promptCodeHash(): Promise<string> {
   const hash = createHash('sha256');
-  for (const path of ['server/helmsman/agents/prompt.ts', 'server/helmsman/agents/clarification-prompt.ts', 'server/helmsman/agents/pre-pr-prompt.ts', 'server/helmsman/agents/pre-pr.ts', 'server/helmsman/pre-pr-workflow.ts', 'server/helmsman/pre-pr-runtime.ts', 'server/helmsman/docker-stage.ts', 'server/helmsman/docker-review-cli.ts', 'server/helmsman/docker-gateway-relay.mjs', 'server/helmsman/agents/docker-review.ts']) {
+  for (const path of ['server/helmsman/agent-attribution.ts', 'server/helmsman/agents/prompt.ts', 'server/helmsman/agents/clarification-prompt.ts', 'server/helmsman/agents/pre-pr-prompt.ts', 'server/helmsman/agents/pre-pr.ts', 'server/helmsman/pre-pr-workflow.ts', 'server/helmsman/pre-pr-runtime.ts', 'server/helmsman/docker-stage.ts', 'server/helmsman/docker-review-cli.ts', 'server/helmsman/docker-gateway-relay.mjs', 'server/helmsman/agents/docker-review.ts']) {
     hash.update(path).update('\0').update(await readFile(resolve(process.cwd(), path))).update('\0');
   }
   return hash.digest('hex');
@@ -80,7 +82,8 @@ export async function prepareExecution(input: PrepareExecutionInput): Promise<Pr
       || JSON.stringify(existingSnapshot.skills) !== JSON.stringify(found.declarations.sort((a, b) => a.name.localeCompare(b.name))))) {
       throw new Error('Required skills do not match the saved workflow snapshot');
     }
-    const snapshot = existingSnapshot ?? store.createSnapshot({ workflowId: input.workflow, model: input.model, effort: input.effort,
+    const defaults = input.provider === 'codex' ? codexSettings({ model: input.model ?? input.task.model, effort: input.effort ?? input.task.effort }) : { model: input.model ?? input.task.model, effort: input.effort ?? input.task.effort };
+    const snapshot = existingSnapshot ?? store.createSnapshot({ workflowId: input.workflow, model: defaults.model ?? input.model, effort: defaults.effort ?? input.effort,
       promptCodeHash: await promptCodeHash(), reviewSettings: input.reviewSettings as unknown as Record<string, unknown>, skills: found.declarations });
     const skillsPath = join(input.runsDir, `${input.runId}.runtime`);
     const installRoot = join(skillsPath, 'skills');
@@ -90,8 +93,8 @@ export async function prepareExecution(input: PrepareExecutionInput): Promise<Pr
       }
     } else await installVerifiedSkills(verified, installRoot);
     const reviewSettings = (existingSnapshot?.reviewSettings ?? input.reviewSettings) as PrePrSettings;
-    const model = existingSnapshot ? existingSnapshot.model : input.model;
-    const effort = existingSnapshot ? existingSnapshot.effort : input.effort;
+    const model = snapshot.model;
+    const effort = snapshot.effort;
     return { snapshotId: snapshot.id, skills: verified, reviewSettings, model, effort,
       task: { ...input.task, model, effort, workflowSnapshotId: snapshot.id, skillsPath, promptRevision: snapshot.definition.promptRevision } };
   } finally { if (ownsStore) store.close(); }

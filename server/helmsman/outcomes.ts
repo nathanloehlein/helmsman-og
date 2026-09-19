@@ -59,7 +59,8 @@ function timestamp(value: unknown): string {
 
 function assessment(input: unknown, updatedAt: string): OutcomeAssessment {
   const value = record(input);
-  fields(value, ['runId', 'state', 'outcome', 'summary', 'evidence', 'failureStage', 'correctionRounds']);
+  fields(value, ['runId', 'state', 'outcome', 'summary', 'evidence', 'failureStage', 'correctionRounds', 'source']);
+  if (value.source !== undefined && value.source !== 'manual' && value.source !== 'telemetry') throw new OutcomeValidationError('Invalid assessment source');
   const state = ASSESSMENT_STATES.find(state => state === value.state);
   const outcome = TASK_OUTCOMES.find(outcome => outcome === value.outcome);
   if (!state || !outcome) throw new OutcomeValidationError('Invalid assessment state or task outcome');
@@ -72,7 +73,7 @@ function assessment(input: unknown, updatedAt: string): OutcomeAssessment {
   const rounds = number(value.correctionRounds, 'correction rounds', true);
   if (rounds !== null && rounds > 100) throw new OutcomeValidationError('Too many correction rounds');
   return {
-    runId: runId(value.runId), state, outcome,
+    runId: runId(value.runId), state, outcome, source: value.source ?? 'manual',
     summary: text(value.summary, 'assessment summary', 4000), evidence,
     failureStage: value.failureStage === undefined || value.failureStage === null ? null : text(value.failureStage, 'failure stage', 120),
     correctionRounds: rounds, updatedAt,

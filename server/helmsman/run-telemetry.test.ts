@@ -34,4 +34,24 @@ describe('run telemetry integration', () => {
     expect(outcomes.getAssessment(row.id)?.outcome).toBe('achieved');
     telemetry.close(); outcomes.close();
   });
+  it('refreshes automatic failure and correction evidence after a successful resume', () => {
+    const outcomes = openOutcomeStore(':memory:');
+    const telemetry = openRunTelemetry(':memory:', outcomes);
+    telemetry.record(row, task, { kind: 'error', text: 'review failed', stage: 'review', round: 1 }, 10);
+    telemetry.complete({ ...row, status: 'failed' });
+    expect(outcomes.getAssessment(row.id)).toMatchObject({ source: 'telemetry', failureStage: 'review', correctionRounds: 0 });
+    telemetry.record({ ...row, attempt: 2 }, task, { kind: 'phase', text: 'corrected', stage: 'fix', round: 2 }, 20);
+    telemetry.complete({ ...row, attempt: 2 });
+    expect(outcomes.getAssessment(row.id)).toMatchObject({ state: 'not-assessed', outcome: 'unknown', failureStage: null, correctionRounds: 1 });
+    telemetry.close(); outcomes.close();
+  });
+  it('preserves a human not-assessed decision during later completion', () => {
+    const outcomes = openOutcomeStore(':memory:');
+    const telemetry = openRunTelemetry(':memory:', outcomes);
+    outcomes.saveAssessment({ runId: row.id, state: 'not-assessed', outcome: 'unknown', summary: 'Awaiting independent check', evidence: [] });
+    telemetry.complete(row);
+    expect(outcomes.getAssessment(row.id)).toMatchObject({ source: 'manual', summary: 'Awaiting independent check' });
+    telemetry.close(); outcomes.close();
+  });
+
 });

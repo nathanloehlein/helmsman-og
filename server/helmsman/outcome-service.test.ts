@@ -31,9 +31,9 @@ describe('outcome service application entry points', () => {
     const invalid = await handleApi('PUT', '/api/outcomes/one/assessment', new URLSearchParams(), { runId: 'someone-else' }, deps);
     expect(invalid?.status).toBe(400);
     const saved = await handleApi('PUT', '/api/outcomes/one/assessment', new URLSearchParams(), {
-      state: 'complete', outcome: 'achieved', summary: 'verified', evidence: ['test report'],
+      state: 'complete', outcome: 'achieved', summary: 'verified', evidence: ['test report'], source: 'telemetry',
     }, deps);
-    expect(saved?.status).toBe(200); expect(store.getAssessment('one')?.outcome).toBe('achieved');
+    expect(saved?.status).toBe(200); expect(store.getAssessment('one')).toMatchObject({ outcome: 'achieved', source: 'manual' });
     db.close(); store.close();
   });
 });
