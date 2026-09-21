@@ -748,7 +748,7 @@ review-agent/model traffic are separate and are not counted by this endpoint.
 
 Helmsman can discover PRs every five minutes from two sources:
 
-- Slack: full GitHub PR URLs posted in one configured channel, including thread replies. No mention or review wording is required. Each source message/PR pair runs once; posting the URL again is a new trigger. History before activation is ignored.
+- Slack: full GitHub PR URLs posted in one configured channel, including thread replies. No mention or review wording is required. PRs authored by your authenticated GitHub account or `GITHUB_PR_AUTHOR` are skipped, regardless of who posts the link. Ownership lookup failures retain the request for retry. Each source message/PR pair runs once; posting an eligible URL again is a new trigger. History before activation is ignored.
 - GitHub: pending requests for `GITHUB_PR_AUTHOR`, once per repository/PR/head SHA. Existing pending requests are eligible when enabled; a new revision can trigger another review. A running or successful review of that revision can satisfy the request.
 
 Both sources persist their queues and notifications in the Helmsman SQLite database. The header notification bell shows source health, queued/started/failed/blocked reviews, links to the source and run, and the selected model/effort. Marking a notification read persists across reloads and restarts. Existing concurrency limits apply; repositories must be configured in `GITHUB_REPO` or `REPO_PROJECT_MAP`. Requests for unconfigured repositories remain visible as blocked.

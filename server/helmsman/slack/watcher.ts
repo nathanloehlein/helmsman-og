@@ -22,6 +22,7 @@ export interface SlackWatcherOptions {
   source: SlackSource;
   allowedRepos: () => readonly string[];
   canLaunch: (repo: string) => boolean;
+  isOwnPr: (repo: string, prNumber: number) => Promise<boolean | null>;
   getRun: (runId: string) => unknown;
   isRunActive: (runId: string) => boolean;
   launch: (input: { repo: string; prNumber: number; mode: 'review'; runId: string }) => string;
@@ -72,7 +73,7 @@ export function createSlackWatcher(options: SlackWatcherOptions): SlackWatcher {
   const activatedTs = Date.parse(state.activatedAt) / 1000;
   let pending: Promise<void> | null = null;
 
-  function drainQueue(): void {
+  async function drainQueue(): Promise<void> {
     for (const notification of store.launchedNotifications(key)) {
       const run = notification.runId ? options.getRun(notification.runId) : null;
       if (run && typeof run === 'object' && 'status' in run && run.status === 'failed') {
@@ -101,6 +102,22 @@ export function createSlackWatcher(options: SlackWatcherOptions): SlackWatcher {
           continue;
         }
         if (!options.canLaunch(repo)) continue;
+        let isOwnPr: boolean | null;
+        try { isOwnPr = await options.isOwnPr(repo, notification.prNumber); }
+        catch { isOwnPr = null; }
+        if (isOwnPr === true) {
+          store.updateNotification(notification.id, 'blocked', now(), 'Automatic Slack review skipped: this is your pull request');
+          continue;
+        }
+        if (isOwnPr !== false) {
+          store.updateNotification(notification.id, 'queued', now(), 'Could not verify pull request ownership; will retry');
+          continue;
+        }
+        if (!options.allowedRepos().some(allowed => allowed.toLowerCase() === repo.toLowerCase()) || !options.canLaunch(repo)) continue;
+        if (options.getRun(runId) || options.isRunActive(runId)) {
+          store.updateNotification(notification.id, 'launched', now());
+          continue;
+        }
         const launchedId = options.launch({ repo, prNumber: notification.prNumber, mode: 'review', runId });
         if (launchedId !== runId) throw new Error('Launcher returned an unexpected run ID');
         store.updateNotification(notification.id, 'launched', now());
@@ -146,7 +163,7 @@ export function createSlackWatcher(options: SlackWatcherOptions): SlackWatcher {
       state.health = { ...state.health, status: 'unavailable', error: errorMessage(error) };
     } finally {
       store.saveSource(state);
-      drainQueue();
+      await drainQueue();
     }
   }
 

@@ -28,6 +28,7 @@ function setup(overrides: Partial<SlackWatcherOptions> = {}) {
   const options: SlackWatcherOptions = {
     store, clientId: 'T123', channelId: 'C123', channelName: 'airo-editing',
     source: { scan }, allowedRepos: () => ['org/repo'], canLaunch: () => true,
+    isOwnPr: async () => false,
     getRun: () => null, isRunActive: id => active.has(id), launch, now: () => activation,
     ...overrides,
   };
@@ -53,6 +54,58 @@ describe('Slack PR URL validation', () => {
 });
 
 describe('Slack watcher', () => {
+  it('skips own PRs posted by anyone, including reposts, while reviewing other authors', async () => {
+    const isOwnPr = vi.fn(async (_repo: string, prNumber: number) => prNumber === 42);
+    const { watcher, scan, launch, store } = setup({ isOwnPr });
+    scan.mockResolvedValue({ messages: [message(1), { ...message(2, ['https://github.com/org/repo/pull/43']), author: 'Me' }], complete: true });
+    await watcher.poll();
+    scan.mockResolvedValue({ messages: [message(1), { ...message(3), author: 'Me' }], complete: true });
+    await watcher.poll();
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(launch.mock.calls[0]?.[0]).toMatchObject({ prNumber: 43 });
+    expect(store.listNotifications().filter(row => row.prNumber === 42)).toHaveLength(2);
+    expect(store.listNotifications().filter(row => row.prNumber === 42).every(row => row.status === 'blocked' && row.error?.includes('your pull request'))).toBe(true);
+    expect(isOwnPr).toHaveBeenCalledTimes(3);
+  });
+
+  it('checks persisted queued PRs before launching after restart even when Slack is unavailable', async () => {
+    const initial = setup({ canLaunch: () => false });
+    await initial.watcher.poll();
+    const restarted = setup({ store: initial.store, isOwnPr: async () => true });
+    restarted.scan.mockRejectedValue(new Error('browser closed'));
+    await restarted.watcher.poll();
+    expect(restarted.launch).not.toHaveBeenCalled();
+    expect(initial.store.listNotifications()[0]).toMatchObject({ status: 'blocked', error: expect.stringContaining('your pull request') });
+  });
+
+  it.each(['unknown', 'throws'])('retries ownership lookup when it %s without losing the queued PR', async (failure) => {
+    const isOwnPr = vi.fn<SlackWatcherOptions['isOwnPr']>().mockResolvedValue(false);
+    if (failure === 'throws') isOwnPr.mockRejectedValueOnce(new Error('GitHub unavailable'));
+    else isOwnPr.mockResolvedValueOnce(null);
+    const { watcher, scan, launch, store } = setup({ isOwnPr });
+    await watcher.poll();
+    expect(launch).not.toHaveBeenCalled();
+    expect(store.listNotifications()[0]).toMatchObject({ status: 'queued', error: expect.stringContaining('will retry') });
+    scan.mockResolvedValue({ messages: [], complete: true });
+    await watcher.poll();
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(store.listNotifications()[0]).toMatchObject({ status: 'launched', error: null });
+  });
+
+  it.each(['disabled', 'removed', 'active'])('does not launch if eligibility changes to %s during ownership lookup', async (change) => {
+    let eligible = true;
+    let active = false;
+    const { watcher, launch, store } = setup({
+      canLaunch: () => change === 'disabled' ? eligible : true,
+      allowedRepos: () => change === 'removed' && !eligible ? [] : ['org/repo'],
+      isRunActive: () => active,
+      isOwnPr: async () => { eligible = false; active = change === 'active'; return false; },
+    });
+    await watcher.poll();
+    expect(launch).not.toHaveBeenCalled();
+    expect(store.listNotifications()[0]?.status).toBe(change === 'active' ? 'launched' : 'queued');
+  });
+
   it('uses activation as the baseline and captures posts arriving during the first scan', async () => {
     const { watcher, scan, launch, store } = setup();
     scan.mockResolvedValue({ messages: [message(-60), message(1)], complete: true });

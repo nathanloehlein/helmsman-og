@@ -61,6 +61,7 @@ import { createWezTermBridge } from './wezterm/bridge';
 import { openSlackStore } from './slack/store';
 import { openVoyageNotifications } from './voyage-notifications';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
+import { fetchPrOwnership } from '../github-pr-ownership';
 import { createSlackBrowserReader, runSlackBrowserCommand } from './slack/browser';
 import { createFirefoxSlackBrowserTransport } from './slack/firefox-browser';
 import { createSlackBrowserReviewSender } from './slack/browser-review';
@@ -574,6 +575,12 @@ function configuredSlackWatcher(): SlackWatcher | null {
     },
     canLaunch: (repo) => JSON.stringify(slackSettings(configStore.effectiveEnv())) === key
       && Boolean(configStore.current().github) && pm.canStart(repo).ok,
+    isOwnPr: async (repo, prNumber) => {
+      const github = configStore.current().github;
+      const ownership = await fetchPrOwnership(github, repo, prNumber);
+      const current = configStore.current().github;
+      return current?.token === github?.token && current?.author === github?.author ? ownership : null;
+    },
     getRun: (id) => db.getRun(id), isRunActive: (id) => pm.hasRun(id), launch,
     intervalMs: SLACK_INTERVAL_MS,
   }) : null;
