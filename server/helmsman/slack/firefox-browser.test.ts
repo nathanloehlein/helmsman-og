@@ -37,6 +37,7 @@ function driver() {
           this.message({ type: 'success', id: command.id, result: { contexts } });
           return;
         }
+        if (command.method === 'input.performActions') { this.message({ type: 'success', id: command.id, result: {} }); return; }
         if (command.method !== 'script.evaluate') throw new Error('Unexpected BiDi mutation');
         const context = command.params.target as { context: string };
         const url = contexts.find(item => item.context === context.context)?.url ?? 'about:blank';
@@ -54,6 +55,8 @@ function driver() {
     capabilities: { browserName: 'firefox', webSocketUrl } } })));
   vi.stubGlobal('fetch', fetcher);
   vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(() => [{ width: 1, height: 1 }] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 20, right: 110, bottom: 60 } as DOMRect);
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => document.querySelector('button')) });
   return { calls, sockets, contexts, fetcher,
     setResponse: (value: typeof response) => { response = value; },
     setSocketUrl: (value: unknown) => { webSocketUrl = value; },
@@ -72,10 +75,20 @@ describe('Firefox background Slack transport', () => {
     expect(fake.fetcher).not.toHaveBeenCalled();
   });
 
-  it.each(['ws://remote.example:9222/session/1', 'ws://127.0.0.1.evil.test:9222/session/1', 'ws://localhost:9222/session/1',
+  it.each(['ws://remote.example:9222/session/1', 'ws://127.0.0.1.evil.test:9222/session/1',
     'wss://127.0.0.1:9222/session/1', 'ws://secret@127.0.0.1:9222/session/1', 'ws://127.0.0.1:9222/session/1?secret=1'])('rejects unsafe or mismatched WebSocket endpoint %s', endpoint => {
     const fake = driver(); fake.setSocketUrl(endpoint);
     return expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('unsafe background automation endpoint');
+  });
+
+  it.each([
+    ['http://localhost:4444', 'ws://127.0.0.1:9222/session/1'],
+    ['http://127.0.0.1:4444', 'ws://localhost:9222/session/1'],
+    ['http://127.0.0.1:4444', 'ws://[::1]:9222/session/1'],
+  ])('accepts equivalent loopback hosts for %s and %s', async (endpoint, socket) => {
+    const fake = driver(); fake.setSocketUrl(socket);
+    await createFirefoxSlackBrowserTransport(endpoint)(treeCommand);
+    expect(fake.sockets[0]?.url).toBe(socket);
   });
 
   it('requires BiDi and gives actionable setup guidance without falling back', async () => {
@@ -161,8 +174,41 @@ describe('Firefox background Slack transport', () => {
     await transport(['browser', slack, 'wait', '--selector', '#query', '--timeout-ms', '10000']);
     await transport(['browser', slack, 'click', '#query']);
     await expect(transport(['browser', slack, 'click', '#disabled'])).rejects.toThrow('control is unavailable');
-    expect(clicked).toHaveBeenCalledOnce();
+    expect(clicked).not.toHaveBeenCalled();
+    expect(fake.calls.filter(call => call.method === 'input.performActions')).toEqual([{
+      id: expect.any(Number), method: 'input.performActions', params: { context: 'slack-tab', actions: [{
+        type: 'pointer', id: 'helmsman-slack-pointer', parameters: { pointerType: 'mouse' }, actions: [
+          { type: 'pointerMove', x: 60, y: 40, duration: 0, origin: 'viewport' },
+          { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 },
+        ],
+      }] },
+    }]);
+    expect(fake.calls.every(call => ['browsingContext.getTree', 'script.evaluate', 'input.performActions'].includes(call.method))).toBe(true);
     expect(fake.fetcher).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { left: -200, top: 20, right: -10, bottom: 60 },
+    { left: 10, top: 20, right: 10, bottom: 60 },
+    { left: NaN, top: 20, right: 110, bottom: 60 },
+  ])('refuses native input for invalid or offscreen bounds %j', async bounds => {
+    const fake = driver();
+    document.body.innerHTML = '<button id="query">Search</button>';
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(bounds as DOMRect);
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    await expect(transport(['browser', slack, 'click', '#query'])).rejects.toThrow('control is unavailable');
+    expect(fake.calls.some(call => call.method === 'input.performActions')).toBe(false);
+  });
+
+  it('refuses native input when another element covers the target', async () => {
+    const fake = driver();
+    document.body.innerHTML = '<button id="query">Search</button><div id="overlay"></div>';
+    vi.mocked(document.elementFromPoint).mockReturnValue(document.querySelector('#overlay'));
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    await expect(transport(['browser', slack, 'click', '#query'])).rejects.toThrow('control is unavailable');
+    expect(fake.calls.some(call => call.method === 'input.performActions')).toBe(false);
   });
 
   it('guards against pages leaving Slack before evaluation and does not expose script errors', async () => {

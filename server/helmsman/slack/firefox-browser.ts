@@ -2,6 +2,7 @@ import type { SlackBrowserTransport } from './browser';
 import { connectFirefoxBidi, type FirefoxBidiClient } from './firefox-bidi';
 
 const UNAVAILABLE = 'Firefox background automation is unavailable. Restart Firefox with --marionette --remote-debugging-port 9222, then restart the local Firefox bridge.';
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -10,14 +11,14 @@ function record(value: unknown): Record<string, unknown> | null {
 function endpointUrl(endpoint: string): URL {
   let url: URL;
   try { url = new URL(endpoint); } catch { throw new Error('Firefox WebDriver must use a local HTTP endpoint.'); }
-  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+  if (url.protocol !== 'http:' || !LOOPBACK_HOSTS.includes(url.hostname)
     || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
     throw new Error('Firefox WebDriver must use a local HTTP endpoint without credentials, a path, or query parameters.');
   }
   return url;
 }
 
-function slackControl(doc: Document, selector: string, operation: 'click' | 'fill' | 'wait', text?: string): boolean {
+function slackControl(doc: Document, selector: string, operation: 'click' | 'fill' | 'wait', text?: string): boolean | { x: number; y: number } {
   const element = Array.from(doc.querySelectorAll<HTMLElement>(selector)).find(item => {
     const style = doc.defaultView?.getComputedStyle(item);
     return item.isConnected && item.getClientRects().length > 0 && style?.visibility !== 'hidden' && style?.display !== 'none';
@@ -25,7 +26,21 @@ function slackControl(doc: Document, selector: string, operation: 'click' | 'fil
   if (!element) return false;
   if (operation === 'wait') return true;
   if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false;
-  if (operation === 'click') { element.click(); return true; }
+  if (operation === 'click') {
+    const bounds = element.getBoundingClientRect();
+    const width = doc.defaultView?.innerWidth ?? 0;
+    const height = doc.defaultView?.innerHeight ?? 0;
+    if (![bounds.left, bounds.top, bounds.right, bounds.bottom, width, height].every(Number.isFinite)) return false;
+    const left = Math.max(0, bounds.left);
+    const top = Math.max(0, bounds.top);
+    const right = Math.min(width, bounds.right);
+    const bottom = Math.min(height, bounds.bottom);
+    if (right <= left || bottom <= top) return false;
+    const x = Math.floor((left + right) / 2);
+    const y = Math.floor((top + bottom) / 2);
+    const hit = doc.elementFromPoint(x, y);
+    return hit && element.contains(hit) ? { x, y } : false;
+  }
   if (typeof text !== 'string') return false;
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     if (element.readOnly) return false;
@@ -74,7 +89,7 @@ export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:
         || typeof capabilities.webSocketUrl !== 'string') throw new Error(UNAVAILABLE);
       let socket: URL;
       try { socket = new URL(capabilities.webSocketUrl); } catch { throw new Error(UNAVAILABLE); }
-      if (socket.protocol !== 'ws:' || socket.hostname !== base.hostname || socket.username || socket.password || socket.search || socket.hash) {
+      if (socket.protocol !== 'ws:' || !LOOPBACK_HOSTS.includes(socket.hostname) || socket.username || socket.password || socket.search || socket.hash) {
         throw new Error('Firefox returned an unsafe background automation endpoint. Restart the local Firefox bridge.');
       }
       return socket.href;
@@ -173,7 +188,21 @@ export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:
     if (!args[3] || operation === 'click' && args.length !== 4 || operation === 'fill' && args.length !== 5) {
       throw new Error('Invalid Firefox Slack control command.');
     }
-    if (await control(args[3], operation as 'click' | 'fill', args[4]) !== true) {
+    const result = await control(args[3], operation as 'click' | 'fill', args[4]);
+    if (operation === 'click') {
+      const point = record(result);
+      if (typeof point?.x !== 'number' || typeof point.y !== 'number'
+        || !Number.isSafeInteger(point.x) || !Number.isSafeInteger(point.y) || point.x < 0 || point.y < 0) {
+        throw new Error('The Slack browser control is unavailable or changed. Retry after the page settles.');
+      }
+      await (await client()).request('input.performActions', { context, actions: [{
+        type: 'pointer', id: 'helmsman-slack-pointer', parameters: { pointerType: 'mouse' }, actions: [
+          { type: 'pointerMove', x: point.x, y: point.y, duration: 0, origin: 'viewport' },
+          { type: 'pointerDown', button: 0 },
+          { type: 'pointerUp', button: 0 },
+        ],
+      }] });
+    } else if (result !== true) {
       throw new Error('The Slack browser control is unavailable or changed. Retry after the page settles.');
     }
     return 'OK';
