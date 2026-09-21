@@ -19,18 +19,19 @@ export interface TriageGroups {
   mineOpen: JiraIssue[];
 }
 
-const FIELDS: string = 'summary,status,priority,resolutiondate,updated';
+const FIELDS: string = 'summary,description,status,priority,resolutiondate,updated';
 const MINE_OPEN_CACHE_MS = 5 * 60_000;
 const MINE_OPEN_CACHE_LIMIT = 32;
 type MineOpenCache = Map<string, { expiresAt: number; result: Promise<JiraIssue[]> }>;
 const mineOpenCaches = new WeakMap<typeof fetch, MineOpenCache>();
 
-const BUG_FIELDS: string = 'summary,priority,duedate,resolutiondate,created,customfield_14808';
+const BUG_FIELDS: string = 'summary,description,priority,duedate,resolutiondate,created,customfield_14808';
 
 export interface BugIssue {
   key: string;
   fields: {
     summary: string;
+    description?: unknown;
     priority: { name: string } | null;
     duedate: string | null;
     resolutiondate: string | null;
@@ -204,4 +205,17 @@ export async function fetchResolvedDurations(jira: JiraConfig, project: string, 
     if (!Number.isNaN(ms)) out.push(Math.max(0, Math.round(ms / 86_400_000)));
   }
   return out;
+}
+
+export async function assignIssueToCurrentUser(jira: JiraConfig, ticketId: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const headers = { Authorization: `Basic ${basicAuth(jira)}`, Accept: 'application/json', 'Content-Type': 'application/json' };
+  const profile = await fetchImpl(new URL('/rest/api/3/myself', jira.baseUrl), { headers, signal: AbortSignal.timeout(10_000) });
+  if (!profile.ok) throw new Error(`Jira identity lookup failed (${profile.status}).`);
+  const user = await profile.json() as { accountId?: unknown } | null;
+  if (typeof user?.accountId !== 'string' || !user.accountId.trim()) throw new Error('Jira did not return your account ID.');
+  const response = await fetchImpl(new URL(`/rest/api/3/issue/${encodeURIComponent(ticketId)}/assignee`, jira.baseUrl), {
+    method: 'PUT', headers, body: JSON.stringify({ accountId: user.accountId }), signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`Jira assignment failed (${response.status}).`);
+  mineOpenCaches.delete(fetchImpl);
 }

@@ -69,6 +69,7 @@ export interface RouterDeps {
   context?: () => { repos: string[]; jiraBaseUrl: string | null; jiraEnabled?: boolean };
   slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean };
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
+  assignTicket?: (ticketId: string) => Promise<void>;
   triage: (repo: string | null) => Promise<TriageResponse>;
   bugs: (repo: string | null) => Promise<BugsResponse>;
   db: Db;
@@ -227,6 +228,16 @@ export async function handleApi(
   if (path === '/api/dashboard' && method === 'GET') {
     const payload = await deps.dashboard(query.get('repo'));
     return { status: 200, json: payload };
+  }
+  const assignTicket = path.match(/^\/api\/tickets\/([A-Z][A-Z0-9_]*-\d+)\/assign-self$/);
+  if (assignTicket && method === 'POST') {
+    if (deps.jiraEnabled?.() === false || !deps.assignTicket) return { status: 409, json: { error: 'Jira assignment is unavailable.' } };
+    try {
+      await deps.assignTicket(assignTicket[1]!);
+      return { status: 200, json: { ok: true } };
+    } catch (error) {
+      return { status: 502, json: { error: error instanceof Error ? error.message : 'Jira assignment failed.' } };
+    }
   }
   if (path === '/api/triage' && method === 'GET') {
     return { status: 200, json: await deps.triage(query.get('repo')) };

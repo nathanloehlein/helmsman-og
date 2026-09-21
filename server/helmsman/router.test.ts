@@ -814,3 +814,21 @@ it('rejects stale local queue launches through the Jira route after re-enabling 
   expect(result?.status).toBe(409);
   expect(launch).not.toHaveBeenCalled();
 });
+
+describe('ticket assignment', () => {
+  it('assigns to the authenticated user without launching a run', async () => {
+    const assignTicket = vi.fn().mockResolvedValue(undefined);
+    const launch = vi.fn();
+    const result = await handleApi('POST', '/api/tickets/AB-123/assign-self', new URLSearchParams(), null, { ...deps, assignTicket, launch });
+    expect(result).toEqual({ status: 200, json: { ok: true } });
+    expect(assignTicket).toHaveBeenCalledWith('AB-123');
+    expect(launch).not.toHaveBeenCalled();
+  });
+  it('reports assignment errors and rejects disabled Jira', async () => {
+    const assignTicket = vi.fn().mockRejectedValue(new Error('Jira assignment failed (403).'));
+    const request = (jiraEnabled: () => boolean) => handleApi('POST', '/api/tickets/AB-123/assign-self', new URLSearchParams(), null, { ...deps, assignTicket, jiraEnabled });
+    expect(await request(() => true)).toEqual({ status: 502, json: { error: 'Jira assignment failed (403).' } });
+    expect((await request(() => false))?.status).toBe(409);
+    expect(assignTicket).toHaveBeenCalledTimes(1);
+  });
+});

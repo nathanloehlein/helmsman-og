@@ -51,7 +51,7 @@ import { todoTask, reconcileTodoRuns } from './todo-source';
 import { repositoryScope } from './repository-scope';
 import { AutoClaimScheduler, type BacklogItem } from './scheduler';
 import { ConfigStore, publicConfig, WRITABLE_SECRET_KEYS } from './config-store';
-import { fetchQueueIssues } from '../jira';
+import { assignIssueToCurrentUser, fetchQueueIssues } from '../jira';
 import { jiraTask } from './jira-task';
 import { launchIntentJson, RetryError, type LaunchIntent } from './retry';
 import { createBridge, type Bridge } from './cmux/bridge';
@@ -737,6 +737,11 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       todos,
       jiraEnabled: () => configStore.current().jiraEnabled,
       dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo, todos.list()),
+      assignTicket: async (ticketId) => {
+        const jira = configStore.current().jira;
+        if (!jira) throw new Error('Jira is not configured.');
+        await assignIssueToCurrentUser(jira, ticketId);
+      },
       triage: (repo) => buildTriageResponse(configStore.effectiveEnv(), undefined, repo),
       bugs: (repo) => buildBugsResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       db,

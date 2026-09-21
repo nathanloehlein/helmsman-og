@@ -1,3 +1,4 @@
+import { jiraDescription } from './jira-description';
 import type { GithubPr, JiraHistory, JiraIssue } from './types';
 import type { OpenAuthoredPr } from './github';
 import type { ActivityEvent, DailyStats, OpenPr, Priority, PrStatus, ShippedPr, Ticket, TicketStatus, WorkStep } from '../src/types';
@@ -48,6 +49,7 @@ export function issueToTicket(issue: JiraIssue, repo: string): Ticket {
   return {
     id: issue.key,
     title: issue.fields.summary,
+    description: jiraDescription(issue.fields.description),
     priority: mapPriority(issue.fields.priority?.name ?? null),
     status: mapStatus(issue.fields.status.name, issue.fields.status.statusCategory.key),
     repo,

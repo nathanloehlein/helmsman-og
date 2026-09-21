@@ -108,7 +108,7 @@ describe('mapPrStatus', () => {
 describe('issueToTicket', () => {
   it('maps fields', () => {
     const t = issueToTicket(issue(), 'o/r');
-    expect(t).toEqual({ id: 'AIROBUILD-1', title: 'Do a thing', priority: 'P2', status: 'backlog', repo: 'o/r' });
+    expect(t).toEqual({ id: 'AIROBUILD-1', title: 'Do a thing', description: '', priority: 'P2', status: 'backlog', repo: 'o/r' });
   });
 
   it('normalizes Jira updated timestamps for date filtering', () => {

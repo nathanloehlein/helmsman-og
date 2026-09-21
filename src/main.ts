@@ -28,7 +28,7 @@ import { loadDashboard, POLL_MS, LOCAL_POLL_MS, type DashboardResponse } from '.
 import { renderAppShell, renderHelmHead, type HelmHeadOpts, renderDashboard, renderPrPanel, renderCmuxView, renderRunsDrawer, renderVoyageRetry, runTabStatus, renderTriageView, renderBugsView, renderConfigView, renderPrView, renderPrLists, renderRepoPrs, renderRecentPrRuns } from './render';
 import type { RunTabView, PrViewState } from './render';
 import type { DashboardSnapshot } from './data/mock';
-import { fetchTriage, type TriageGroupsView } from './data/triage';
+import { assignTicketToMe, fetchTriage, type TriageGroupsView } from './data/triage';
 import { filterTriageTickets, TRIAGE_PRIORITIES, TRIAGE_DATE_OPTIONS, type TriageFilters } from './logic/triageFilters';
 import { paginateTriageTickets, TRIAGE_PAGE_SIZES, type TriagePageSize, type TriagePages } from './logic/triagePagination';
 import { fetchBugs } from './data/bugs';
@@ -1177,7 +1177,11 @@ export class DashboardView {
       this.paintSlack();
     }
     const content = this.root.querySelector<HTMLElement>('#page-content');
+    const expandedTickets = new Set(Array.from(content?.querySelectorAll<HTMLDetailsElement>('details[data-ticket-description][open]') ?? [], detail => detail.dataset.ticketDescription));
     content?.replaceChildren(...next.childNodes);
+    content?.querySelectorAll<HTMLDetailsElement>('details[data-ticket-description]').forEach(detail => {
+      detail.open = expandedTickets.has(detail.dataset.ticketDescription);
+    });
     if (content && this.contentView !== this.view) content.scrollTop = 0;
     this.contentView = this.view;
     this.syncShell();
@@ -2417,6 +2421,12 @@ export class DashboardView {
       return;
     }
 
+    const assignButton = target.closest<HTMLButtonElement>('[data-assign-ticket]');
+    if (assignButton && !assignButton.disabled) {
+      void this.handleAssignTicket(assignButton);
+      return;
+    }
+
     const launchBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.launch-btn');
     if (launchBtn) {
       void this.withStableView(() => this.handleLaunchClick(launchBtn));
@@ -2999,6 +3009,26 @@ export class DashboardView {
       prLine.textContent = `${term('pr')} #${summary.prNumber}`;
     }
     footer.appendChild(prLine);
+  }
+
+  private async handleAssignTicket(button: HTMLButtonElement): Promise<void> {
+    const ticketId = button.dataset.assignTicket;
+    if (!ticketId) return;
+    const status = button.closest('.triage-row')?.querySelector<HTMLElement>('.ticket-action-status');
+    button.disabled = true;
+    if (status) status.textContent = 'Assigning…';
+    try {
+      await assignTicketToMe(ticketId);
+      if (status) status.textContent = 'Assigned to you.';
+      button.textContent = 'Assigned to me';
+      if (this.view === 'triage') {
+        await this.loadTriage();
+        if (this.view === 'triage') this.paintTriage();
+      }
+    } catch (error) {
+      if (status) status.textContent = error instanceof Error ? error.message : 'Unable to assign ticket.';
+      button.disabled = false;
+    }
   }
 
   private async handleLaunchClick(btn: HTMLButtonElement): Promise<void> {

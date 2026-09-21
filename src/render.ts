@@ -933,13 +933,19 @@ function triageLaunchAction(ticket: Ticket, launchRepo: string | null): string {
     : '';
 }
 
+function ticketDescription(id: string, description: string | undefined): string {
+  return `<details class="ticket-description" data-ticket-description="${esc(id)}"><summary aria-label="Read description for ${esc(id)}">Description</summary><div class="ticket-description-content">${esc(description?.trim() || 'No description provided.')}</div></details>`;
+}
+
 function triageLaunchRow(ticket: Ticket, jiraBaseUrl: string | null, launchRepo: string | null): string {
   return `
       <li class="lane triage-row">
         <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
         <span class="queue-title">${esc(ticket.title)}</span>
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
-        ${triageLaunchAction(ticket, launchRepo)}
+        <span class="triage-ticket-actions"><button type="button" data-assign-ticket="${esc(ticket.id)}" aria-label="Assign ${esc(ticket.id)} to me">Assign to me</button>${triageLaunchAction(ticket, launchRepo)}</span>
+        <span class="ticket-action-status" role="status"></span>
+        ${ticketDescription(ticket.id, ticket.description)}
       </li>`;
 }
 
@@ -951,6 +957,7 @@ function triageStatusRow(ticket: Ticket, jiraBaseUrl: string | null, launchRepo:
         <span class="chip ${STATUS_CHIP_CLASS[ticket.status]}">${STATUS_LABEL[ticket.status]}</span>
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
         ${triageLaunchAction(ticket, launchRepo)}
+        ${ticketDescription(ticket.id, ticket.description)}
       </li>`;
 }
 
@@ -1076,13 +1083,10 @@ export interface BugsViewOpts {
   themeId: string;
 }
 
-function bugChip(text: string, cls: string): string {
-  return `<span class="chip ${cls}">${esc(text)}</span>`;
-}
-
-function bugPriorityClass(priority: string | null | undefined): string {
-  const level = priority?.trim().match(/^P([0-4])\b/i)?.[1];
-  return level ? `pri-p${level}` : 'chip-queued';
+function bugChip(text: string, kind: 'priority' | 'severity'): string {
+  const level = text?.trim().match(/^[PS]([0-5])\b/i)?.[1];
+  const label = level ? `${kind === 'priority' ? 'P' : 'S'}${level}` : text || '—';
+  return `<span class="chip ${level ? `pri-p${level}` : 'chip-queued'}" title="${esc(text)}" aria-label="${kind}: ${esc(text || 'Unknown')}">${esc(label)}</span>`;
 }
 
 function bugCardHtml(card: BugCard): string {
@@ -1099,10 +1103,10 @@ function bugCardHtml(card: BugCard): string {
     ? card.rows.map((r) => `
         <tr class="bug-row">
           <td class="bug-key">${ticketLabel(r.key, card.jiraBaseUrl)}</td>
-          <td class="bug-title">${esc(r.title)}</td>
-          <td>${bugChip(r.priority, bugPriorityClass(r.priority))}</td>
-          <td>${bugChip(r.severity, 'chip-queued')}</td>
-          <td><span class="chip bug-sla ${r.sla.overdue ? 'chip-blocked' : 'chip-review'}">${esc(r.sla.text)}</span></td>
+          <td class="bug-title">${esc(r.title)}${ticketDescription(r.key, r.description)}</td>
+          <td>${bugChip(r.priority, 'priority')}</td>
+          <td>${bugChip(r.severity, 'severity')}</td>
+          <td><span class="chip bug-sla ${r.sla.overdue ? 'chip-blocked' : 'chip-review'}" title="${esc(r.sla.text)}" aria-label="${esc(r.sla.text)}">${r.sla.days == null ? '—' : `${r.sla.days < 0 ? '+' : '-'}${Math.abs(r.sla.days)}D`}</span></td>
         </tr>`).join('')
     : '<tr><td colspan="5" class="empty-note">No open bugs.</td></tr>';
   const jiraSearch: string = card.jiraBaseUrl
@@ -1305,7 +1309,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
               <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
         </div>
-        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved. Firefox uses your regular signed-in browser with Marionette enabled and the local bridge running (<code>npm run slack:firefox</code>). The browser used to view Helmsman can be different.</p>
+        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved. Firefox uses your regular signed-in browser with background automation enabled and the local bridge running (<code>npm run slack:firefox</code>). The browser used to view Helmsman can be different.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">

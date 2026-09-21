@@ -1,3 +1,4 @@
+import { jiraDescription } from './jira-description';
 import type { AppConfig, JiraConfig } from './config';
 import { loadConfig, buildCreatedSinceJql, buildResolvedSinceJql, buildPastSlaJql, buildOpenBugsJql } from './config';
 import type { BugIssue } from './jira';
@@ -19,6 +20,7 @@ function toRow(issue: BugIssue, now: Date): BugRow {
   return {
     key: issue.key,
     title: issue.fields.summary,
+    description: jiraDescription(issue.fields.description),
     priority: issue.fields.priority?.name ?? '—',
     severity: issue.fields.customfield_14808?.value ?? '—',
     sla: slaLabel(issue.fields.duedate, now),

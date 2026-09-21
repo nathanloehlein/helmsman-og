@@ -25,3 +25,9 @@ export async function fetchTriage(repo: string | null): Promise<TriageResponseVi
     return { groups: EMPTY, degraded: true, selectedRepo: repo, jiraBaseUrl: null };
   }
 }
+
+export async function assignTicketToMe(ticketId: string): Promise<void> {
+  const response = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/assign-self`, { method: 'POST' });
+  const body = await response.json() as { ok?: unknown; error?: unknown } | null;
+  if (!response.ok || body?.ok !== true) throw new Error(typeof body?.error === 'string' ? body.error : 'Unable to assign ticket.');
+}

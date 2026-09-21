@@ -9,6 +9,7 @@ export interface Ticket {
   status: TicketStatus;
   repo: string;
   updatedAt?: string;
+  description?: string;
 }
 
 export type StepState = 'done' | 'active';
@@ -73,6 +74,7 @@ export interface BugSla {
 }
 
 export interface BugRow {
+  description?: string;
   key: string;
   title: string;
   priority: string;

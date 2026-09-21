@@ -559,6 +559,20 @@ describe('renderTriageView', () => {
     return el;
   }
 
+  it('expands escaped descriptions and offers assignment independently of run scope', () => {
+    const data = { ...groups, unassignedBacklog: [{ ...groups.unassignedBacklog[0]!, description: 'Steps\n<script>bad()</script>' }] };
+    const el = mount(renderTriageView(data, { repos: ['o/a'], selectedRepo: null, jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
+    const detail = el.querySelector<HTMLDetailsElement>('details[data-ticket-description="AB-1"]');
+    expect(detail?.open).toBe(false);
+    expect(detail?.querySelector('summary')?.getAttribute('aria-label')).toBe('Read description for AB-1');
+    expect(detail?.textContent).toContain('Steps\n<script>bad()</script>');
+    expect(detail?.querySelector('script')).toBeNull();
+    expect(el.querySelectorAll('[data-assign-ticket]')).toHaveLength(2);
+    expect(el.querySelector('[data-assign-ticket="AB-3"]')).toBeNull();
+    expect(el.querySelectorAll('.launch-btn')).toHaveLength(0);
+    expect(el.querySelector('[data-ticket-description="AB-2"]')?.textContent).toContain('No description provided.');
+  });
+
   it('renders three groups with a back button and scope select', () => {
     const el = mount(renderTriageView(groups, { repos: ['o/a', 'o/b'], selectedRepo: 'o/a', jiraBaseUrl: null, degraded: false, themeId: DEFAULT_THEME_ID }));
     expect(el.querySelector('.view-toggle[data-view="dashboard"]')).not.toBeNull();
@@ -1264,6 +1278,24 @@ describe('renderBugsView', () => {
     expect(el.querySelector('a.ticket-link[href$="/browse/AIROBUILD-2992"]')).not.toBeNull();
   });
 
+  it('shows compact signed SLA days, priority and severity, and expandable descriptions', () => {
+    const card = res.cards[0]!;
+    const data = { ...res, cards: [{ ...card, rows: [
+      { ...card.rows[0]!, description: 'Reproduce <b>the issue</b>', sla: { days: -333, overdue: true, text: 'Past SLA by 333d' } },
+      { ...card.rows[1]!, sla: { days: 4, overdue: false, text: 'SLA in 4d' } },
+      { ...card.rows[0]!, key: 'AB-3', sla: { days: null, overdue: false, text: '—' } },
+    ] }] };
+    const el = mount(renderBugsView(data, opts));
+    expect(Array.from(el.querySelectorAll('.bug-sla'), node => node.textContent)).toEqual(['+333D', '-4D', '—']);
+    expect(el.querySelector('.bug-row td:nth-child(3) .chip')?.textContent).toBe('P1');
+    const severity = el.querySelector('.bug-row td:nth-child(4) .chip');
+    expect(severity?.textContent).toBe('S2');
+    expect(severity?.classList.contains('pri-p2')).toBe(true);
+    const details = el.querySelector('details[data-ticket-description]');
+    expect(details?.textContent).toContain('Reproduce <b>the issue</b>');
+    expect(details?.querySelector('b')).toBeNull();
+  });
+
   it('flags overdue SLA with chip-blocked and future SLA without it', () => {
     const el = mount(renderBugsView(res, opts));
     const slas = Array.from(el.querySelectorAll<HTMLElement>('.bug-sla'));
@@ -1277,6 +1309,7 @@ describe('renderBugsView', () => {
     ['P2 - Medium', 'pri-p2'],
     ['P3 - Low', 'pri-p3'],
     ['P4 - Lowest', 'pri-p4'],
+    ['P5 - Trivial', 'pri-p5'],
     [' p2 - Medium ', 'pri-p2'],
     ['P10 - Unknown', 'chip-queued'],
     ['', 'chip-queued'],
@@ -1287,7 +1320,8 @@ describe('renderBugsView', () => {
     };
     const chip = mount(renderBugsView(data, opts)).querySelector('.bug-row td:nth-child(3) .chip');
     expect(chip?.classList.contains(className)).toBe(true);
-    expect(chip?.textContent).toBe(priority);
+    expect(chip?.textContent).toBe(priority.trim().match(/^P[0-5]\b/i)?.[0].toUpperCase() ?? (priority || '—'));
+    expect(chip?.getAttribute('title')).toBe(priority);
   });
 
   it('shows a degraded banner and no cards when degraded', () => {
