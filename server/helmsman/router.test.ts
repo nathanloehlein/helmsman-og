@@ -1,3 +1,4 @@
+import { FeedbackError } from './feedback';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RunConflictError } from './process-manager';
 import { handleApi, type RouterDeps } from './router';
@@ -837,5 +838,21 @@ describe('ticket assignment', () => {
     expect(await request(() => true)).toEqual({ status: 502, json: { error: 'Jira assignment failed (403).' } });
     expect((await request(() => false))?.status).toBe(409);
     expect(assignTicket).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('feedback route', () => {
+  it('passes only submitted content to the fixed tracker service and returns creation status', async () => {
+    const submitFeedback = vi.fn().mockResolvedValue({ url: 'https://github.com/nloehlein-godaddy/helmsman/issues/1' });
+    const input = { title: 'Title', body: 'Description' };
+    expect(await handleApi('POST', '/api/feedback', new URLSearchParams('repo=other/repo'), input, { ...deps, submitFeedback }))
+      .toEqual({ status: 201, json: { url: 'https://github.com/nloehlein-godaddy/helmsman/issues/1' } });
+    expect(submitFeedback).toHaveBeenCalledExactlyOnceWith(input);
+  });
+  it('returns actionable validation errors while sanitizing unexpected failures', async () => {
+    const submitFeedback = vi.fn().mockRejectedValueOnce(new FeedbackError('Title required', 400)).mockRejectedValueOnce(new Error('Private backend detail'));
+    const request = () => handleApi('POST', '/api/feedback', new URLSearchParams(), {}, { ...deps, submitFeedback });
+    expect(await request()).toEqual({ status: 400, json: { error: 'Title required' } });
+    expect(await request()).toEqual({ status: 502, json: { error: 'Could not confirm submission. Check GitHub before trying again.' } });
   });
 });

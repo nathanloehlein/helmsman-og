@@ -1,10 +1,11 @@
 import './feedback.css';
 
+const UNCONFIRMED = 'Could not confirm submission. Check Helmsman’s GitHub issues before trying again.';
 const ISSUE_URL = 'https://github.com/nloehlein-godaddy/helmsman/issues/new';
 
 export function openFeedback(opener: HTMLElement): void {
   const existing = document.querySelector<HTMLDialogElement>('.feedback-dialog');
-  if (existing) { existing.querySelector<HTMLInputElement>('input')?.focus(); return; }
+  if (existing) { existing.querySelector<HTMLElement>('input:not(:disabled), [data-feedback-close]:not(:disabled)')?.focus(); return; }
   const dialog = document.createElement('dialog');
   dialog.className = 'feedback-dialog';
   dialog.setAttribute('aria-labelledby', 'feedback-title');
@@ -25,6 +26,7 @@ export function openFeedback(opener: HTMLElement): void {
   const close = form.querySelector<HTMLButtonElement>('[data-feedback-close]')!;
   const browser = form.querySelector<HTMLAnchorElement>('[data-feedback-browser]')!;
   let pending = false;
+  let completed = false;
   const updateLink = () => {
     const url = new URL(ISSUE_URL);
     url.searchParams.set('title', title.value);
@@ -37,29 +39,39 @@ export function openFeedback(opener: HTMLElement): void {
   dialog.addEventListener('close', () => { dialog.remove(); if (opener.isConnected) opener.focus(); }, { once: true });
   form.addEventListener('submit', event => {
     event.preventDefault();
-    if (pending || !form.reportValidity()) return;
+    if (pending || completed || !form.reportValidity()) return;
     pending = true;
     submit.disabled = close.disabled = title.disabled = body.disabled = true;
     browser.hidden = true;
     status.textContent = 'Creating issue…';
     void (async () => {
+      let errorMessage = UNCONFIRMED;
       try {
-        const response = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.value, body: body.value }) });
+        const response = await fetch('/api/feedback', { method: 'POST', signal: AbortSignal.timeout(30_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.value, body: body.value }) });
         const result = await response.json() as { url?: unknown; error?: unknown } | null;
-        if (!response.ok) throw new Error(typeof result?.error === 'string' ? result.error : 'Could not confirm submission. Check GitHub before trying again.');
-        if (typeof result?.url !== 'string' || !/^https:\/\/github\.com\/nloehlein-godaddy\/helmsman\/issues\/[1-9]\d*$/.test(result.url)) throw new Error('Could not confirm submission. Check GitHub before trying again.');
+        if (!response.ok) {
+          errorMessage = typeof result?.error === 'string' && result.error.trim() ? result.error : UNCONFIRMED;
+          throw new Error(errorMessage);
+        }
+        if (typeof result?.url !== 'string' || !/^https:\/\/github\.com\/nloehlein-godaddy\/helmsman\/issues\/[1-9]\d*$/.test(result.url)) throw new Error(UNCONFIRMED);
+        completed = true;
         status.replaceChildren(document.createTextNode('Feedback created. '));
         const link = document.createElement('a');
         link.href = result.url; link.textContent = 'View issue'; link.target = '_blank'; link.rel = 'noopener noreferrer';
         status.append(link);
         submit.hidden = true;
         close.textContent = 'Done';
-      } catch (error) {
-        status.textContent = error instanceof Error ? error.message : 'Could not confirm submission. Check GitHub before trying again.';
+      } catch {
+        status.textContent = errorMessage;
         submit.disabled = title.disabled = body.disabled = false;
         browser.hidden = false;
-      } finally { pending = false; close.disabled = false; }
+      } finally {
+        pending = false;
+        close.disabled = false;
+        (completed ? close : title).focus();
+      }
     })();
   });
   dialog.showModal();
+  title.focus();
 }

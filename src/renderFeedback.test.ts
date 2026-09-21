@@ -31,6 +31,9 @@ describe('feedback dialog', () => {
     await vi.waitFor(() => expect(form.textContent).toContain('Feedback created.'));
     expect(form.querySelector<HTMLAnchorElement>('.feedback-status a')?.href).toBe('https://github.com/nloehlein-godaddy/helmsman/issues/1');
     expect(form.querySelector<HTMLButtonElement>('[type="submit"]')?.hidden).toBe(true);
+    expect(document.activeElement).toBe(form.querySelector('[data-feedback-close]'));
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(fetch).toHaveBeenCalledTimes(1);
     form.querySelector<HTMLButtonElement>('[data-feedback-close]')?.click();
     expect(document.querySelector('dialog')).toBeNull();
     expect(document.activeElement?.id).toBe('open');
@@ -38,6 +41,7 @@ describe('feedback dialog', () => {
   it('preserves draft and offers GitHub fallback after a failure', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'GitHub not configured' }), { status: 503 })));
     const form = open();
+    expect(document.activeElement).toBe(form.elements.namedItem('title'));
     const link = form.querySelector<HTMLAnchorElement>('[data-feedback-browser]')!;
     expect(new URL(link.href).searchParams.get('body')).toBe('Steps <script>literal</script>');
     form.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -46,4 +50,18 @@ describe('feedback dialog', () => {
     expect(link.hidden).toBe(false);
     expect(form.querySelector<HTMLButtonElement>('[type="submit"]')?.disabled).toBe(false);
   });
+  it.each(['network', 'invalid-json', 'invalid-url'])('warns about unconfirmed creation after %s without retrying', async failure => {
+    const request = vi.fn();
+    if (failure === 'network') request.mockRejectedValue(new TypeError('Failed to fetch'));
+    else request.mockResolvedValue(new Response(failure === 'invalid-json' ? '<html>Proxy failure</html>' : JSON.stringify({ url: 'https://untrusted.invalid/issues/1' })));
+    vi.stubGlobal('fetch', request);
+    const form = open();
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await vi.waitFor(() => expect(form.textContent).toContain('Could not confirm submission. Check Helmsman’s GitHub issues before trying again.'));
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(document.activeElement).toBe(form.elements.namedItem('title'));
+    expect(form.querySelector('.feedback-status a')).toBeNull();
+  });
+
 });
