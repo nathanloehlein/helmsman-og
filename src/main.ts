@@ -1083,7 +1083,7 @@ export class DashboardView {
       return;
     }
     if (!this.snapshot || this.snapshotRepo !== this.selectedRepo) {
-      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note">${this.dashboardUnavailable ? term('unavailableDashboard') : renderLoading(`Loading ${term('dashboard')}…`)}</div>`));
+      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note"${this.dashboardUnavailable ? ' role="status"' : ''}>${this.dashboardUnavailable ? term('unavailableDashboard') : renderLoading(`Loading ${term('dashboard')}…`)}</div>`));
       return;
     }
     const preBody: HTMLElement | null =
