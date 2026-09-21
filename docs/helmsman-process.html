@@ -34,7 +34,7 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 .section-heading { font-size: 23px; margin: 30px 0 10px; letter-spacing: -.015em; }
 .section-intro { color: #486174; line-height: 1.6; margin: 0 0 16px; max-width: 85ch; }
 .intake-sources, .host-options, .workflow-options, .lifecycle { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.host-options, .workflow-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.host-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .flow-step { border: 1px solid #b4c9da; padding: 16px; background: #f6faff; border-radius: 8px; }
 .flow-step h3, .lifecycle h3 { margin: 0 0 8px; font-size: 17px; }
 .flow-step p, .flow-step li, .lifecycle li { margin: 0; font-size: 14px; line-height: 1.55; color: #355269; }
@@ -57,7 +57,7 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <main>
 <header>
 <h1>Helmsman voyage flow</h1>
-<p class="subtitle">From manual or automated intake to verified execution, human decisions, published work, and measured outcomes.</p>
+<p class="subtitle">Helmsman 0.3.0 · From manual or automated intake to verified execution, human decisions, published work, and measured outcomes.</p>
 <ul class="defaults" aria-label="Default settings">
 <li><strong>2</strong> desired reviewer CLIs</li><li><strong>3</strong> review rounds</li><li><strong>45 min</strong> per agent session</li>
 </ul>
@@ -65,14 +65,17 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 </header>
 <section aria-labelledby="intake-heading">
 <h2 class="section-heading" id="intake-heading">Intake and execution preparation</h2>
-<p class="section-intro">Each source resolves a task, galleon, and workflow before execution. The same publication safeguards apply to automated work.</p>
+<p class="section-intro">Each source resolves a task, galleon, and workflow before execution. New coding tasks use the exact-revision PR review gate; existing-PR reviews and feedback reruns follow separate paths.</p>
 <div class="intake-sources">
-<article class="flow-step"><h3>Manual launch</h3><p>Select a galleon, then a Jira ticket, custom task, local todo, or existing PR. A panel can explicitly override the header target.</p></article>
+<article class="flow-step"><h3>Manual launch</h3><p>Select a galleon, then a Jira ticket, custom task, local todo, existing PR review, or feedback rerun. A panel can explicitly override the header target.</p></article>
+<article class="flow-step"><h3>Auto-claim</h3><p>Enable per galleon to select the next Jira backlog ticket when capacity is available, or a local todo when Jira is disabled.</p></article>
 <article class="flow-step"><h3>Campaign</h3><p>Create phases → preview CSV/JSONL → confirm tasks → start a phase. Imports are deduplicated; explicit galleon overrides appear in the preview.</p></article>
 <article class="flow-step"><h3>Authenticated webhook</h3><p>Verify the raw-body HMAC and configured event/action/workflow mapping. Persist and deduplicate delivery IDs. Disabled until configured.</p></article>
+<article class="flow-step"><h3>Slack bounty watcher</h3><p>When enabled, poll the configured channel through an authenticated browser every five minutes. Persist and deduplicate PR notifications; queue standalone reviews for configured galleons.</p></article>
+<article class="flow-step"><h3>GitHub requested-review watcher</h3><p>When enabled, poll requested reviews every five minutes. Deduplicate by PR head; queue standalone reviews for configured galleons or reuse a matching review.</p></article>
 </div>
 <div class="flow-arrow" aria-hidden="true">↓</div>
-<div class="flow-step flow-common"><h3>Dispatch and freeze execution</h3><ol><li>Check scope and capacity; allow one active writer per galleon. Automated dispatch uses durable claims.</li><li>Freeze workflow version, model/effort, review settings, and prompt/skill hashes.</li><li>Verify required skills and provision private copies. Retries and checkpoint resumes must match the saved snapshot.</li></ol></div>
+<div class="flow-step flow-common"><h3>Dispatch and freeze execution</h3><ol><li>Check scope and capacity; allow one active writer per galleon. Campaigns, webhooks, and watchers persist dispatch state.</li><li>Freeze workflow version, model/effort, review settings, and prompt/skill hashes.</li><li>Verify required skills and provision private copies. Retries and checkpoint resumes must match the saved snapshot.</li></ol></div>
 <div class="flow-arrow" aria-hidden="true">↓</div>
 <div class="host-options">
 <article class="flow-step"><h3>Trusted local host · default</h3><p>Agent stages use the existing local runtime and its host permissions.</p></article>
@@ -83,10 +86,11 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <div class="workflow-options">
 <article class="flow-step"><h3>New coding task</h3><p>Continue through implementation and the exact-revision PR review loop below.</p></article>
 <article class="flow-step"><h3>Existing PR review</h3><p>Pin the current PR head and run a standalone review. The host verifies the result and required answers before posting.</p></article>
+<article class="flow-step"><h3>Existing PR feedback rerun</h3><p>Trusted local execution only. The agent updates, tests, commits, and pushes the same branch directly. This bypasses the new-code pre-PR review gate; see the separate flow below.</p></article>
 </div>
 </section>
 <section class="review-section" aria-labelledby="review-heading">
-<h2 class="section-heading" id="review-heading">Coding and PR publication</h2>
+<h2 class="section-heading" id="review-heading">New coding tasks and PR publication</h2>
 <p class="section-intro">The detailed review loop remains the gate to publishing new code. Agent Questions, immutable evidence, and usage accounting accompany every stage.</p>
 <p class="diagram-hint">On a narrow screen, scroll the diagram horizontally to read the full review loop.</p>
 <div class="diagram review-diagram">
@@ -203,15 +207,24 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 </svg>
 </div>
 </section>
+<section aria-labelledby="rerun-heading">
+<h2 class="section-heading" id="rerun-heading">Existing-PR feedback reruns</h2>
+<div class="workflow-options">
+<article class="flow-step"><h3>1 · Prepare the PR branch</h3><p>The operator submits feedback. Resolve the existing PR branch, freeze execution settings, and prepare a branch worktree on the trusted local host.</p></article>
+<article class="flow-step"><h3>2 · Agent updates and publishes</h3><p>Address feedback, run tests, commit, and push to the same branch. The agent publishes directly using its normal update prompt; the new-code pre-PR gate does not run.</p></article>
+<article class="flow-step"><h3>3 · Record completion</h3><p>The host checks required answers and records completion. No new PR, post-creation Helmsman review queue, Jira transition, or Copilot request.</p></article>
+</div>
+<p class="limit-note">The host does not apply the exact-revision review gate or recheck required answers immediately before an agent-managed branch push. The prompt requires the agent to wait for required answers before dependent work; unanswered required questions block successful completion. Docker feedback reruns fail preflight; select trusted local execution.</p>
+</section>
 <section class="lifecycle-section" aria-labelledby="lifecycle-heading">
 <h2 class="section-heading" id="lifecycle-heading">Services throughout a voyage</h2>
 <p class="section-intro">These run alongside implementation and review. They preserve decisions, execution evidence, and results without replacing the publication gates.</p>
 <div class="lifecycle">
-<article><h3>Agent Questions</h3><ol><li>The agent saves a run-bound question and deadline.</li><li>The operator replies on Agent Questions; the agent reads the answer and continues.</li><li>Missing, expired, or cancelled required answers block completion and publication. Waiting retains capacity.</li></ol><p class="section-intro">Contacts are optional suggested respondents. They do not send notifications.</p></article>
+<article><h3>Agent Questions</h3><ol><li>The agent saves a run-bound question and deadline.</li><li>The operator replies on Agent Questions; the agent reads the answer and continues.</li><li>Missing, expired, or cancelled required answers block successful completion and host publication of new PRs and reviews. Waiting retains capacity.</li></ol><p class="section-intro">Feedback reruns use the boundary described above. Contacts are optional suggested respondents. They do not send notifications.</p></article>
 <article><h3>Evidence and recovery</h3><ol><li>The host validates reports, then records immutable artifacts and content hashes.</li><li>After restart, reattach the durable process or container identity.</li><li>For checkpoint continuation, verify the frozen snapshot, saved artifacts, branch, base, and head before reusing work.</li></ol><p class="section-intro">A fresh retry preserves the original task/provider and Docker image pin. Prompt or skill drift blocks preflight.</p></article>
 <article><h3>Costs &amp; Outcomes</h3><ol><li>Structured provider events and stage timings enter an idempotent usage ledger.</li><li>Show reported spend and separate Standard API estimates for eligible unpriced Codex usage, with record coverage, tokens, duration and PR outcomes.</li><li>Record task outcomes (achieved, partial, not achieved, unknown) separately from assessment state (complete, partial, failed, not assessed), with evidence.</li></ol><p class="section-intro">Process success does not itself prove task completion. Estimates use Standard short-context rates checked September 19, 2026. Missing model/token data stays unknown; tier, per-request context and cache-write usage are not recorded. Estimates do not change reported spend, budget caps or cost-per-PR metrics. Actual charges, including subscriptions, can differ.</p></article>
 </div>
-<p class="limit-note"><strong>Current setup and limits:</strong> Docker needs a built image, host provider keys, and pre-provisioned dependencies; agent stages have no unrestricted internet access. Docker branch-update reruns currently fail preflight; select trusted local execution for that mode. Webhook secrets, mappings, and public ingress require configuration. Offline Docker and mocked gateway flows were tested; real provider-backed Docker validation still requires host API keys. No path automatically merges a PR.</p>
+<p class="limit-note"><strong>Current setup and limits:</strong> Docker needs a built image, host provider keys, and pre-provisioned dependencies; agent stages have no unrestricted internet access. Docker branch-update reruns currently fail preflight; select trusted local execution for that mode. Webhook secrets, mappings, and public ingress require configuration. Slack bounty and GitHub requested-review watchers are independently opt-in and need configured galleons; Slack also needs its channel and an authenticated browser session, and GitHub needs credentials. Polling watchers do not need webhook ingress. Auto-claim is enabled separately per galleon. Offline Docker and mocked gateway flows were tested; real provider-backed Docker validation still requires host API keys. No path automatically merges a PR.</p>
 </section>
 <section class="notes" aria-label="Flow boundaries">
 <div><h2>Review selection and concurrency</h2><p>The writer CLI must be available in the selected execution environment. If the alternate CLI is unavailable, one reviewer is allowed even when two are configured. Lead sessions run sequentially; prompts request concurrent focused sub-agents, but runtime does not verify delegation.</p></div>

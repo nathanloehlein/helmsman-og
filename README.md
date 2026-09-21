@@ -1,7 +1,8 @@
 # Helmsman
 
-A control plane for Jira-backlog-driven coding agents. Launch a CLI agent against a
-ticket, watch it work live (explore → implement → test → open a PR), and keep a human
+A control plane for coding and review agents working from Jira, local todos,
+free-form tasks, and automated intake. Launch a CLI agent, watch it work live
+(explore → implement → test → open a PR), and keep a human
 approval gate before anything merges — running multiple agents across repos, one at a
 time per repo. The dashboard (backlog queue, current run, Ship’s log, shipped PRs)
 is the view; the **Helmsman server** behind it spawns and supervises the agents.
@@ -9,19 +10,18 @@ is the view; the **Helmsman server** behind it spawns and supervises the agents.
 The **Helm** dashboard defaults to Quarterdeck: sea-blue panels, wood-brown trim, brass
 fleet readouts, and a ship-wheel startup animation with compass bearings and course plotting.
 
-## Status
+## Version 0.3.0
 
-- **Built (P0–P6):** the Helmsman server, SQLite run store, dashboard API, and a
-  Claude Code agent adapter — launch a ticket, run it in an isolated git worktree,
-  stream its events to a live log drawer, and record the run (P0–P1); Jira status
-  writes with an In-Review gate (P2); a multi-agent running view with per-run stop
-  and live logs (P3); an opt-in per-repo auto-claim scheduler (P4); a generic-command
-  adapter plus hardening — crash recovery, orphaned-worktree sweep, and cost/attempt
-  caps (P5); and a full UI control plane — launch any ticket or a free-form task, a
-  recent-runs history, and a live non-secret config editor (P6); and PR controls —
-  view any PR's status/CI/review decision, approve / request-changes / comment, and
-  re-run the agent on an existing PR branch with feedback (P7). The agent opens a PR
-  and **never merges**.
+This version is maintained at [nathanloehlein/helmsman-og](https://github.com/nathanloehlein/helmsman-og).
+It includes manual Jira/free-form work, local todos, automatic PR reviews, phased
+campaigns, Agent Questions, Costs & Outcomes, and optional Docker execution.
+New coding work passes an exact-revision review gate before publication; existing-PR
+feedback reruns and standalone PR reviews have separate execution paths. Merge
+remains a human action on GitHub.
+
+See the [workflow reference](docs/helmsman-process.md) or the
+[standalone flowcharts](docs/helmsman-process.html) for intake, execution, review,
+publication, and recovery. The HTML diagrams work offline and can be printed.
 
 ## Stack
 
@@ -48,60 +48,31 @@ npm run build        # production build to dist/
 npm test             # vitest
 ```
 
-## Background: the agent this dashboard watches
+## Architecture and execution flow
 
-This is the UI half of a pattern for autonomous internal-dev-tooling agents —
-not a customer-facing product, not a general orchestration framework. The
-target use case: a coding agent that works a Jira backlog unattended, opens a
-PR per ticket, and hands off to a human at the review gate before anything
-merges.
+Helmsman is a persistent local Node server. SQLite stores run state, events,
+configuration overrides, local todos, campaign tasks, questions, workflow snapshots,
+artifact metadata, and usage/outcome evidence. Jira remains the external issue
+tracker when enabled; GitHub remains the source for PR state and merge decisions.
 
-### Why not LangGraph / Temporal / CrewAI / an agent framework
+Work arrives through manual launches, opt-in auto-claim, campaign phases, enabled
+Slack/GitHub review watchers, authenticated webhooks, or reviews queued after PR
+creation. The server checks capacity and prepares a worktree and frozen execution
+settings before launching the selected agent. New coding voyages implement, test,
+and commit locally, pass independent review, then publish the reviewed commit.
+Standalone PR reviews inspect a pinned revision and publish review comments;
+feedback reruns update an existing PR branch without the new-code review loop.
 
-Those solve problems this doesn't have. Internal tooling failures are cheap —
-a bad run gets retried, nobody's paged. There's no multi-tenant state to
-coordinate, no cross-service durability requirement, no need for crash-safe
-mid-task resume unless a single ticket routinely spans many hours. Bringing in
-a framework's checkpointing/replay machinery here would be solving for
-durability nobody asked for. The right amount of infrastructure is closer to
-"a scheduled job plus two APIs that already track state" than "a new
-distributed system."
+The server's timers drive automatic dispatch; a separate cron job is not required.
+A global concurrency limit and one active run per repository apply across launch
+sources. Campaign phases add batch ordering and their own concurrency limit.
+Durable run identities, logs, exit records, and saved evidence support restart
+reattachment and validated checkpoint continuation.
 
-### The actual loop
-
-**State store = Jira, not a new database.** Ticket status *is* the state
-machine — `Backlog → In Progress → In Review → Done` — and it's already the
-view your human reviewers use. Don't shadow it with a parallel SQLite/Postgres
-tracker; that's a second source of truth to keep in sync for no benefit.
-
-```
-heartbeat wakes (cron / Claude Code /schedule, not a standing daemon) →
-  any ticket assigned to the bot still "In Progress"?
-    yes → resume/retry it (never double-claim)
-    no  → query the backlog (JQL, priority order, label-gated to
-          "agent-eligible" so nothing sensitive gets auto-picked)
-        → claim the top one, assign to bot, transition → "In Progress"
-  work it: explore the repo → implement → run tests → open a PR,
-  link the PR back to the ticket
-  transition ticket → "In Review"
-  loop back to the top, claim the next one
-```
-
-**Single-flight per repo.** Multiple tickets against the same codebase in
-parallel just means merge conflicts and wasted work. Parallelize across
-repos if you need throughput; serialize within one.
-
-**The human gate is real, not cosmetic.** PR opened + ticket → "In Review" *is*
-the gate — the agent never merges to main. Same read/write split this
-dashboard's "Working on" panel calls out: investigation (explore, read, run
-tests) is unrestricted; anything that writes — branch push, PR open — is the
-only gated surface, and merge itself is always a human action.
-
-**When this would earn a heavier framework**: tickets start requiring
-multi-session work with real crash-safe resume, or you need explicit
-dependency ordering between tickets (ticket B can't start until ticket A
-merges — that's a dependency graph, not a queue). Until then, Jira-as-state +
-a bounded per-ticket agent session is the whole architecture.
+The default execution host is a detached process. Its output appears in the
+**Voyages / Runs** viewer, not a new terminal pane. Native terminal hosts are opt-in;
+Docker provides an additional restricted execution mode. Local worktrees isolate
+Git changes but do not sandbox an agent's access to the machine.
 
 ## First-time setup
 
@@ -113,9 +84,11 @@ a bounded per-ticket agent session is the whole architecture.
    Helmsman server's `PATH`. Install and authenticate GitHub CLI (`gh auth login`) for
    coding agents that open or update PRs. Git must also be able to fetch your private
    repositories using your SSH key or HTTPS credential helper.
-2. From the Helmsman checkout, run:
+2. Clone Helmsman and install its dependencies:
 
    ```bash
+   git clone https://github.com/nathanloehlein/helmsman-og.git
+   cd helmsman-og
    npm install
    cp .env.example .env
    ```
@@ -213,8 +186,9 @@ settings. `AUTO_CLAIM_INTERVAL_MS` controls only the separate opt-in ticket sche
 Click **Launch** on a backlog ticket (or `POST /api/agents/launch {ticketId,title,repo}`).
 Helmsman creates a git worktree under `AGENTS_ROOT`, spawns the configured agent
 (default: Codex) in it, streams the agent's events to a live log
-drawer over SSE (`GET /api/agents/:id/log`), records the run in SQLite, and removes the
-worktree when it finishes. `POST /api/agents/:id/stop` SIGTERMs a run. One run per repo at
+drawer over SSE (`GET /api/agents/:id/log`) and records the run in SQLite.
+Failed or stopped new coding voyages retain their worktrees for recovery; other
+completed runs clean up their worktrees. `POST /api/agents/:id/stop` SIGTERMs a run. One run per repo at
 a time; global concurrency is capped by `AGENT_MAX_CONCURRENCY`. The agent opens a PR and
 never merges — the human review gate is real.
 
@@ -345,8 +319,8 @@ merge stays a deliberate action on GitHub, and the agent never merges.
 
 ### Direct links
 
-Each tab has a page URL: `/helm`, `/triage`, `/todos`, `/terminal`, `/bugs`, `/prs`, `/config`, and
-`/runs`. `/` opens Helm, and `/pr` is an alias for `/prs`. Links can include a pane
+Each tab has a page URL: `/helm`, `/triage`, `/todos`, `/terminal`, `/bugs`, `/prs`,
+`/config`, `/runs`, `/outcomes`, `/campaigns`, and `/clarifications`. `/` opens Helm, and `/pr` is an alias for `/prs`. Links can include a pane
 and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 
 | Destination | Example URL |
@@ -360,6 +334,9 @@ and the context needed to open a PR, inspect a voyage, or prepare a new voyage.
 | Prepare a ticket voyage | `/helm?repo=gdcorp-partners/airo-app-builder&ticket=AIRO-123&pane=newrun` |
 | Local branches and worktrees | `/config?repo=gdcorp-partners/airo-app-builder&pane=local-git` |
 | Selected terminal | `/terminal?surface=surface:15&pane=screen` |
+| Costs & Outcomes | `/outcomes?repo=gdcorp-partners/airo-app-builder` |
+| Campaigns | `/campaigns?repo=gdcorp-partners/airo-app-builder` |
+| Agent Questions | `/clarifications?repo=gdcorp-partners/airo-app-builder` |
 
 Voyage links only prefill the form; opening a link never launches an agent or submits
 a review. A PR number requires its `repo=owner/name`. On Helm, `repo` selects a tracked
@@ -374,7 +351,8 @@ em dash until a Jira snapshot is loaded, without fetching solely for the header.
 Available panes are `newrun`, `backlog`, `underway`, `running`, `recent`, `repoprs`, `shipped`, and
 `activity` on Helm; `backlog`, `todo`, and `mine` on Triage; `tabs` and `screen` on Terminal;
 `review-requests`, `authored`, `lookup`, and `diff` on PRs; and `recent`, `newrun`, and
-`tasks` on Voyages. Terminal contains the terminal controls, currently backed by cmux; existing `/cmux` links still work. Bugs and Config link directly to their page.
+`tasks` on Voyages; and `local-git` on Config. Terminal controls use cmux or WezTerm
+according to `TERM_BRIDGE`; existing `/cmux` links still work.
 
 For native cmux sidebar Codex cost estimates, see [the local integration](docs/cmux-codex-costs.md).
 It uses recorded session tokens and labeled API estimates, independently of the Helmsman server.
@@ -464,6 +442,67 @@ failed when their host is gone. It sweeps orphaned agent worktrees under each re
 `.worktrees/`, except failed or stopped pre-PR voyages retained for recovery. These
 checks are fail-soft: a failure is logged and never blocks the server from listening.
 
+## Workflow capabilities
+
+### Campaigns, questions, and outcomes
+
+**Campaigns** organizes batches into phases. Select a repository in the header,
+create a campaign, add a phase, and import CSV or JSONL tasks. Preview and confirm
+destinations before starting the phase; creating a campaign alone launches nothing.
+Imports accept `task` or `ticketId`, with optional `key`, `title`, and `repo`, up to
+200 tasks / 1 MB. An explicit task repository can override the campaign's scope.
+Pausing prevents new launches while active tasks finish. Finishing a phase cancels
+queued tasks; stopping also requests active tasks to stop. Failed tasks can be
+retried before the phase is finished or stopped. Campaign concurrency never
+overrides the global or per-repository capacity limit.
+
+**Agent Questions** shows decisions requested by running agents. Answer in the
+page to send the response back to that run; no contact setup is needed. Waiting
+runs retain capacity, and an expired deadline never counts as an answer. Required
+questions block successful completion and host-managed publication. Existing-PR
+feedback reruns push through the agent's own CLI, so their pre-push waiting rule
+also depends on the agent following its instructions. Optional contacts suggest
+respondents, including Jira assignees/reporters; Helmsman does not message them.
+
+**Costs & Outcomes** filters by the header repository and a 7/30/90/365-day window.
+It shows reported spend and coverage, tokens, duration, PR outcomes, and recorded
+failure stages. Missing cost is unknown, not zero. Eligible unpriced Codex usage
+gets a separate estimate based on the bundled, dated Standard API rate card;
+estimates do not enforce budgets or contribute to fully priced per-PR metrics.
+Use each run's assessment form to record task outcome and evidence independently
+of whether its process exited successfully. See the
+[usage and outcome details](docs/moonunit-adoption.md#token-based-spend-estimates).
+
+### Frozen workflows and execution hosts
+
+Launch preparation freezes workflow settings, prompt sources, and required skill
+hashes, and provisions verified skill copies for the run. Retry and checkpoint
+continuation validate saved identities rather than silently adopting changed
+prompts or skills. Stage reports and artifacts retain immutable evidence for
+recovery. See the [workflow reference](docs/helmsman-process.md).
+
+Local execution supports detached processes, cmux, and WezTerm. Detached is the
+default and streams output to the run viewer without opening a terminal window.
+`RUN_HOST=cmux` or `RUN_HOST=wezterm` requests a native terminal; if unavailable,
+Helmsman falls back to detached execution. `TERM_BRIDGE` independently selects
+which terminal the Terminal page controls.
+
+For restricted agent stages, configure `RUN_HOST=docker`, a built runtime image,
+and host provider credentials as described in [Docker execution](docs/docker-run-host.md).
+The host supervises and publishes; supported writer/reviewer stages use private
+container workspaces and a capability-scoped gateway. Dependencies must be available
+in the image because stages have no unrestricted internet access. Missing Docker
+prerequisites fail preflight, and Docker existing-PR feedback reruns are unsupported.
+
+### Webhook intake
+
+Webhook intake is disabled until the host has `HELMSMAN_WEBHOOK_SECRET` and explicit
+`HELMSMAN_WEBHOOK_ROUTES` mappings. GitHub sends signed requests to
+`POST /api/webhooks/github`; deliveries are authenticated, persisted, deduplicated,
+and dispatched through saved coding/review workflows and normal capacity limits.
+The server binds loopback; it does not create public ingress automatically.
+See [webhook configuration](docs/webhooks.md) for headers and route examples.
+
 ## Configuration
 
 The tables describe **runtime defaults when unset**, which can differ from the
@@ -521,6 +560,7 @@ Changing `JIRA_STATUS_*` does not rewrite those dashboard queries.
 
 | Value | Default | Where it applies / how to set it | Change |
 | --- | --- | --- | --- |
+| `SLACK_ENABLED` | `true` | Master switch in Config → Slack integration. Disabling stops automatic Slack reviews and blocks manual review requests without clearing saved settings. | Live |
 | `SLACK_WATCH_ENABLED` | `false` | Set exactly `true` after filling the channel fields and opening signed-in Slack in cmux. No Slack app/token or Slack MCP is used. | Live |
 | `SLACK_CLIENT_ID` | Empty | First identifier after `/client/` in the open Slack URL. This is the browser client/workspace identifier, not an OAuth app client ID. | Live |
 | `SLACK_CHANNEL_ID` | Empty | Channel identifier beginning with `C`, from the Slack channel URL. Must match the channel being watched. | Live |
@@ -537,7 +577,7 @@ open PR's details. It posts the canonical PR link and mentions the configured Sl
 user group. Sending is manual; the button reports delivery or an actionable error
 and links to the message when Slack provides a permalink.
 
-In **Config → Slack review requests**, set the destination channel and review group.
+In **Config → Slack integration**, set the destination channel and review group.
 Defaults are `airo-editing` and `airo-editing-squad`. Use a channel name or ID and
 the user group's handle.
 Requests use the signed-in Slack browser, sharing `SLACK_CLIENT_ID` and
@@ -570,14 +610,17 @@ cannot be confirmed, check Slack before attempting another request.
 | `AUTO_CLAIM_INTERVAL_MS` | `60000` | Interval in milliseconds for the optional ticket auto-claim scheduler. Does not enable auto-claim or control either PR watcher. | Config-editable; restart timer |
 | `AGENTS_ROOT` | Server working directory | Parent directory of target repo checkouts, e.g. `/absolute/path/to/agent-repos`; not the path to a single checkout. | Restart |
 | `RUNS_DIR` | `<AGENTS_ROOT>/.helmsman-runs` | Directory for detached-run specifications, logs, and exit records. Created on startup; use a writable absolute path. | Restart |
-| `RUN_HOST` | Detached process | Set `cmux` to prefer new cmux workspaces for runs. Falls back to detached processes when cmux is unavailable. Slack reading can use cmux regardless of this setting. | Restart |
+| `RUN_HOST` | Detached process | `detached`, `cmux`, `wezterm`, or `docker`. Native terminals fall back to detached if unavailable; requested Docker execution fails if its prerequisites are missing. See [execution hosts](#frozen-workflows-and-execution-hosts). | Restart |
+| `TERM_BRIDGE` | `wezterm` on Windows, `cmux` elsewhere | Terminal page backend, independent of the run host. Slack reading uses cmux regardless of this setting. | Restart |
+| `HELMSMAN_DOCKER_IMAGE` | Empty | Built runtime image required for Docker execution; resolved to an image pin for the run. See [Docker setup](docs/docker-run-host.md) for provider credentials and dependency provisioning. | Restart |
+| `HELMSMAN_GATEWAY_PORT` | `8790` | Capability-authenticated provider/GitHub gateway used by Docker stages. | Restart |
 | `HELMSMAN_DB` | `<server working directory>/.helmsman.sqlite` | SQLite file for runs, config overrides, watcher state, and notifications. Use a writable path and retain it across restarts. A Config-saved Jira token is stored here, so treat this file as sensitive. | Restart |
 | `HELMSMAN_PORT` | `8787` | Local API/static-server port, bound to `127.0.0.1`; the Vite API proxy uses the same value. | Restart server and Vite |
 
 ### Browser preferences
 
 Config's **UI customization → Theme** selector applies immediately and persists in
-that browser's local storage (default: Amber). The selected repository, dashboard
+that browser's local storage (default: Quarterdeck). The selected repository, dashboard
 panel layout/stacking, and collapsed panels also persist locally. These preferences
 have no `.env` keys, do not change server behavior, and are not shared with another
 browser. Per-voyage model/effort choices belong to the launch form; there are no
@@ -589,6 +632,9 @@ Themes color the full interface, including panels, text, and scrollbars.
 The selected theme's palette and sample status chips appear below the selector,
 updating immediately so you can compare surface, text, and status colors.
 Page panels use the full content width or two equal columns, stacking on smaller screens.
+The branch-scope and human-merge disclaimer appears below the content panels on
+Config. The persistent footer shows attribution, version, build date, fleet counts,
+and the Pirate mode toggle.
 
 Helm's **Mine · underway** panel mirrors your unfinished Jira tickets from Triage.
 Select a repository to enable each ticket's **Launch** button. These tickets are
@@ -597,11 +643,13 @@ a five-minute cache with Triage; an unavailable Jira response shows no sample ti
 
 > **Security:** Codex uses `--dangerously-bypass-approvals-and-sandbox`; Claude Code uses
 > `--dangerously-skip-permissions`. Coding agents can edit,
-> commit, and open a PR with full, unattended tool access on the host — a per-run git
+> commit, and open a PR. With trusted local execution they have full, unattended
+> tool access on the host — a per-run git
 > worktree is a working directory, not a sandbox (it shares the repo's git object store and
 > the agent has the same host, shell, and filesystem access as the Helmsman process).
 > The default detached host inherits `GITHUB_TOKEN` and removes `JIRA_API_TOKEN` and
 > `JIRA_EMAIL` from the child environment; cmux workspaces use their own terminal environment.
+> Docker agent stages use the separate restrictions described in [Docker execution](docs/docker-run-host.md).
 > Helmsman makes Jira writes itself. Only point `AGENTS_ROOT` at repos,
 > and only launch tickets, you're willing to let an autonomous agent modify on this machine.
 
