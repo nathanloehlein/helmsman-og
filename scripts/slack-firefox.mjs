@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
 
-const available = await new Promise(resolve => {
-  const socket = createConnection({ host: '127.0.0.1', port: 2828 });
+const available = port => new Promise(resolve => {
+  const socket = createConnection({ host: '127.0.0.1', port });
   const finish = value => { socket.destroy(); resolve(value); };
   socket.setTimeout(2000);
   socket.once('connect', () => finish(true));
@@ -10,8 +10,8 @@ const available = await new Promise(resolve => {
   socket.once('timeout', () => finish(false));
 });
 
-if (!available) {
-  console.error('Firefox is not accepting Marionette connections on localhost:2828. Restart your regular Firefox with --marionette, then run this command again.');
+if (!await available(2828) || !await available(9222)) {
+  console.error('Firefox background automation is unavailable. Restart your regular Firefox with --marionette --remote-debugging-port 9222, then run this command again.');
   process.exit(1);
 }
 

@@ -581,22 +581,24 @@ On macOS, install `geckodriver` with `brew install geckodriver`. Quit Firefox wh
 convenient and relaunch your regular profile with automation enabled:
 
 ```sh
-/Applications/Firefox.app/Contents/MacOS/firefox --marionette
+/Applications/Firefox.app/Contents/MacOS/firefox --marionette --remote-debugging-port 9222
 ```
 
 Then run `npm run slack:firefox` from this checkout and keep the bridge running.
 The bridge binds to localhost:4444 and attaches to the existing Firefox through
-Marionette on localhost:2828. It never launches a replacement profile. Keep your
+Marionette on localhost:2828 and WebDriver BiDi on localhost:9222. It never
+launches a replacement profile. Keep your
 signed-in `https://app.slack.com/client/...` tab open. No Slack bot token is needed.
 After restarting Helmsman or Firefox, stop and restart the bridge to clear its
 previous automation session. If Firefox restarted, restart Helmsman too. The
 bridge deliberately does not delete sessions, because doing so can close your
 regular browser.
 
-Firefox discovery briefly selects tabs to read their URLs, then restores the
-original selection. Slack actions also restore the original selection. WebDriver
-cannot reliably distinguish a simultaneous user focus change; avoid interacting
-with tabs during a request. Existing cmux installations retain their browser until
+Firefox uses background tab discovery and targets the Slack tab directly. It
+does not select tabs, bring Firefox forward, or send keyboard input to your active
+application. Slack searches still update the connected Slack tab. If background
+automation is unavailable, the integration reports an error instead of switching
+to foreground automation. Existing cmux installations retain their browser until
 you change the setting.
 
 ### Requesting reviews in Slack
@@ -778,7 +780,7 @@ set `GITHUB_REVIEW_WATCH_ENABLED=true`; no Slack fields or browser are needed. T
 can immediately launch reviews for existing pending requests. Automatic reviews
 publish their findings to GitHub, so enable a source only when ready for that behavior.
 
-Keep one signed-in Slack tab open in your selected browser for the configured channel/client. The reader discovers that tab on each scan; set `SLACK_BROWSER_SURFACE` only when multiple matching tabs exist. It briefly selects its Slack browser tab and restores the previous selection (see the Firefox focus limitation above). It uses browser UI searches and rendered message anchors, without Slack MCP or extracted session tokens. Browser closure, sign-out, or incomplete search results appear in source health. Catch-up resumes from the last successful scan with an overlapping search window. Five minutes is a target while the machine, browser, and server are running; Slack search indexing may add delay. Reading Slack views can affect unread state.
+Keep one signed-in Slack tab open in your selected browser for the configured channel/client. The reader discovers that tab on each scan; set `SLACK_BROWSER_SURFACE` only when multiple matching tabs exist. Firefox scans run in the background without changing the selected tab; cmux scans select and restore their embedded browser surface. It uses browser UI searches and rendered message anchors, without Slack MCP or extracted session tokens. Browser closure, sign-out, or incomplete search results appear in source health. Catch-up resumes from the last successful scan with an overlapping search window. Five minutes is a target while the machine, browser, and server are running; Slack search indexing may add delay. Reading Slack views can affect unread state.
 
 Review model selection defaults to these tiers for Codex:
 

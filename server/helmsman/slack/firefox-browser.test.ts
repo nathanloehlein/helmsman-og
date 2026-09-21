@@ -1,285 +1,264 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findSlackBrowserSurface, surfaceSelection } from './browser';
 import { createFirefoxSlackBrowserTransport } from './firefox-browser';
+import { connectFirefoxBidi } from './firefox-bidi';
 
-const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 const treeCommand = ['--id-format', 'both', 'tree', '--all', '--json'];
 const slack = 'firefox:slack-tab';
 const config = { clientId: 'T123', channelId: 'C123', channelName: 'reviews' };
-type Call = { path: string; method: string; body: Record<string, unknown> | null };
+interface Command { id: number; method: string; params: Record<string, unknown> }
 
 function driver() {
-  const calls: Call[] = [];
-  const urls = new Map([['original-tab', 'https://example.com/private'], ['slack-tab', 'https://app.slack.com/client/T123/C123']]);
-  let selected = 'original-tab';
-  let field = 'old query';
-  let matches: unknown[] = [{ [ELEMENT]: 'editor' }];
-  let evaluation: unknown = '{"messages":[]}';
-  let failure: { path: string; code: string; message?: string } | null = null;
-  const reply = (value: unknown, status = 200) => new Response(JSON.stringify({ value }), { status });
-  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input));
-    const path = url.pathname.replace(/^\/session\/session-1/, '');
-    const method = init?.method ?? 'GET';
-    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
-    calls.push({ path, method, body });
-    if (failure?.path === path) return reply({ error: failure.code, message: failure.message ?? 'Sensitive browser page details' }, 500);
-    if (path === '/session' && method === 'POST') return reply({ sessionId: 'session-1', capabilities: { browserName: 'firefox' } });
-    if (path === '/window/handles') return reply([...urls.keys()]);
-    if (path === '/window' && method === 'GET') return reply(selected);
-    if (path === '/window' && method === 'POST') { selected = String(body?.handle); return reply(null); }
-    if (path === '/url' && method === 'GET') return reply(urls.get(selected));
-    if (path === '/execute/sync') return reply(evaluation);
-    if (path === '/elements') return reply(matches);
-    if (/\/displayed$/.test(path)) return reply(true);
-    if (/\/clear$/.test(path)) { field = ''; return reply(null); }
-    if (/\/value$/.test(path)) { field += String(body?.text); return reply(null); }
-    if (/\/click$/.test(path) || path === '/actions') return reply(null);
-    throw new Error(`Unexpected mocked WebDriver command ${method} ${path}`);
-  });
+  const calls: Command[] = [];
+  const sockets: MockSocket[] = [];
+  const contexts = [
+    { context: 'original-tab', parent: null, url: 'https://example.com/private', children: null },
+    { context: 'slack-tab', parent: null, url: 'https://app.slack.com/client/T123/C123', children: null },
+  ];
+  let autoReply = true;
+  let autoOpen = true;
+  let response: ((command: Command) => unknown) | null = null;
+  let webSocketUrl: unknown = 'ws://127.0.0.1:9222/session/session-1';
+  class MockSocket extends EventTarget {
+    readonly url: string;
+    close = vi.fn(() => this.dispatchEvent(new Event('close')));
+    constructor(url: string) {
+      super(); this.url = url; sockets.push(this);
+      if (autoOpen) queueMicrotask(() => this.dispatchEvent(new Event('open')));
+    }
+    message(value: unknown): void { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
+    send(data: string): void {
+      const command = JSON.parse(data) as Command;
+      calls.push(command);
+      if (!autoReply) return;
+      queueMicrotask(() => {
+        if (response) { this.message(response(command)); return; }
+        if (command.method === 'browsingContext.getTree') {
+          this.message({ type: 'success', id: command.id, result: { contexts } });
+          return;
+        }
+        if (command.method !== 'script.evaluate') throw new Error('Unexpected BiDi mutation');
+        const context = command.params.target as { context: string };
+        const url = contexts.find(item => item.context === context.context)?.url ?? 'about:blank';
+        let result: unknown;
+        try {
+          const value = new Function('location', 'document', `return (${String(command.params.expression)})`)(new URL(url), document) as unknown;
+          result = { type: 'success', realm: 'realm-1', result: { type: 'string', value } };
+        } catch { result = { type: 'exception', exceptionDetails: { text: 'Sensitive page content' } }; }
+        this.message({ type: 'success', id: command.id, result });
+      });
+    }
+  }
+  vi.stubGlobal('WebSocket', MockSocket);
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ value: { sessionId: 'session-1',
+    capabilities: { browserName: 'firefox', webSocketUrl } } })));
   vi.stubGlobal('fetch', fetcher);
-  return { calls, urls, fetcher, selected: () => selected, field: () => field,
-    setMatches: (value: unknown[]) => { matches = value; },
-    setEvaluation: (value: unknown) => { evaluation = value; },
-    setFailure: (value: typeof failure) => { failure = value; },
-    setSelected: (value: string) => { selected = value; },
+  vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(() => [{ width: 1, height: 1 }] as unknown as DOMRectList);
+  return { calls, sockets, contexts, fetcher,
+    setResponse: (value: typeof response) => { response = value; },
+    setSocketUrl: (value: unknown) => { webSocketUrl = value; },
+    setAutoReply: (value: boolean) => { autoReply = value; },
+    setAutoOpen: (value: boolean) => { autoOpen = value; },
   };
 }
 
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ''; });
 
-describe('Firefox Slack WebDriver transport', () => {
+describe('Firefox background Slack transport', () => {
   it.each(['https://127.0.0.1:4444', 'http://remote.example:4444', 'http://127.0.0.1.evil.test:4444',
-    'http://user:secret@localhost:4444', 'http://localhost:4444/session', 'http://localhost:4444/?secret=1', 'bad-url'])('rejects unsafe endpoint %s before connecting', endpoint => {
+    'http://user:secret@localhost:4444', 'http://localhost:4444/session', 'http://localhost:4444/?secret=1', 'bad-url'])('rejects unsafe HTTP endpoint %s', endpoint => {
     const fake = driver();
     expect(() => createFirefoxSlackBrowserTransport(endpoint)).toThrow('local HTTP endpoint');
     expect(fake.fetcher).not.toHaveBeenCalled();
   });
 
-  it.each(['http://127.0.0.1:4444', 'http://localhost:5555', 'http://[::1]:4444'])('accepts local endpoint %s', async endpoint => {
-    const fake = driver();
-    const transport = createFirefoxSlackBrowserTransport(endpoint);
-    await transport(treeCommand);
-    expect(String(fake.fetcher.mock.calls[0]?.[0])).toBe(`${endpoint}/session`);
+  it.each(['ws://remote.example:9222/session/1', 'ws://127.0.0.1.evil.test:9222/session/1', 'ws://localhost:9222/session/1',
+    'wss://127.0.0.1:9222/session/1', 'ws://secret@127.0.0.1:9222/session/1', 'ws://127.0.0.1:9222/session/1?secret=1'])('rejects unsafe or mismatched WebSocket endpoint %s', endpoint => {
+    const fake = driver(); fake.setSocketUrl(endpoint);
+    return expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('unsafe background automation endpoint');
   });
 
-  it('discovers URLs without reading unrelated page contents and restores the original tab', async () => {
+  it('requires BiDi and gives actionable setup guidance without falling back', async () => {
+    const fake = driver(); fake.setSocketUrl(undefined);
+    await expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('--marionette --remote-debugging-port 9222');
+    expect(fake.sockets).toHaveLength(0);
+    expect(fake.fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('discovers URLs in the background and treats legacy focus as virtual state only', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     const tree = JSON.parse(await transport(treeCommand)) as unknown;
     expect(findSlackBrowserSurface(tree, config)).toBe(slack);
     expect(surfaceSelection(tree, slack)).toEqual({ surface: slack, selected: 'firefox:original-tab', active: 'firefox:original-tab' });
-    expect(fake.selected()).toBe('original-tab');
-    expect(fake.calls.some(call => ['/execute/sync', '/elements'].includes(call.path))).toBe(false);
-    expect(fake.calls.filter(call => call.path === '/url')).toHaveLength(2);
-    expect(fake.calls[0]).toEqual({ path: '/session', method: 'POST', body: { capabilities: { alwaysMatch: {
-      browserName: 'firefox', timeouts: { implicit: 0, pageLoad: 15_000, script: 15_000 },
-    } } } });
+    await transport(['rpc', 'surface.focus', JSON.stringify({ surface_id: slack })]);
+    expect(fake.calls).toEqual([{ id: 1, method: 'browsingContext.getTree', params: { maxDepth: 0 } }]);
+    const next = JSON.parse(await transport(treeCommand)) as unknown;
+    expect(surfaceSelection(next, slack)?.active).toBe(slack);
+    await transport(['rpc', 'surface.focus', JSON.stringify({ surface_id: 'firefox:original-tab' })]);
+    expect(fake.fetcher).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4444/session', expect.objectContaining({
+      method: 'POST', redirect: 'error', body: expect.stringContaining('"webSocketUrl":true'),
+    }));
+    expect(fake.calls.every(call => call.method === 'browsingContext.getTree')).toBe(true);
   });
 
-  it('confirms delayed tab selection before discovery and retries restoration to the original tab', async () => {
-    const fake = driver();
-    const fetcher = fake.fetcher.getMockImplementation()!;
-    const delayed = new Set<string>();
-    fake.fetcher.mockImplementation(async (input, init) => {
-      const original = fake.selected();
-      const response = await fetcher(input, init);
-      if (String(input).endsWith('/window') && init?.method === 'POST') {
-        const target = String((JSON.parse(String(init.body)) as { handle: string }).handle);
-        if (!delayed.has(target)) { delayed.add(target); fake.setSelected(original); }
-      }
-      return response;
-    });
-    const transport = createFirefoxSlackBrowserTransport();
-    const tree = JSON.parse(await transport(treeCommand)) as unknown;
-    expect(findSlackBrowserSurface(tree, config)).toBe(slack);
-    expect(fake.selected()).toBe('original-tab');
-    expect(fake.calls.filter(call => call.path === '/window' && call.method === 'POST').map(call => call.body?.handle))
-      .toEqual(['slack-tab', 'slack-tab', 'original-tab', 'original-tab']);
-    expect(fake.calls.filter(call => call.path === '/url')).toHaveLength(2);
-    expect(surfaceSelection(tree, slack)?.active).toBe('firefox:original-tab');
-  });
-
-  it('fails safely within two seconds when selection cannot be confirmed', async () => {
-    vi.useFakeTimers();
-    const fake = driver();
-    const fetcher = fake.fetcher.getMockImplementation()!;
-    fake.fetcher.mockImplementation(async (input, init) => {
-      const original = fake.selected();
-      const response = await fetcher(input, init);
-      if (String(input).endsWith('/window') && init?.method === 'POST') fake.setSelected(original);
-      return response;
-    });
-    const transport = createFirefoxSlackBrowserTransport();
-    const result = expect(transport(treeCommand)).rejects.toThrow('could not confirm the selected tab');
-    await vi.advanceTimersByTimeAsync(2_000);
-    await result;
-    expect(fake.selected()).toBe('original-tab');
-    expect(fake.calls.filter(call => call.path === '/url')).toHaveLength(1);
-    expect(fake.calls.some(call => ['/execute/sync', '/elements'].includes(call.path))).toBe(false);
-    expect(fake.calls.filter(call => call.path === '/window' && call.method === 'POST')).toHaveLength(20);
-  });
-
-  it('rejects a URL read when selection changes instead of mislabeling another tab', async () => {
-    const fake = driver();
-    const fetcher = fake.fetcher.getMockImplementation()!;
-    fake.fetcher.mockImplementation(async (input, init) => {
-      const response = await fetcher(input, init);
-      if (String(input).endsWith('/url') && fake.selected() === 'slack-tab') fake.setSelected('original-tab');
-      return response;
-    });
-    await expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('tab selection changed');
-    expect(fake.selected()).toBe('original-tab');
-  });
-
-  it('confirms selection before a control mutation without retrying that mutation', async () => {
-    const fake = driver();
-    const transport = createFirefoxSlackBrowserTransport();
-    await transport(treeCommand);
-    const fetcher = fake.fetcher.getMockImplementation()!;
-    let delayed = false;
-    fake.fetcher.mockImplementation(async (input, init) => {
-      const original = fake.selected();
-      const response = await fetcher(input, init);
-      if (!delayed && String(input).endsWith('/window') && init?.method === 'POST') {
-        delayed = true;
-        fake.setSelected(original);
-      }
-      return response;
-    });
-    await transport(['browser', slack, 'click', '[data-qa="query"]']);
-    expect(fake.calls.filter(call => call.path.endsWith('/click'))).toHaveLength(1);
-    expect(fake.selected()).toBe('original-tab');
-  });
-
-  it('reuses its session across discovery and guarded Slack evaluations without double encoding', async () => {
+  it('targets the explicit Slack context with user activation disabled and preserves eval encoding', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
     expect(await transport(['browser', slack, 'eval', 'JSON.stringify({messages: []})'])).toBe('{"messages":[]}');
-    expect(fake.calls.filter(call => call.path === '/session')).toHaveLength(1);
-    expect(fake.calls.find(call => call.path === '/execute/sync')?.body).toEqual({
-      script: 'if (location.origin !== "https://app.slack.com") throw new Error("Slack tab changed"); return (JSON.stringify({messages: []}));', args: [],
-    });
-    expect(fake.selected()).toBe('original-tab');
-    fake.setEvaluation(true);
     expect(await transport(['browser', slack, 'eval', 'true'])).toBe('true');
+    expect(await transport(['browser', slack, 'eval', 'undefined'])).toBe('null');
+    const evaluations = fake.calls.filter(call => call.method === 'script.evaluate');
+    for (const call of evaluations) {
+      expect(call.params).toMatchObject({ target: { context: 'slack-tab' }, awaitPromise: true, userActivation: false, resultOwnership: 'none' });
+      expect(call.params.expression).toContain('if (location.origin !== "https://app.slack.com")');
+    }
+    expect(fake.fetcher).toHaveBeenCalledOnce();
   });
 
-  it('focuses a discovered tab explicitly and preserves that selection during commands', async () => {
+  it('fills input and textarea with native value setters and bubbling input events', async () => {
+    driver();
+    document.body.innerHTML = '<input id="query"><textarea id="text"></textarea>';
+    const input = document.querySelector<HTMLInputElement>('#query')!;
+    const change = vi.fn();
+    document.addEventListener('input', change, { once: true });
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    const text = 'in:reviews "quoted" \\ literal';
+    await transport(['browser', slack, 'fill', '#query', text]);
+    expect(input.value).toBe(text);
+    expect(change).toHaveBeenCalledOnce();
+    await transport(['browser', slack, 'fill', '#text', 'line1\nline2']);
+    expect(document.querySelector<HTMLTextAreaElement>('#text')?.value).toBe('line1\nline2');
+  });
+
+  it('fills contenteditable through native insertion without focusing the window', async () => {
+    const fake = driver();
+    document.body.innerHTML = '<div id="query" contenteditable="true">old query</div>';
+    const editor = document.querySelector<HTMLElement>('#query')!;
+    Object.defineProperty(editor, 'isContentEditable', { value: true });
+    const exec = vi.fn((_command: string, _ui: boolean, value: string) => { editor.textContent = value; return true; });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
+    const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    await transport(['browser', slack, 'fill', '#query', 'in:reviews after:2026-09-20']);
+    expect(exec).toHaveBeenCalledExactlyOnceWith('insertText', false, 'in:reviews after:2026-09-20');
+    expect(editor.textContent).toBe('in:reviews after:2026-09-20');
+    expect(focus).not.toHaveBeenCalled();
+    expect(fake.calls.every(call => ['browsingContext.getTree', 'script.evaluate'].includes(call.method))).toBe(true);
+    Reflect.deleteProperty(document, 'execCommand');
+  });
+
+  it('clicks a visible enabled control exactly once and waits without activation', async () => {
+    const fake = driver();
+    document.body.innerHTML = '<button id="query">Search</button><button id="disabled" disabled>Disabled</button>';
+    const clicked = vi.fn();
+    document.querySelector('#query')!.addEventListener('click', clicked);
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    await transport(['browser', slack, 'wait', '--selector', '#query', '--timeout-ms', '10000']);
+    await transport(['browser', slack, 'click', '#query']);
+    await expect(transport(['browser', slack, 'click', '#disabled'])).rejects.toThrow('control is unavailable');
+    expect(clicked).toHaveBeenCalledOnce();
+    expect(fake.fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('guards against pages leaving Slack before evaluation and does not expose script errors', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
-    await transport(['rpc', 'surface.focus', JSON.stringify({ surface_id: slack })]);
-    await transport(['browser', slack, 'eval', 'true']);
-    expect(fake.selected()).toBe('slack-tab');
-    await transport(['rpc', 'surface.focus', JSON.stringify({ surface_id: 'firefox:original-tab' })]);
-    expect(fake.selected()).toBe('original-tab');
+    fake.contexts[1]!.url = 'https://example.com/private';
+    await expect(transport(['browser', slack, 'eval', 'document.body.innerHTML'])).rejects.toThrow('Check the signed-in Slack tab');
+    expect(fake.sockets[0]?.close).toHaveBeenCalledOnce();
   });
 
-  it('fills contenteditable through native clear and input endpoints, preserving literal text', async () => {
+  it('refreshes known contexts and refuses removed or unknown tabs', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
-    const value = 'in:reviews "quoted" \\ text\nnext';
-    await transport(['browser', slack, 'fill', '[role="combobox"]', value]);
-    expect(fake.field()).toBe(value);
-    expect(fake.calls.filter(call => /\/(clear|value)$/.test(call.path))).toEqual([
-      { path: '/element/editor/clear', method: 'POST', body: {} },
-      { path: '/element/editor/value', method: 'POST', body: { text: value } },
-    ]);
-    expect(fake.calls.find(call => call.path === '/elements')?.body).toEqual({ using: 'css selector', value: '[role="combobox"]' });
-    await transport(['browser', slack, 'fill', '[role="combobox"]', '']);
-    expect(fake.field()).toBe('');
+    fake.contexts.pop();
+    await transport(treeCommand);
+    await expect(transport(['browser', slack, 'eval', 'true'])).rejects.toThrow('tab is unknown');
+    expect(fake.calls.every(call => call.method === 'browsingContext.getTree')).toBe(true);
   });
 
-  it('waits for visible controls and clicks through WebDriver', async () => {
+  it('rejects malformed discovery without retaining old context mappings', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
-    expect(await transport(['browser', slack, 'wait', '--selector', '[data-qa="query"]', '--timeout-ms', '10000'])).toBe('OK');
-    await transport(['browser', slack, 'click', '[data-qa="query"]']);
-    expect(fake.calls.filter(call => call.path.endsWith('/click'))).toEqual([{ path: '/element/editor/click', method: 'POST', body: {} }]);
+    fake.setResponse(command => ({ type: 'success', id: command.id, result: { contexts: [null] } }));
+    await expect(transport(treeCommand)).rejects.toThrow('invalid background tab');
+    expect(fake.sockets[0]?.close).toHaveBeenCalledOnce();
+    await expect(transport(['browser', slack, 'eval', 'true'])).rejects.toThrow('unknown');
   });
 
-  it('times out missing controls and validates wait limits', async () => {
+  it('rejects protocol errors without retrying mutations or deleting the session', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
-    fake.setMatches([]);
-    await expect(transport(['browser', slack, 'wait', '--selector', '#missing', '--timeout-ms', '1'])).rejects.toThrow('before the timeout');
-    await expect(transport(['browser', slack, 'wait', '--selector', '#missing', '--timeout-ms', '999999'])).rejects.toThrow('Invalid Firefox Slack wait');
-    expect(fake.selected()).toBe('original-tab');
+    fake.setResponse(command => ({ type: 'error', id: command.id, error: 'unknown error', message: 'secret-cookie=private' }));
+    await expect(transport(['browser', slack, 'click', '#query'])).rejects.toThrow('background automation disconnected');
+    expect(fake.calls.filter(call => call.method === 'script.evaluate')).toHaveLength(1);
+    expect(fake.sockets[0]?.close).toHaveBeenCalledOnce();
+    expect(fake.fetcher).toHaveBeenCalledOnce();
   });
 
-  it('supports bounded key presses and refuses arbitrary keys', async () => {
+  it('bounds RPC timeout, closes the socket, and reconnects only on the next explicit operation', async () => {
+    vi.useFakeTimers();
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
-    await transport(['browser', slack, 'press', 'Escape']);
-    expect(fake.calls.find(call => call.path === '/actions')?.body).toEqual({ actions: [{ type: 'key', id: 'helmsman-slack-keyboard',
-      actions: [{ type: 'keyDown', value: '\uE00C' }, { type: 'keyUp', value: '\uE00C' }] }] });
-    await expect(transport(['browser', slack, 'press', 'arbitrary message'])).rejects.toThrow('Unsupported Firefox Slack key');
+    fake.setAutoReply(false);
+    const result = expect(transport(['browser', slack, 'eval', 'true'])).rejects.toThrow('disconnected');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await result;
+    expect(fake.sockets).toHaveLength(1);
+    expect(fake.sockets[0]?.close).toHaveBeenCalledOnce();
+    fake.setAutoReply(true);
+    await transport(treeCommand);
+    expect(fake.sockets).toHaveLength(2);
+    expect(fake.fetcher).toHaveBeenCalledOnce();
   });
 
-  it('refuses unknown surfaces and non-Slack pages without reading their DOM', async () => {
+  it('fails bounded waits for missing controls and rejects unsafe keyboard commands', async () => {
+    vi.useFakeTimers();
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();
     await transport(treeCommand);
-    await expect(transport(['browser', 'firefox:unknown', 'eval', 'document.body.innerHTML'])).rejects.toThrow('unknown');
-    await expect(transport(['browser', 'firefox:original-tab', 'eval', 'document.body.innerHTML'])).rejects.toThrow('signed-in app.slack.com');
-    fake.urls.set('slack-tab', 'https://app.slack.com.evil.test/client/T123/C123');
-    await expect(transport(['browser', slack, 'click', 'button'])).rejects.toThrow('signed-in app.slack.com');
-    expect(fake.calls.some(call => ['/execute/sync', '/elements'].includes(call.path))).toBe(false);
-  });
-
-  it('sanitizes remote failures and never retries mutations or deletes the browser session', async () => {
-    const fake = driver();
-    const transport = createFirefoxSlackBrowserTransport();
-    await transport(treeCommand);
-    fake.setFailure({ path: '/element/editor/click', code: 'unknown error', message: 'secret-cookie=abc content=private' });
-    await expect(transport(['browser', slack, 'click', 'button'])).rejects.toThrow('Firefox could not complete');
-    expect(fake.calls.filter(call => call.path.endsWith('/click'))).toHaveLength(1);
-    expect(fake.selected()).toBe('original-tab');
-    expect(fake.calls.some(call => call.method === 'DELETE')).toBe(false);
-  });
-
-  it('reconnects after an invalid session only on a subsequent command', async () => {
-    const fake = driver();
-    const transport = createFirefoxSlackBrowserTransport();
-    await transport(treeCommand);
-    fake.setFailure({ path: '/window', code: 'invalid session id' });
-    await expect(transport(treeCommand)).rejects.toThrow('Firefox automation is unavailable');
-    expect(fake.calls.filter(call => call.path === '/session')).toHaveLength(1);
-    fake.setFailure(null);
-    await transport(treeCommand);
-    expect(fake.calls.filter(call => call.path === '/session')).toHaveLength(2);
-  });
-
-  it('reports driver availability without propagating network error details', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('sensitive network details')));
-    await expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('Restart the bridge after restarting Helmsman or Firefox');
-  });
-
-  it('does not restore over a user-changed selection', async () => {
-    const fake = driver();
-    const transport = createFirefoxSlackBrowserTransport();
-    await transport(treeCommand);
-    const fetcher = fake.fetcher.getMockImplementation()!;
-    fake.fetcher.mockImplementation(async (input, init) => {
-      const result = await fetcher(input, init);
-      if (String(input).endsWith('/execute/sync')) fake.setSelected('user-selected-tab');
-      return result;
-    });
-    await transport(['browser', slack, 'eval', 'true']);
-    expect(fake.selected()).toBe('user-selected-tab');
-  });
-
-  it('rejects unsupported commands before creating any session', async () => {
-    const fake = driver();
-    const transport = createFirefoxSlackBrowserTransport();
+    const result = expect(transport(['browser', slack, 'wait', '--selector', '#missing', '--timeout-ms', '200'])).rejects.toThrow('before the timeout');
+    await vi.advanceTimersByTimeAsync(200);
+    await result;
+    await expect(transport(['browser', slack, 'press', 'Enter'])).rejects.toThrow('Keyboard presses');
     await expect(transport(['browser', slack, 'navigate', 'https://example.com'])).rejects.toThrow('Unsupported');
-    await expect(transport(['rpc', 'surface.close', '{}'])).rejects.toThrow('Unsupported');
-    expect(fake.fetcher).not.toHaveBeenCalled();
+    expect(fake.calls.every(call => ['browsingContext.getTree', 'script.evaluate'].includes(call.method))).toBe(true);
+  });
+
+  it('matches out-of-order RPC IDs and ignores unrelated events', async () => {
+    const fake = driver(); fake.setAutoReply(false);
+    const client = await connectFirefoxBidi('ws://127.0.0.1:9222/session/1');
+    const first = client.request('browsingContext.getTree', {});
+    const second = client.request('browsingContext.getTree', {});
+    fake.sockets[0]!.message({ type: 'event', method: 'unrelated', params: {} });
+    fake.sockets[0]!.message({ type: 'success', id: 2, result: 'second' });
+    fake.sockets[0]!.message({ type: 'success', id: 1, result: 'first' });
+    await expect(first).resolves.toBe('first');
+    await expect(second).resolves.toBe('second');
+    client.close();
+  });
+
+  it('rejects pending requests on socket closure and times out socket connection', async () => {
+    vi.useFakeTimers();
+    const fake = driver(); fake.setAutoReply(false);
+    const client = await connectFirefoxBidi('ws://127.0.0.1:9222/session/1');
+    const result = expect(client.request('browsingContext.getTree', {})).rejects.toThrow('disconnected');
+    fake.sockets[0]!.dispatchEvent(new Event('close'));
+    await result;
+    fake.setAutoOpen(false);
+    const connection = expect(connectFirefoxBidi('ws://127.0.0.1:9222/session/1')).rejects.toThrow('disconnected');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await connection;
+    expect(fake.sockets[1]?.close).toHaveBeenCalledOnce();
   });
 });

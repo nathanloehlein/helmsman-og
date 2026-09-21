@@ -1,208 +1,181 @@
 import type { SlackBrowserTransport } from './browser';
+import { connectFirefoxBidi, type FirefoxBidiClient } from './firefox-bidi';
 
-const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
-const DRIVER_UNAVAILABLE = 'Firefox automation is unavailable. Enable Firefox Marionette and start the local bridge with npm run slack:firefox. Restart the bridge after restarting Helmsman or Firefox.';
-const KEYS: Record<string, string> = {
-  Enter: '\uE007', Escape: '\uE00C', Tab: '\uE004', Backspace: '\uE003', Delete: '\uE017',
-  ArrowLeft: '\uE012', ArrowUp: '\uE013', ArrowRight: '\uE014', ArrowDown: '\uE015', Home: '\uE011', End: '\uE010',
-};
+const UNAVAILABLE = 'Firefox background automation is unavailable. Restart Firefox with --marionette --remote-debugging-port 9222, then restart the local Firefox bridge.';
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-class FirefoxCommandError extends Error {
-  readonly code: string;
-
-  constructor(code: string) {
-    super(code === 'invalid session id' || code === 'session not created' ? DRIVER_UNAVAILABLE
-      : code === 'no such window' ? 'The selected Firefox tab is unavailable. Reopen signed-in Slack and retry.'
-      : code === 'no such element' || code === 'stale element reference' ? 'The Slack browser control is unavailable or changed. Retry after the page settles.'
-      : 'Firefox could not complete the Slack browser operation. Check the signed-in tab and retry.');
-    this.code = code;
-  }
-}
-
-function endpointUrl(endpoint: string): string {
+function endpointUrl(endpoint: string): URL {
   let url: URL;
   try { url = new URL(endpoint); } catch { throw new Error('Firefox WebDriver must use a local HTTP endpoint.'); }
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
     || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
     throw new Error('Firefox WebDriver must use a local HTTP endpoint without credentials, a path, or query parameters.');
   }
-  return url.origin;
+  return url;
+}
+
+function slackControl(doc: Document, selector: string, operation: 'click' | 'fill' | 'wait', text?: string): boolean {
+  const element = Array.from(doc.querySelectorAll<HTMLElement>(selector)).find(item => {
+    const style = doc.defaultView?.getComputedStyle(item);
+    return item.isConnected && item.getClientRects().length > 0 && style?.visibility !== 'hidden' && style?.display !== 'none';
+  });
+  if (!element) return false;
+  if (operation === 'wait') return true;
+  if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false;
+  if (operation === 'click') { element.click(); return true; }
+  if (typeof text !== 'string') return false;
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    if (element.readOnly) return false;
+    const prototype = element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    if (!setter) return false;
+    setter.call(element, text);
+    element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertReplacementText', data: text }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return element.value === text;
+  }
+  if (!element.isContentEditable || typeof doc.execCommand !== 'function') return false;
+  if (element.textContent === text) return true;
+  const selection = doc.getSelection();
+  if (!selection) return false;
+  element.focus({ preventScroll: true });
+  const range = doc.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return doc.execCommand(text ? 'insertText' : 'delete', false, text);
 }
 
 export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:4444'): SlackBrowserTransport {
   const base = endpointUrl(endpoint);
   let session: Promise<string> | null = null;
-  const knownHandles = new Map<string, string>();
-
-  async function request(path: string, method = 'GET', body?: unknown, timeoutMs = 15_000): Promise<unknown> {
-    let response: Response;
-    let payload: Record<string, unknown> | null;
-    try {
-      response = await fetch(`${base}${path}`, {
-        method, redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
-        ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-      });
-      payload = record(await response.json());
-    } catch { throw new Error(DRIVER_UNAVAILABLE); }
-    const failure = record(payload?.value);
-    if (!response.ok || typeof failure?.error === 'string') {
-      const allowed = ['invalid session id', 'session not created', 'no such window', 'no such element', 'stale element reference'];
-      const code = typeof failure?.error === 'string' && allowed.includes(failure.error) ? failure.error : 'webdriver error';
-      if (code === 'invalid session id') { session = null; knownHandles.clear(); }
-      throw new FirefoxCommandError(code);
-    }
-    if (!payload || !Object.hasOwn(payload, 'value')) throw new Error('Firefox returned an invalid automation response.');
-    return payload.value;
-  }
+  let connection: Promise<FirefoxBidiClient> | null = null;
+  const contexts = new Map<string, string>();
+  let virtualSelection: string | null = null;
 
   function getSession(): Promise<string> {
-    session ??= request('/session', 'POST', { capabilities: { alwaysMatch: { browserName: 'firefox',
-      timeouts: { implicit: 0, pageLoad: 15_000, script: 15_000 } } } }).then(value => {
-      const result = record(value);
-      const capabilities = record(result?.capabilities);
-      if (typeof result?.sessionId !== 'string' || !result.sessionId || capabilities?.browserName !== 'firefox') {
-        throw new Error('Firefox returned an invalid automation session.');
+    session ??= (async () => {
+      let payload: Record<string, unknown> | null;
+      try {
+        const response = await fetch(`${base.origin}/session`, {
+          method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ capabilities: { alwaysMatch: { browserName: 'firefox', webSocketUrl: true,
+            timeouts: { implicit: 0, pageLoad: 15_000, script: 15_000 } } } }),
+        });
+        if (!response.ok) throw new Error();
+        payload = record(await response.json());
+      } catch { throw new Error(UNAVAILABLE); }
+      const value = record(payload?.value);
+      const capabilities = record(value?.capabilities);
+      if (typeof value?.sessionId !== 'string' || !value.sessionId || capabilities?.browserName !== 'firefox'
+        || typeof capabilities.webSocketUrl !== 'string') throw new Error(UNAVAILABLE);
+      let socket: URL;
+      try { socket = new URL(capabilities.webSocketUrl); } catch { throw new Error(UNAVAILABLE); }
+      if (socket.protocol !== 'ws:' || socket.hostname !== base.hostname || socket.username || socket.password || socket.search || socket.hash) {
+        throw new Error('Firefox returned an unsafe background automation endpoint. Restart the local Firefox bridge.');
       }
-      return result.sessionId;
-    }).catch(error => { session = null; throw error; });
+      return socket.href;
+    })().catch(error => { session = null; throw error; });
     return session;
   }
 
-  const surfaceRef = (handle: string) => `firefox:${encodeURIComponent(handle)}`;
+  async function client(): Promise<FirefoxBidiClient> {
+    if (connection) {
+      const current = await connection;
+      if (!current.closed) return current;
+      connection = null;
+    }
+    const pending = getSession().then(url => connectFirefoxBidi(url));
+    connection = pending;
+    try { return await pending; }
+    catch (error) { if (connection === pending) connection = null; throw error; }
+  }
 
   return async args => {
     const tree = args.length === 5 && args.join(' ') === '--id-format both tree --all --json'
       || args.length === 2 && args[0] === 'tree' && args[1] === '--json';
     const focus = args.length === 3 && args[0] === 'rpc' && args[1] === 'surface.focus';
     const operation = args[0] === 'browser' ? args[2] : undefined;
-    if (!tree && !focus && !['eval', 'click', 'fill', 'wait', 'press'].includes(operation ?? '')) {
-      throw new Error('Unsupported Firefox Slack browser command.');
+    if (!tree && !focus && !['eval', 'click', 'fill', 'wait'].includes(operation ?? '')) {
+      throw new Error('Unsupported Firefox background Slack command. Keyboard presses and browser activation are unavailable.');
     }
-    const id = await getSession();
-    const path = `/session/${encodeURIComponent(id)}`;
-    const command = (suffix: string, method = 'GET', body?: unknown, timeoutMs = 15_000) => request(`${path}${suffix}`, method, body, timeoutMs);
-    const currentHandle = async (timeoutMs = 15_000): Promise<string> => {
-      const value = await command('/window', 'GET', undefined, timeoutMs);
-      if (typeof value !== 'string' || !value) throw new Error('Firefox tab selection is unavailable.');
-      return value;
-    };
-    const select = async (handle: string): Promise<void> => {
-      const deadline = Date.now() + 2_000;
-      const remaining = () => Math.max(1, deadline - Date.now());
-      while (Date.now() < deadline) {
-        await command('/window', 'POST', { handle }, remaining());
-        if (await currentHandle(remaining()) === handle) return;
-        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining())));
-      }
-      throw new Error('Firefox could not confirm the selected tab. Wait for the browser to settle and retry.');
-    };
-    const readUrl = async (handle: string): Promise<string> => {
-      if (await currentHandle() !== handle) throw new Error('Firefox tab selection changed. Refresh browser discovery and retry.');
-      const url = await command('/url');
-      if (await currentHandle() !== handle) throw new Error('Firefox tab selection changed. Refresh browser discovery and retry.');
-      if (typeof url !== 'string') throw new Error('Firefox returned an invalid tab URL.');
-      return url;
-    };
-    const restore = async (original: string, selected: string) => {
-      if (original === selected) return;
-      try { if (await currentHandle() === selected) await select(original); } catch {}
-    };
-
     if (tree) {
-      const original = await currentHandle();
-      const handles = await command('/window/handles');
-      if (!Array.isArray(handles) || handles.length > 100 || handles.some(handle => typeof handle !== 'string' || !handle)) {
-        throw new Error('Firefox tab discovery returned invalid window handles.');
+      contexts.clear();
+      const bidi = await client();
+      const value = record(await bidi.request('browsingContext.getTree', { maxDepth: 0 }));
+      if (!Array.isArray(value?.contexts) || value.contexts.length > 100) {
+        bidi.close();
+        throw new Error('Firefox returned invalid background tab discovery.');
       }
-      let selected = original;
-      const surfaces: { ref: string; id: string; type: string; url: string }[] = [];
-      const discovered = new Map<string, string>();
-      try {
-        for (const handle of handles as string[]) {
-          try {
-            if (selected !== handle) { selected = handle; await select(handle); }
-            const url = await readUrl(handle);
-            const ref = surfaceRef(handle);
-            discovered.set(ref, handle);
-            surfaces.push({ ref, id: ref, type: 'browser', url });
-          } catch (error) {
-            if (!(error instanceof FirefoxCommandError) || error.code !== 'no such window') throw error;
-          }
+      const next = new Map<string, string>();
+      const surfaces = value.contexts.map(item => {
+        const context = record(item);
+        if (typeof context?.context !== 'string' || !context.context || typeof context.url !== 'string'
+          || context.parent !== null && context.parent !== undefined) {
+          bidi.close();
+          throw new Error('Firefox returned an invalid background tab.');
         }
-      } finally { await restore(original, selected); }
-      knownHandles.clear();
-      for (const [ref, handle] of discovered) knownHandles.set(ref, handle);
-      const active = surfaceRef(await currentHandle());
-      return JSON.stringify({ active: { surface_ref: active }, windows: [{ workspaces: [{ panes: [{ selected_surface_ref: active, surfaces }] }] }] });
+        const ref = `firefox:${encodeURIComponent(context.context)}`;
+        if (next.has(ref)) { bidi.close(); throw new Error('Firefox returned duplicate background tabs.'); }
+        next.set(ref, context.context);
+        return { ref, id: ref, type: 'browser', url: context.url };
+      });
+      for (const [ref, context] of next) contexts.set(ref, context);
+      if (!virtualSelection || !contexts.has(virtualSelection)) virtualSelection = surfaces[0]?.ref ?? null;
+      return JSON.stringify({ active: { surface_ref: virtualSelection }, windows: [{ workspaces: [{ panes: [{ selected_surface_ref: virtualSelection, surfaces }] }] }] });
     }
-
     let surface: string | undefined = args[1];
     if (focus) {
-      let input: Record<string, unknown> | null;
-      try { input = record(JSON.parse(args[2] ?? '')); } catch { input = null; }
-      surface = typeof input?.surface_id === 'string' ? input.surface_id : undefined;
+      let value: Record<string, unknown> | null;
+      try { value = record(JSON.parse(args[2] ?? '')); } catch { value = null; }
+      surface = typeof value?.surface_id === 'string' ? value.surface_id : undefined;
     }
-    const handle = surface ? knownHandles.get(surface) : undefined;
-    if (!handle) throw new Error('Firefox Slack tab is unknown. Refresh browser discovery and select a Firefox surface.');
-    if (focus) { await select(handle); return 'OK'; }
-    const original = await currentHandle();
-    try {
-      if (original !== handle) await select(handle);
-      const url = await readUrl(handle);
-      try {
-        if (typeof url !== 'string' || new URL(url).origin !== 'https://app.slack.com') throw new Error();
-      } catch { throw new Error('Firefox Slack automation requires a signed-in app.slack.com tab.'); }
-      if (operation === 'eval') {
-        if (args.length !== 4 || !args[3]) throw new Error('Invalid Firefox Slack evaluation.');
-        const value = await command('/execute/sync', 'POST', { script: `if (location.origin !== "https://app.slack.com") throw new Error("Slack tab changed"); return (${args[3]});`, args: [] });
-        return typeof value === 'string' ? value : JSON.stringify(value);
+    const context = surface ? contexts.get(surface) : undefined;
+    if (!context) throw new Error('Firefox Slack tab is unknown. Refresh browser discovery.');
+    if (focus) { virtualSelection = surface!; return 'OK'; }
+    const evaluate = async (expression: string, timeoutMs = 15_000): Promise<unknown> => {
+      const bidi = await client();
+      const value = record(await bidi.request('script.evaluate', {
+        expression: `((__name) => { if (location.origin !== "https://app.slack.com") throw new Error("Slack tab changed"); const value = (${expression}); return JSON.stringify(value === undefined ? null : value); })((value) => value)`,
+        target: { context }, awaitPromise: true, userActivation: false, resultOwnership: 'none',
+      }, timeoutMs));
+      const result = record(value?.result);
+      if (value?.type !== 'success' || result?.type !== 'string' || typeof result.value !== 'string') {
+        bidi.close();
+        throw new Error('Firefox could not complete the background Slack operation. Check the signed-in Slack tab and retry.');
       }
-      const element = async (selector: string): Promise<string | null> => {
-        const matches = await command('/elements', 'POST', { using: 'css selector', value: selector });
-        if (!Array.isArray(matches)) throw new Error('Firefox returned invalid Slack controls.');
-        for (const match of matches) {
-          const elementId = record(match)?.[ELEMENT];
-          if (typeof elementId !== 'string' || !elementId) throw new Error('Firefox returned an invalid Slack control.');
-          if (await command(`/element/${encodeURIComponent(elementId)}/displayed`) === true) return elementId;
-        }
-        return null;
-      };
-      if (operation === 'wait') {
-        const timeout = Number(args[6]);
-        if (args.length !== 7 || args[3] !== '--selector' || !args[4] || args[5] !== '--timeout-ms'
-          || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 15_000) throw new Error('Invalid Firefox Slack wait command.');
-        const deadline = Date.now() + timeout;
-        do {
-          if (await element(args[4])) return 'OK';
-          if (Date.now() >= deadline) break;
-          await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())));
-        } while (Date.now() <= deadline);
-        throw new Error('The Slack browser control did not appear before the timeout.');
-      }
-      if (operation === 'press') {
-        const key = args[3] ? KEYS[args[3]] : undefined;
-        if (args.length !== 4 || !key) throw new Error('Unsupported Firefox Slack key.');
-        await command('/actions', 'POST', { actions: [{ type: 'key', id: 'helmsman-slack-keyboard', actions: [
-          { type: 'keyDown', value: key }, { type: 'keyUp', value: key },
-        ] }] });
-        return 'OK';
-      }
-      if (!args[3] || operation === 'click' && args.length !== 4 || operation === 'fill' && args.length !== 5) {
-        throw new Error('Invalid Firefox Slack control command.');
-      }
-      const elementId = await element(args[3]);
-      if (!elementId) throw new FirefoxCommandError('no such element');
-      const target = `/element/${encodeURIComponent(elementId)}`;
-      if (operation === 'click') await command(`${target}/click`, 'POST', {});
-      else {
-        await command(`${target}/clear`, 'POST', {});
-        if (args[4]) await command(`${target}/value`, 'POST', { text: args[4] });
-      }
-      return 'OK';
-    } finally { await restore(original, handle); }
+      try { return JSON.parse(result.value) as unknown; }
+      catch { bidi.close(); throw new Error('Firefox returned an invalid background Slack result.'); }
+    };
+    if (operation === 'eval') {
+      if (args.length !== 4 || !args[3]) throw new Error('Invalid Firefox Slack evaluation.');
+      const result = await evaluate(args[3]);
+      return typeof result === 'string' ? result : JSON.stringify(result);
+    }
+    const control = (selector: string, action: 'click' | 'fill' | 'wait', text?: string, timeoutMs?: number) => evaluate(
+      `(${slackControl.toString()})(document, ${JSON.stringify(selector)}, ${JSON.stringify(action)}, ${JSON.stringify(text ?? null)})`, timeoutMs,
+    );
+    if (operation === 'wait') {
+      const timeout = Number(args[6]);
+      if (args.length !== 7 || args[3] !== '--selector' || !args[4] || args[5] !== '--timeout-ms'
+        || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 15_000) throw new Error('Invalid Firefox Slack wait command.');
+      const deadline = Date.now() + timeout;
+      do {
+        if (await control(args[4], 'wait', undefined, Math.max(1, deadline - Date.now())) === true) return 'OK';
+        if (Date.now() >= deadline) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())));
+      } while (Date.now() < deadline);
+      throw new Error('The Slack browser control did not appear before the timeout.');
+    }
+    if (!args[3] || operation === 'click' && args.length !== 4 || operation === 'fill' && args.length !== 5) {
+      throw new Error('Invalid Firefox Slack control command.');
+    }
+    if (await control(args[3], operation as 'click' | 'fill', args[4]) !== true) {
+      throw new Error('The Slack browser control is unavailable or changed. Retry after the page settles.');
+    }
+    return 'OK';
   };
 }
