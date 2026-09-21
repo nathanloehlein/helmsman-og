@@ -1,3 +1,4 @@
+import { renderLoading } from './renderLoading';
 import { term, isPirateMode, TERMINOLOGY, TERMINOLOGY_REFERENCE_KEYS } from './logic/terminology';
 import { renderLocalGit } from './renderLocalGit';
 import { renderThemePreview } from './renderThemePreview';
@@ -783,7 +784,7 @@ function renderPrList(state: PrListState | undefined, emptyMessage: string, requ
         ? state.truncated ? term('noMatchingPrs') : emptyMessage
         : '';
   return `<ul class="pr-list lane-list" aria-busy="${!state || state.loading}">${rows}</ul>
-    ${status ? `<div class="empty-note" role="status">${esc(status)}</div>` : ''}
+    ${status ? !state || state.loading ? `<div class="empty-note">${renderLoading(status)}</div>` : `<div class="empty-note" role="status">${esc(status)}</div>` : ''}
     ${state?.truncated ? `<div class="empty-note pr-list-truncated">${term('morePrs')}</div>` : ''}`;
 }
 
@@ -886,7 +887,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
   const value: string = state.repo && state.number ? `${state.repo}#${state.number}` : '';
   const canRerun: boolean = Boolean(state.pr && opts.repos.includes(state.pr.repo));
   const panel: string = state.loading
-    ? `<div class="pr-panel empty-note" role="status">${term('loadingPr')}</div>`
+    ? `<div class="pr-panel empty-note">${renderLoading(term('loadingPr'))}</div>`
     : state.number
       ? renderPrPanel(state.pr, canRerun, false, opts.selectedRepo)
       : `<div class="pr-panel empty-note">${term('prLookupHint')}</div>`;
@@ -1258,7 +1259,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
   const customization = configCustomizationPanel(opts.themeId);
   const operatorNote = `<div class="operator-note mono">${ICON_LOCK}<span>${term('operatorNote')}</span></div>`;
   const intro = `<header class="page-intro"><h1>Config</h1><p>Configure work sources, integrations, and ${term('agent').toLowerCase()} defaults. Save each setting separately.</p></header>`;
-  const status = `${opts.error ? `<div class="config-load-error degraded-banner" role="alert">${esc(opts.error)}${opts.unavailable ? '' : ' Showing the last loaded settings.'} <button type="button" data-config-retry${opts.loading ? ' disabled' : ''}>Try again</button></div>` : ''}${opts.loading ? '<p class="empty-note" role="status">Loading configuration…</p>' : ''}`;
+  const status = `${opts.error ? `<div class="config-load-error degraded-banner" role="alert">${esc(opts.error)}${opts.unavailable ? '' : ' Showing the last loaded settings.'} <button type="button" data-config-retry${opts.loading ? ' disabled' : ''}>Try again</button></div>` : ''}${opts.loading ? `<p class="empty-note">${renderLoading('Loading configuration…')}</p>` : ''}`;
   if (opts.unavailable) {
     return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `${intro}<section class="panel config-loading" aria-label="Configuration" aria-busy="${Boolean(opts.loading)}">${status || '<p class="empty-note">Configuration is unavailable. <button type="button" data-config-retry>Try again</button></p>'}</section>${customization}${operatorNote}`);
   }

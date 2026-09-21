@@ -1,0 +1,26 @@
+.helm-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.helm-loader-wheel {
+  width: var(--helm-loader-size, 24px);
+  height: var(--helm-loader-size, 24px);
+  flex: 0 0 auto;
+  color: var(--accent, currentColor);
+  transform-origin: center;
+  animation: helm-loader-turn 4s ease-in-out infinite;
+}
+
+@keyframes helm-loader-turn {
+  0%, 10% { transform: rotate(0deg); }
+  40%, 60% { transform: rotate(360deg); }
+  90%, 100% { transform: rotate(0deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .helm-loader-wheel { animation: none; }
+}

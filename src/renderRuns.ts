@@ -1,3 +1,4 @@
+import { renderLoading } from './renderLoading';
 import type { RunSummary } from './data/agents';
 import { escapeHtml as esc } from './logic/html';
 import { routeHref } from './logic/routes';
@@ -58,7 +59,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
     .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
   const value = state.repo && state.number ? `${state.repo}#${state.number}` : '';
   const panel = state.loading
-    ? `<div class="pr-panel empty-note" role="status">${term('loadingPr')}</div>`
+    ? `<div class="pr-panel empty-note">${renderLoading(term('loadingPr'))}</div>`
     : state.number
       ? renderPrPanel(state.pr, Boolean(state.pr && repos.includes(state.pr.repo)), true, opts.selectedRepo)
       : `<div class="pr-panel empty-note">Load a ${term('pr')} for a code ${term('review').toLowerCase()} or to address feedback with the ${term('crew').toLowerCase()}.</div>`;

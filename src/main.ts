@@ -1,3 +1,4 @@
+import { renderLoading } from './renderLoading';
 import { applyBootTerminology } from './logic/bootTerminology';
 import { term, setPirateMode, isPirateMode } from './logic/terminology';
 import { loadProfile } from './data/profile';
@@ -1082,7 +1083,7 @@ export class DashboardView {
       return;
     }
     if (!this.snapshot || this.snapshotRepo !== this.selectedRepo) {
-      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note" role="status">${this.dashboardUnavailable ? term('unavailableDashboard') : `Loading ${term('dashboard')}…`}</div>`));
+      this.mountPage(renderAppShell(this.shellOptions(), `<div class="empty-note">${this.dashboardUnavailable ? term('unavailableDashboard') : renderLoading(`Loading ${term('dashboard')}…`)}</div>`));
       return;
     }
     const preBody: HTMLElement | null =
