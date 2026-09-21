@@ -65,7 +65,7 @@ function driver() {
   };
 }
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ''; });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ''; Reflect.deleteProperty(document, 'elementFromPoint'); });
 
 describe('Firefox background Slack transport', () => {
   it.each(['https://127.0.0.1:4444', 'http://remote.example:4444', 'http://127.0.0.1.evil.test:4444',
@@ -247,6 +247,19 @@ describe('Firefox background Slack transport', () => {
     fake.setResponse(command => ({ type: 'error', id: command.id, error: 'unknown error', message: 'secret-cookie=private' }));
     await expect(transport(['browser', slack, 'click', '#query'])).rejects.toThrow('background automation disconnected');
     expect(fake.calls.filter(call => call.method === 'script.evaluate')).toHaveLength(1);
+    expect(fake.sockets[0]?.close).toHaveBeenCalledOnce();
+    expect(fake.fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('does not replay a native click after the driver reports a failure', async () => {
+    const fake = driver();
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    fake.setResponse(command => command.method === 'script.evaluate'
+      ? { type: 'success', id: command.id, result: { type: 'success', result: { type: 'string', value: '{"x":60,"y":40}' } } }
+      : { type: 'error', id: command.id, error: 'unknown error', message: 'private page details' });
+    await expect(transport(['browser', slack, 'click', '#query'])).rejects.toThrow('background automation disconnected');
+    expect(fake.calls.filter(call => call.method === 'input.performActions')).toHaveLength(1);
     expect(fake.sockets[0]?.close).toHaveBeenCalledOnce();
     expect(fake.fetcher).toHaveBeenCalledOnce();
   });
