@@ -49,7 +49,7 @@ export function extractSlackMessages(doc: Document, channelId: string): { messag
     const body = row.querySelector('[data-qa="message-text"]');
     const sender = row.querySelector('[data-qa="message_sender_name"]');
     const author = sender?.textContent?.trim() || sender?.getAttribute('data-message-sender');
-    const attachmentOnly = !body && !!row.querySelector('[data-qa="message_attachment_v2"], [data-qa="message_attachment"]');
+    const attachmentOnly = !body && !!row.querySelector('[data-qa="message_attachment_v2"], [data-qa="message_attachment"], [data-qa="message_file_link"]');
     if (!ts || !/^\d+\.\d+$/.test(ts) || !href || (!body && !attachmentOnly) || !author) throw new Error('Slack search message is missing required fields');
     const permalink = new URL(href, 'https://app.slack.com');
     if (permalink.protocol !== 'https:' || !permalink.hostname.endsWith('.slack.com') || permalink.pathname !== `/archives/${channelId}/p${ts.replace('.', '')}`) {

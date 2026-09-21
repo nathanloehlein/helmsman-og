@@ -38,12 +38,12 @@ export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:
   let session: Promise<string> | null = null;
   const knownHandles = new Map<string, string>();
 
-  async function request(path: string, method = 'GET', body?: unknown): Promise<unknown> {
+  async function request(path: string, method = 'GET', body?: unknown, timeoutMs = 15_000): Promise<unknown> {
     let response: Response;
     let payload: Record<string, unknown> | null;
     try {
       response = await fetch(`${base}${path}`, {
-        method, redirect: 'error', signal: AbortSignal.timeout(15_000),
+        method, redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
         ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
       });
       payload = record(await response.json());
@@ -84,13 +84,29 @@ export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:
     }
     const id = await getSession();
     const path = `/session/${encodeURIComponent(id)}`;
-    const command = (suffix: string, method = 'GET', body?: unknown) => request(`${path}${suffix}`, method, body);
-    const currentHandle = async (): Promise<string> => {
-      const value = await command('/window');
+    const command = (suffix: string, method = 'GET', body?: unknown, timeoutMs = 15_000) => request(`${path}${suffix}`, method, body, timeoutMs);
+    const currentHandle = async (timeoutMs = 15_000): Promise<string> => {
+      const value = await command('/window', 'GET', undefined, timeoutMs);
       if (typeof value !== 'string' || !value) throw new Error('Firefox tab selection is unavailable.');
       return value;
     };
-    const select = (handle: string) => command('/window', 'POST', { handle });
+    const select = async (handle: string): Promise<void> => {
+      const deadline = Date.now() + 2_000;
+      const remaining = () => Math.max(1, deadline - Date.now());
+      while (Date.now() < deadline) {
+        await command('/window', 'POST', { handle }, remaining());
+        if (await currentHandle(remaining()) === handle) return;
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining())));
+      }
+      throw new Error('Firefox could not confirm the selected tab. Wait for the browser to settle and retry.');
+    };
+    const readUrl = async (handle: string): Promise<string> => {
+      if (await currentHandle() !== handle) throw new Error('Firefox tab selection changed. Refresh browser discovery and retry.');
+      const url = await command('/url');
+      if (await currentHandle() !== handle) throw new Error('Firefox tab selection changed. Refresh browser discovery and retry.');
+      if (typeof url !== 'string') throw new Error('Firefox returned an invalid tab URL.');
+      return url;
+    };
     const restore = async (original: string, selected: string) => {
       if (original === selected) return;
       try { if (await currentHandle() === selected) await select(original); } catch {}
@@ -108,9 +124,8 @@ export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:
       try {
         for (const handle of handles as string[]) {
           try {
-            if (selected !== handle) { await select(handle); selected = handle; }
-            const url = await command('/url');
-            if (typeof url !== 'string') throw new Error('Firefox returned an invalid tab URL.');
+            if (selected !== handle) { selected = handle; await select(handle); }
+            const url = await readUrl(handle);
             const ref = surfaceRef(handle);
             discovered.set(ref, handle);
             surfaces.push({ ref, id: ref, type: 'browser', url });
@@ -137,7 +152,7 @@ export function createFirefoxSlackBrowserTransport(endpoint = 'http://127.0.0.1:
     const original = await currentHandle();
     try {
       if (original !== handle) await select(handle);
-      const url = await command('/url');
+      const url = await readUrl(handle);
       try {
         if (typeof url !== 'string' || new URL(url).origin !== 'https://app.slack.com') throw new Error();
       } catch { throw new Error('Firefox Slack automation requires a signed-in app.slack.com tab.'); }

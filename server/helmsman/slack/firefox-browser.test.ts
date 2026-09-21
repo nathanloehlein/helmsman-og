@@ -77,6 +77,81 @@ describe('Firefox Slack WebDriver transport', () => {
     } } } });
   });
 
+  it('confirms delayed tab selection before discovery and retries restoration to the original tab', async () => {
+    const fake = driver();
+    const fetcher = fake.fetcher.getMockImplementation()!;
+    const delayed = new Set<string>();
+    fake.fetcher.mockImplementation(async (input, init) => {
+      const original = fake.selected();
+      const response = await fetcher(input, init);
+      if (String(input).endsWith('/window') && init?.method === 'POST') {
+        const target = String((JSON.parse(String(init.body)) as { handle: string }).handle);
+        if (!delayed.has(target)) { delayed.add(target); fake.setSelected(original); }
+      }
+      return response;
+    });
+    const transport = createFirefoxSlackBrowserTransport();
+    const tree = JSON.parse(await transport(treeCommand)) as unknown;
+    expect(findSlackBrowserSurface(tree, config)).toBe(slack);
+    expect(fake.selected()).toBe('original-tab');
+    expect(fake.calls.filter(call => call.path === '/window' && call.method === 'POST').map(call => call.body?.handle))
+      .toEqual(['slack-tab', 'slack-tab', 'original-tab', 'original-tab']);
+    expect(fake.calls.filter(call => call.path === '/url')).toHaveLength(2);
+    expect(surfaceSelection(tree, slack)?.active).toBe('firefox:original-tab');
+  });
+
+  it('fails safely within two seconds when selection cannot be confirmed', async () => {
+    vi.useFakeTimers();
+    const fake = driver();
+    const fetcher = fake.fetcher.getMockImplementation()!;
+    fake.fetcher.mockImplementation(async (input, init) => {
+      const original = fake.selected();
+      const response = await fetcher(input, init);
+      if (String(input).endsWith('/window') && init?.method === 'POST') fake.setSelected(original);
+      return response;
+    });
+    const transport = createFirefoxSlackBrowserTransport();
+    const result = expect(transport(treeCommand)).rejects.toThrow('could not confirm the selected tab');
+    await vi.advanceTimersByTimeAsync(2_000);
+    await result;
+    expect(fake.selected()).toBe('original-tab');
+    expect(fake.calls.filter(call => call.path === '/url')).toHaveLength(1);
+    expect(fake.calls.some(call => ['/execute/sync', '/elements'].includes(call.path))).toBe(false);
+    expect(fake.calls.filter(call => call.path === '/window' && call.method === 'POST')).toHaveLength(20);
+  });
+
+  it('rejects a URL read when selection changes instead of mislabeling another tab', async () => {
+    const fake = driver();
+    const fetcher = fake.fetcher.getMockImplementation()!;
+    fake.fetcher.mockImplementation(async (input, init) => {
+      const response = await fetcher(input, init);
+      if (String(input).endsWith('/url') && fake.selected() === 'slack-tab') fake.setSelected('original-tab');
+      return response;
+    });
+    await expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('tab selection changed');
+    expect(fake.selected()).toBe('original-tab');
+  });
+
+  it('confirms selection before a control mutation without retrying that mutation', async () => {
+    const fake = driver();
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    const fetcher = fake.fetcher.getMockImplementation()!;
+    let delayed = false;
+    fake.fetcher.mockImplementation(async (input, init) => {
+      const original = fake.selected();
+      const response = await fetcher(input, init);
+      if (!delayed && String(input).endsWith('/window') && init?.method === 'POST') {
+        delayed = true;
+        fake.setSelected(original);
+      }
+      return response;
+    });
+    await transport(['browser', slack, 'click', '[data-qa="query"]']);
+    expect(fake.calls.filter(call => call.path.endsWith('/click'))).toHaveLength(1);
+    expect(fake.selected()).toBe('original-tab');
+  });
+
   it('reuses its session across discovery and guarded Slack evaluations without double encoding', async () => {
     const fake = driver();
     const transport = createFirefoxSlackBrowserTransport();

@@ -80,11 +80,11 @@ describe('Slack DOM message extraction', () => {
     expect(() => extractSlackMessages(document, config.channelId)).toThrow('missing required fields');
   });
 
-  it('accepts attachment-only messages using the exact search-header channel and never treats attachment links as PRs', () => {
+  it.each(['message_attachment_v2', 'message_attachment', 'message_file_link'])('accepts attachment-only %s messages using the exact search-header channel and ignores attachment links', attachment => {
     document.body.innerHTML = row();
     document.querySelector('[data-message-channel]')?.remove();
     document.querySelector('[data-qa="message-text"]')?.remove();
-    document.querySelector('[data-qa="search_result"]')?.insertAdjacentHTML('beforeend', `<span data-qa="search_result_channel_name"><span data-channel-id="C123"></span></span><div data-qa="message_attachment_v2"><a href="${pr}">Attachment</a></div>`);
+    document.querySelector('[data-qa="search_result"]')?.insertAdjacentHTML('beforeend', `<span data-qa="search_result_channel_name"><span data-channel-id="C123"></span></span><div data-qa="${attachment}"><a href="${pr}">Attachment</a></div>`);
     expect(extractSlackMessages(document, config.channelId).messages[0]?.prUrls).toEqual([]);
   });
 
