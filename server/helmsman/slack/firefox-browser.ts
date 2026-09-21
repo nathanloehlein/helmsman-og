@@ -27,6 +27,7 @@ function slackControl(doc: Document, selector: string, operation: 'click' | 'fil
   if (operation === 'wait') return true;
   if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false;
   if (operation === 'click') {
+    element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     const bounds = element.getBoundingClientRect();
     const width = doc.defaultView?.innerWidth ?? 0;
     const height = doc.defaultView?.innerHeight ?? 0;

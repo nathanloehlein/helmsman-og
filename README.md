@@ -596,9 +596,12 @@ previous automation session. If Firefox restarted, restart Helmsman too. The
 bridge deliberately does not delete sessions, because doing so can close your
 regular browser.
 
-Firefox uses background tab discovery and targets the Slack tab directly. It
-does not select tabs, bring Firefox forward, or send keyboard input to your active
-application. Slack searches still update the connected Slack tab. If background
+Keep Slack selected in its own unminimized Firefox window. That window can stay
+behind your other windows; switching away from the Slack tab or minimizing its
+window freezes animation frames that Slack needs to finish searches. Firefox uses
+background discovery and targets Slack directly without selecting tabs or windows,
+bringing Firefox forward, or sending keyboard input to your active application.
+Slack searches and scrolling still update the connected Slack tab. If background
 automation is unavailable, the integration reports an error instead of switching
 to foreground automation. Existing cmux installations retain their browser until
 you change the setting.

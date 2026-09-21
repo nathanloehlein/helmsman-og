@@ -56,6 +56,7 @@ function driver() {
   vi.stubGlobal('fetch', fetcher);
   vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(() => [{ width: 1, height: 1 }] as unknown as DOMRectList);
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 20, right: 110, bottom: 60 } as DOMRect);
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
   Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => document.querySelector('button')) });
   return { calls, sockets, contexts, fetcher,
     setResponse: (value: typeof response) => { response = value; },
@@ -65,7 +66,7 @@ function driver() {
   };
 }
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ''; Reflect.deleteProperty(document, 'elementFromPoint'); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); document.body.innerHTML = ''; Reflect.deleteProperty(document, 'elementFromPoint'); Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); });
 
 describe('Firefox background Slack transport', () => {
   it.each(['https://127.0.0.1:4444', 'http://remote.example:4444', 'http://127.0.0.1.evil.test:4444',
@@ -187,11 +188,28 @@ describe('Firefox background Slack transport', () => {
     expect(fake.fetcher).toHaveBeenCalledOnce();
   });
 
+  it('scrolls an offscreen control into view before hit testing without activating its window', async () => {
+    const fake = driver();
+    document.body.innerHTML = '<button id="query">Expand search</button>';
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ left: 10, top: 2000, right: 110, bottom: 2040 } as DOMRect);
+    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView).mockImplementation(() => {
+      vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ left: 10, top: 20, right: 110, bottom: 60 } as DOMRect);
+    });
+    const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+    const transport = createFirefoxSlackBrowserTransport();
+    await transport(treeCommand);
+    await expect(transport(['browser', slack, 'click', '#query'])).resolves.toBe('OK');
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    expect(fake.calls.filter(call => call.method === 'input.performActions')).toHaveLength(1);
+    expect(fake.calls.some(call => call.method === 'browsingContext.activate')).toBe(false);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
   it.each([
     { left: -200, top: 20, right: -10, bottom: 60 },
     { left: 10, top: 20, right: 10, bottom: 60 },
     { left: NaN, top: 20, right: 110, bottom: 60 },
-  ])('refuses native input for invalid or offscreen bounds %j', async bounds => {
+  ])('refuses native input for invalid or still-offscreen bounds after scrolling %j', async bounds => {
     const fake = driver();
     document.body.innerHTML = '<button id="query">Search</button>';
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(bounds as DOMRect);
