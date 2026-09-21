@@ -23,7 +23,7 @@ flowchart TD
     Workflow -->|New coding task| Coding[Implementation and exact-revision review loop below]
     Workflow -->|Existing PR review| Review[Pin PR head and run standalone review<br/>Host verifies result and required answers before posting]
     Workflow -->|Existing PR feedback rerun| Rerun[Trusted local execution only<br/>Agent updates, tests, commits and pushes same branch<br/>Bypasses the new-code pre-PR review gate]
-    Snapshot -.->|Missing skills / drift / unavailable host| Block[Fail preflight; no unisolated fallback]
+    Snapshot -.->|Missing skills / drift / unavailable Docker| Block[Fail preflight; no unisolated fallback]
 ```
 
 Manual launches inherit the header galleon unless a panel explicitly selects another. Auto-claim selects the next Jira backlog ticket, or a local todo when Jira is disabled, while capacity is available. Campaign record overrides are shown in the import preview; webhook targets and workflows come only from configured mappings. Campaign phases control dispatch and concurrency; durable claims and stable run IDs allow reconciliation after uncertain launches.
