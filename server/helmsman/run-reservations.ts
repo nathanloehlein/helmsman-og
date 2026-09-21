@@ -21,5 +21,7 @@ export function restoredResources(row: RunRow): RunResources {
     const value: unknown = JSON.parse(row.taskJson ?? 'null');
     if (value && typeof value === 'object' && !Array.isArray(value)) task = value as Partial<AgentTask>;
   } catch {}
-  return launchResources(row.id, { repo: row.repo, ticketId: row.ticketId }, task);
+  return launchResources(row.id, { repo: row.repo, ticketId: row.ticketId }, {
+    ...task, prNumber: task?.prNumber ?? row.prNumber ?? undefined,
+  });
 }

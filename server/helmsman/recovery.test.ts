@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb, type Db, type RunRow } from './db';
 import { recoverRuns } from './recovery';
+import { ProcessManager } from './process-manager';
+import { restoredResources } from './run-reservations';
 
 let db: Db;
 afterEach(() => db?.close());
@@ -17,6 +19,21 @@ function run(over: Partial<RunRow> = {}): RunRow {
 }
 
 describe('recoverRuns', () => {
+  it('restores branch reservations synchronously while keeping missing-metadata PRs exclusive', async () => {
+    db = openDb(':memory:');
+    db.insertRun(run({ id: 'writer', taskJson: JSON.stringify({ ticketId: 'LEKA-1', prBranch: 'feature' }) }));
+    db.insertRun(run({ id: 'legacy-review', ticketId: 'review', prNumber: 42, taskJson: null }));
+    const pm = new ProcessManager(3);
+    await recoverRuns(db, { reattach: row => {
+      pm.restore(row.id, row.repo, () => undefined, restoredResources(row));
+      return new Promise<void>(() => {});
+    } });
+    expect(pm.count()).toBe(2);
+    expect(pm.canStart('o/r', { branch: 'feature' }).ok).toBe(false);
+    expect(pm.canStart('o/r', { prNumber: 42 }).ok).toBe(false);
+    expect(pm.canStart('o/r', { ticketId: 'OTHER-1', branch: 'agent/new' }).ok).toBe(true);
+  });
+
   it('dispatches each running row to reattach instead of failing it, without awaiting completion', async () => {
     db = openDb(':memory:');
     db.insertRun(run({ id: 'a' }));

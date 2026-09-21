@@ -29,5 +29,6 @@ describe('voyage reservations', () => {
       .toEqual({ prNumber: 42, branch: 'feature' });
     expect(restoredResources({ ...row, taskJson: JSON.stringify({ review: true, prHeadSha: 'a'.repeat(40) }) })).toEqual({});
     expect(restoredResources({ ...row, taskJson: '{' })).toEqual({ ticketId: 'T-1', branch: 'agent/run-1' });
+    expect(restoredResources({ ...row, ticketId: 'review', prNumber: 42, taskJson: null })).toEqual({ prNumber: 42, branch: 'agent/run-1' });
   });
 });
