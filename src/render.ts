@@ -614,6 +614,7 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
   return `
     <div class="run-tabs" role="tablist" aria-label="Open ${term('runs').toLowerCase()}">${header}${strip}${collapseBtn}</div>
     ${logToolbar}
+    <div class="run-stream-status" role="status" aria-live="polite" hidden></div>
     <div class="run-drawer-retry">${activeTab?.status === 'failed' ? renderVoyageRetry(activeTab.id) : ''}</div>
     <div class="run-drawer-body mono" id="run-log-panel" role="tabpanel"${activeId ? ` aria-labelledby="run-tab-${esc(encodeURIComponent(activeId))}"` : ` aria-label="${term('run')} output"`} tabindex="0">${emptyBody}</div>
     <div class="run-drawer-footer mono"></div>

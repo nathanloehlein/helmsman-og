@@ -47,6 +47,7 @@ import {
   type LaunchResult,
   type LaunchRunBody,
   type RunEvent,
+  type RunStreamState,
   type RunStatusSummary,
   type RunSummary,
 } from './data/agents';
@@ -96,6 +97,8 @@ interface RunTab {
   runId: string;
   label: string;
   lines: RunEvent[];
+  streamState?: RunStreamState;
+  lastEventId?: number;
   footer: RunStatusSummary | null;
   pr: { repo: string; number: number } | null;
   unsub: (() => void) | null;
@@ -2509,6 +2512,13 @@ export class DashboardView {
       return;
     }
 
+    const reconnect = target.closest<HTMLButtonElement>('[data-reconnect-run-output]');
+    if (reconnect) {
+      const tab = this.runTabs.find(item => item.runId === reconnect.dataset.reconnectRunOutput);
+      if (tab) this.connectRunStream(tab);
+      return;
+    }
+
     const tabCloseBtn: HTMLButtonElement | null = target.closest<HTMLButtonElement>('.run-tab-close');
     if (tabCloseBtn) {
       const id: string | undefined = tabCloseBtn.dataset.tabid;
@@ -2698,10 +2708,44 @@ export class DashboardView {
       status: run?.status,
     };
     this.runTabs.push(tab);
-    tab.unsub = openRunStream(runId, (event: RunEvent): void => this.onTabEvent(runId, event));
+    this.connectRunStream(tab);
     this.activeTabId = runId;
     this.renderRunDrawer();
     this.rehomeRunDrawer();
+  }
+
+  private connectRunStream(tab: RunTab): void {
+    tab.unsub?.();
+    tab.unsub = openRunStream(tab.runId, event => this.onTabEvent(tab.runId, event), state => {
+      if (this.destroyed || !this.runTabs.includes(tab)) return;
+      tab.streamState = state;
+      if (tab.runId === this.activeTabId) this.paintRunStreamStatus();
+    });
+  }
+
+  private paintRunStreamStatus(): void {
+    const slot = this.runDrawerEl.querySelector<HTMLElement>('.run-stream-status');
+    const tab = this.runTabs.find(item => item.runId === this.activeTabId);
+    if (!slot || !tab) return;
+    const state = tab.streamState ?? 'connecting';
+    const hidden = tab.runId.startsWith('err-') || state === 'live' && tab.lines.length > 0;
+    if (slot.hidden === hidden && slot.dataset.state === state && slot.dataset.runId === tab.runId) return;
+    slot.hidden = hidden;
+    slot.dataset.state = state;
+    slot.dataset.runId = tab.runId;
+    slot.replaceChildren();
+    if (hidden) return;
+    slot.textContent = state === 'connecting' ? 'Connecting to output…'
+      : state === 'reconnecting' ? 'Output connection interrupted. Reconnecting…'
+      : state === 'unavailable' ? 'Output is unavailable. The run may still be preparing or running. '
+      : 'Connected. Waiting for output…';
+    if (state === 'unavailable') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.reconnectRunOutput = tab.runId;
+      button.textContent = 'Reconnect output';
+      slot.append(button);
+    }
   }
 
   private openErrorTab(label: string, message: string): void {
@@ -2763,6 +2807,10 @@ export class DashboardView {
     if (this.destroyed) return;
     const tab = this.runTabs.find(item => item.runId === runId);
     if (!tab) return;
+    if (event.id > 0) {
+      if (event.id <= (tab.lastEventId ?? 0)) return;
+      tab.lastEventId = event.id;
+    }
     tab.lines.push(event);
     if (tab.lines.length > RUN_LOG_PREVIEW_LIMIT) tab.lines.splice(0, tab.lines.length - RUN_LOG_PREVIEW_LIMIT);
     if (event.kind === 'run-complete') {
@@ -2773,7 +2821,10 @@ export class DashboardView {
       this.updateRunTabStatus(tab);
       void this.finalizeTab(runId);
     }
-    if (runId === this.activeTabId) this.scheduleRunLogFlush();
+    if (runId === this.activeTabId) {
+      this.paintRunStreamStatus();
+      this.scheduleRunLogFlush();
+    }
   }
 
   private updateRunTabStatus(tab: RunTab): void {
@@ -2853,6 +2904,7 @@ export class DashboardView {
     this.paintRunRetries();
     const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
     if (!active) return;
+    this.paintRunStreamStatus();
     const body: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-body');
     if (body) {
       body.addEventListener('scroll', () => this.updateStick(body));

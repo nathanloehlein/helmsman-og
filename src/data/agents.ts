@@ -135,26 +135,93 @@ export async function setAutoClaim(repo: string, enabled: boolean): Promise<void
   if (!response.ok) throw new Error('Unable to update auto-claim.');
 }
 
-export function openRunStream(runId: string, onEvent: (e: RunEvent) => void): () => void {
-  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) return () => {};
-  const src: EventSource = new EventSource(`/api/agents/${encodeURIComponent(runId)}/log`);
+export type RunStreamState = 'connecting' | 'live' | 'reconnecting' | 'unavailable';
+
+export function openRunStream(runId: string, onEvent: (e: RunEvent) => void, onState?: (state: RunStreamState) => void): () => void {
+  if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) {
+    onState?.('unavailable');
+    return () => {};
+  }
+  const delays = [1_000, 2_000, 4_000, 5_000, 5_000];
   let closed = false;
-  const close = (): void => { closed = true; src.close(); };
-  src.onmessage = (m: MessageEvent<string>): void => {
-    if (closed) return;
-    let event: Partial<RunEvent> | null;
-    try { event = JSON.parse(m.data) as Partial<RunEvent> | null; } catch { return; }
-    if (!event || typeof event.kind !== 'string' || !/^[a-z][a-z\d_-]*$/i.test(event.kind) || typeof event.text !== 'string'
-      || event.runId !== undefined && event.runId !== runId) return;
-    const normalized: RunEvent = {
-      id: typeof event.id === 'number' && Number.isSafeInteger(event.id) ? event.id : 0,
-      runId,
-      ts: typeof event.ts === 'string' ? event.ts : new Date().toISOString(),
-      kind: event.kind,
-      text: event.text.length > RUN_LOG_LINE_LIMIT ? `${event.text.slice(0, RUN_LOG_LINE_LIMIT)}… [full entry in downloaded log]` : event.text,
-    };
-    if (event.kind === 'run-complete') close();
-    onEvent(normalized);
+  let source: EventSource | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let retries = 0;
+  let lastPersistedId = 0;
+  let state: RunStreamState | undefined;
+  const updateState = (next: RunStreamState): void => {
+    if (state === next) return;
+    state = next;
+    onState?.(next);
   };
+  const disconnect = (): void => {
+    if (!source) return;
+    source.onopen = null;
+    source.onerror = null;
+    source.onmessage = null;
+    source.close();
+    source = null;
+  };
+  const close = (): void => {
+    closed = true;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    disconnect();
+  };
+  const retry = (): void => {
+    if (closed || timer !== null) return;
+    disconnect();
+    const delay = delays[retries++];
+    if (delay === undefined) {
+      close();
+      updateState('unavailable');
+      return;
+    }
+    updateState('reconnecting');
+    timer = setTimeout(() => {
+      timer = null;
+      connect();
+    }, delay);
+  };
+  const connect = (): void => {
+    if (closed) return;
+    let current: EventSource;
+    try { current = new EventSource(`/api/agents/${encodeURIComponent(runId)}/log`); }
+    catch { retry(); return; }
+    source = current;
+    const isCurrent = () => !closed && source === current;
+    const live = (): void => {
+      retries = 0;
+      updateState('live');
+    };
+    current.onopen = (): void => { if (isCurrent()) live(); };
+    current.onerror = (): void => {
+      if (!isCurrent()) return;
+      if (current.readyState === 2) retry();
+      else updateState('reconnecting');
+    };
+    current.onmessage = (m: MessageEvent<string>): void => {
+      if (!isCurrent()) return;
+      let event: Partial<RunEvent> | null;
+      try { event = JSON.parse(m.data) as Partial<RunEvent> | null; } catch { return; }
+      if (!event || typeof event.kind !== 'string' || !/^[a-z][a-z\d_-]*$/i.test(event.kind) || typeof event.text !== 'string'
+        || event.runId !== undefined && event.runId !== runId) return;
+      live();
+      const id = typeof event.id === 'number' && Number.isSafeInteger(event.id) && event.id > 0 ? event.id : 0;
+      if (id && id <= lastPersistedId) return;
+      if (id) lastPersistedId = id;
+      const normalized: RunEvent = {
+        id,
+        runId,
+        ts: typeof event.ts === 'string' ? event.ts : new Date().toISOString(),
+        kind: event.kind,
+        text: event.text.length > RUN_LOG_LINE_LIMIT ? `${event.text.slice(0, RUN_LOG_LINE_LIMIT)}… [full entry in downloaded log]` : event.text,
+      };
+      if (event.kind === 'run-complete') close();
+      onEvent(normalized);
+    };
+  };
+  updateState('connecting');
+  connect();
   return close;
 }

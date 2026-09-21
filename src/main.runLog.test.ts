@@ -4,7 +4,12 @@ import { DashboardView } from './main';
 class RunStream {
   static instances: RunStream[] = [];
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  close = vi.fn();
+  onopen: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  readyState = 0;
+  close = vi.fn(() => { this.readyState = 2; });
+  fail(): void { this.readyState = 2; this.onerror?.(new Event('error')); }
+  open(): void { this.readyState = 1; this.onopen?.(new Event('open')); }
   readonly url: string;
   constructor(url: string) { this.url = url; RunStream.instances.push(this); }
   emit(id: number, kind = 'stdout', text = `line ${id}`): void {
@@ -55,6 +60,38 @@ const body = () => document.querySelector<HTMLElement>('.run-drawer-body')!;
 const flush = () => vi.advanceTimersByTimeAsync(40);
 
 describe('bounded voyage log rendering', () => {
+  it('recovers when output is requested before a newly launched run exists', async () => {
+    expect(document.querySelector('.run-stream-status')?.textContent).toBe('Connecting to output…');
+    RunStream.instances[0]!.fail();
+    expect(document.querySelector('.run-stream-status')?.textContent).toContain('Reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(RunStream.instances).toHaveLength(2);
+    RunStream.instances[1]!.open();
+    expect(document.querySelector('.run-stream-status')?.textContent).toBe('Connected. Waiting for output…');
+    RunStream.instances[1]!.emit(1, 'phase', 'Preparing worktree');
+    await flush();
+    expect(body().textContent).toBe('Preparing worktree');
+    expect(document.querySelector<HTMLElement>('.run-stream-status')?.hidden).toBe(true);
+  });
+
+  it('offers reconnection after repeated failures without relaunching or duplicating saved output', async () => {
+    RunStream.instances[0]!.emit(1);
+    await flush();
+    for (let attempt = 0; attempt < 6; attempt++) {
+      RunStream.instances.at(-1)!.fail();
+      await vi.advanceTimersByTimeAsync(8000);
+    }
+    const reconnect = document.querySelector<HTMLButtonElement>('[data-reconnect-run-output]');
+    expect(reconnect?.textContent).toBe('Reconnect output');
+    expect(document.querySelector('.run-stream-status')?.textContent).toContain('may still be preparing or running');
+    reconnect!.click();
+    RunStream.instances.at(-1)!.emit(1);
+    RunStream.instances.at(-1)!.emit(2);
+    await flush();
+    expect([...body().children].map(line => line.textContent)).toEqual(['line 1', 'line 2']);
+    expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
   it('highlights batched output safely and preserves existing rows on append', async () => {
     const text = '{"html": "<img src=x onerror=alert(1)>", "code": 42}';
     RunStream.instances[0]!.emit(1, 'log', text);

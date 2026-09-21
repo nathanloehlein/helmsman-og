@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getRun, openRunStream, retryRun } from './agents';
 import { RUN_LOG_LINE_LIMIT } from '../logic/runLog';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('retryRun', () => {
   it('posts the full original ID and returns only the new voyage ID', async () => {
@@ -50,6 +50,151 @@ describe('retryRun', () => {
 });
 
 describe('openRunStream', () => {
+  function streams() {
+    const instances: MockStream[] = [];
+    class MockStream {
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+      readyState = 0;
+      close = vi.fn(() => { this.readyState = 2; });
+      readonly url: string;
+      constructor(url: string) { this.url = url; instances.push(this); }
+      open(): void { this.readyState = 1; this.onopen?.(); }
+      fail(state = 2): void { this.readyState = state; this.onerror?.(); }
+      emit(id: number, text = `line ${id}`, kind = 'log'): void {
+        this.onmessage?.({ data: JSON.stringify({ id, runId: 'run-a', kind, text }) } as MessageEvent<string>);
+      }
+    }
+    vi.stubGlobal('EventSource', MockStream);
+    return instances;
+  }
+
+  it('retries an initial closed connection and replays output when the new run becomes available', async () => {
+    vi.useFakeTimers();
+    const instances = streams();
+    const onEvent = vi.fn();
+    const onState = vi.fn();
+    const close = openRunStream('run-a', onEvent, onState);
+    expect(onState).toHaveBeenLastCalledWith('connecting');
+    instances[0]!.fail();
+    expect(onState).toHaveBeenLastCalledWith('reconnecting');
+    await vi.advanceTimersByTimeAsync(999);
+    expect(instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(instances).toHaveLength(2);
+    expect(instances[1]?.url).toBe('/api/agents/run-a/log');
+    instances[1]!.open();
+    instances[1]!.emit(7, 'Prepared Jira task');
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 7, text: 'Prepared Jira task' }));
+    expect(onState.mock.calls.flat()).toEqual(['connecting', 'reconnecting', 'live']);
+    close();
+  });
+
+  it('limits initial failures to six attempts with bounded backoff, then reports unavailable', async () => {
+    vi.useFakeTimers();
+    const instances = streams();
+    const onState = vi.fn();
+    openRunStream('run-a', vi.fn(), onState);
+    const delays = [1000, 2000, 4000, 5000, 5000];
+    for (const [index, delay] of delays.entries()) {
+      instances[index]!.fail();
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(instances).toHaveLength(index + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(instances).toHaveLength(index + 2);
+    }
+    instances[5]!.fail();
+    expect(onState).toHaveBeenLastCalledWith('unavailable');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(6);
+    expect(instances.every(source => source.close.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('lets EventSource reconnect natively and keeps healthy idle connections open', async () => {
+    vi.useFakeTimers();
+    const instances = streams();
+    const onState = vi.fn();
+    const close = openRunStream('run-a', vi.fn(), onState);
+    instances[0]!.open();
+    expect(onState).toHaveBeenLastCalledWith('live');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(1);
+    instances[0]!.fail(0);
+    expect(onState).toHaveBeenLastCalledWith('reconnecting');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.close).not.toHaveBeenCalled();
+    instances[0]!.open();
+    expect(onState).toHaveBeenLastCalledWith('live');
+    close();
+  });
+
+  it('deduplicates persisted replay IDs across reconnects while retaining live events without IDs', async () => {
+    vi.useFakeTimers();
+    const instances = streams();
+    const onEvent = vi.fn();
+    const close = openRunStream('run-a', onEvent);
+    instances[0]!.emit(10);
+    instances[0]!.emit(11);
+    instances[0]!.fail();
+    await vi.advanceTimersByTimeAsync(1000);
+    instances[1]!.emit(9);
+    instances[1]!.emit(10);
+    instances[1]!.emit(11);
+    instances[1]!.emit(12);
+    instances[1]!.emit(0, 'live message');
+    instances[1]!.emit(0, 'another live message');
+    expect(onEvent.mock.calls.map(([event]) => event.id)).toEqual([10, 11, 12, 0, 0]);
+    close();
+  });
+
+  it('cancels pending retries and ignores stale callbacks after cleanup', async () => {
+    vi.useFakeTimers();
+    const instances = streams();
+    const onEvent = vi.fn();
+    const onState = vi.fn();
+    const close = openRunStream('run-a', onEvent, onState);
+    const staleMessage = instances[0]!.onmessage;
+    const staleOpen = instances[0]!.onopen;
+    const staleError = instances[0]!.onerror;
+    instances[0]!.fail();
+    close();
+    const states = onState.mock.calls.length;
+    staleMessage?.({ data: JSON.stringify({ id: 1, kind: 'log', text: 'late event' }) } as MessageEvent<string>);
+    staleOpen?.();
+    staleError?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(1);
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(onState).toHaveBeenCalledTimes(states);
+  });
+
+  it('never reconnects after completion and ignores callbacks from a replaced source', async () => {
+    vi.useFakeTimers();
+    const instances = streams();
+    const onEvent = vi.fn();
+    openRunStream('run-a', onEvent);
+    const staleMessage = instances[0]!.onmessage;
+    instances[0]!.fail();
+    await vi.advanceTimersByTimeAsync(1000);
+    staleMessage?.({ data: JSON.stringify({ id: 99, kind: 'run-complete', text: 'failed' }) } as MessageEvent<string>);
+    instances[1]!.emit(1, 'completed', 'run-complete');
+    instances[1]!.fail();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(2);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 1, kind: 'run-complete' }));
+    expect(instances[1]?.close).toHaveBeenCalledOnce();
+  });
+
+  it('reports invalid run IDs as unavailable without opening a connection', () => {
+    const instances = streams();
+    const onState = vi.fn();
+    openRunStream('../run', vi.fn(), onState);
+    expect(instances).toHaveLength(0);
+    expect(onState).toHaveBeenCalledExactlyOnceWith('unavailable');
+  });
+
   it('ignores malformed events, bounds preview text, and stops after completion', () => {
     let stream: { onmessage: ((event: MessageEvent<string>) => void) | null; close: ReturnType<typeof vi.fn> };
     vi.stubGlobal('EventSource', class {
