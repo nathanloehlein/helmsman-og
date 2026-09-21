@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RunConflictError } from './process-manager';
 import { handleApi, type RouterDeps } from './router';
 import { openTodoStore, type TodoStore } from './todos';
 import { SlackReviewError } from './slack/review-request';
@@ -435,10 +436,16 @@ describe('agent control routes', () => {
     expect((r?.json as { runId: string }).runId).toBe('run-9');
   });
 
-  it('rejects launch when single-flight blocks it', async () => {
+  it('rejects launch when capacity blocks it', async () => {
     const blocked = { ...launchDeps, canStart: () => ({ ok: false, reason: 'busy' }) } as unknown as RouterDeps;
     const r = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1', title: 't', repo: 'o/r' }, blocked);
     expect(r?.status).toBe(409);
+  });
+
+  it('returns a conflict when a task or branch reservation blocks launch', async () => {
+    const blocked = { ...launchDeps, launch: () => { throw new RunConflictError('a run is already active for ticket T-1'); } };
+    const result = await handleApi('POST', '/api/agents/launch', new URLSearchParams(), { ticketId: 'T-1', repo: 'o/r' }, blocked);
+    expect(result).toEqual({ status: 409, json: { error: 'a run is already active for ticket T-1' } });
   });
 
   it('stops a run', async () => {

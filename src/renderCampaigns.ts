@@ -28,7 +28,7 @@ export function renderCampaigns(state: CampaignsViewState): string {
   const preview = state.preview;
   const list = state.list?.campaigns ?? [];
   const workflows = state.list?.workflows ?? [];
-  return `<div class="campaign-page"><h1>Campaigns</h1><p>Run a batch of tasks in stages: create a campaign, add a phase, then import and preview its tasks. Each ${term('repository').toLowerCase()} runs one coding task at a time.</p>
+  return `<div class="campaign-page"><h1>Campaigns</h1><p>Run a batch of tasks in stages: create a campaign, add a phase, then import and preview its tasks. Independent tasks can run together.</p>
     ${state.error ? `<p class="campaign-error" role="alert">${esc(state.error)}</p>` : ''}
     ${state.busy ? '<p role="status">Updating campaigns…</p>' : ''}
     <div class="campaign-layout"><section class="panel campaign-panel"><h2>New campaign</h2>
@@ -36,7 +36,7 @@ export function renderCampaigns(state: CampaignsViewState): string {
       <form data-campaign-create><fieldset${state.busy || !state.repo || !workflows.length ? ' disabled' : ''}>
         <label>Campaign name<input name="name" required maxlength="120" value="${esc(state.name)}"></label>
         <details class="campaign-settings"><summary>Execution settings</summary><div><label>Task workflow<select name="workflowRef">${workflows.map(workflow => `<option value="${esc(workflow.ref)}"${workflow.ref === state.workflowRef ? ' selected' : ''}>${esc(workflow.name)}</option>`).join('')}</select></label>
-        <label>Maximum active tasks<input name="concurrency" type="number" min="1" max="20" required value="${esc(state.concurrency)}"></label><p class="campaign-hint">Tasks in different ${term('repositories').toLowerCase()} can run together, up to this limit. Each ${term('repository').toLowerCase()} still runs one coding task at a time.</p></div></details>
+        <label>Maximum active tasks<input name="concurrency" type="number" min="1" max="20" required value="${esc(state.concurrency)}"></label><p class="campaign-hint">Independent tasks can run together up to this limit, including tasks in the same ${term('repository').toLowerCase()}. Tasks sharing a ticket or writable branch wait for the active task.</p></div></details>
         <button class="campaign-primary" type="submit">Create campaign</button></fieldset></form>
       <h2>Saved campaigns</h2><button type="button" data-campaign-refresh${disabled}>Refresh</button>
       <ul class="campaign-list">${list.map(campaign => `<li><button type="button" data-campaign-select="${esc(campaign.id)}" aria-pressed="${campaign.id === selected?.id}"${disabled}>${esc(campaign.name)}</button><small>${esc(campaign.repo)}</small></li>`).join('') || `<li class="campaign-hint">${state.error ? 'Campaigns could not be loaded. Try Refresh.' : 'No campaigns yet. Create one to organize a batch of tasks.'}</li>`}</ul></section>

@@ -4,13 +4,13 @@ import { createCampaignDispatcher, type CampaignDispatcherOptions, type Campaign
 
 const stores: CampaignStore[] = [];
 afterEach(() => { for (const store of stores.splice(0)) store.close(); });
-function setup(concurrency = 2) {
+function setup(concurrency = 2, sameRepo = false) {
   let clock = Date.parse('2026-09-18T00:00:00.000Z');
   const store = openCampaignStore(':memory:', { now: () => new Date(clock).toISOString() }); stores.push(store);
   const campaign = store.create({ name: 'Campaign', repo: 'org/a', workflowRef: 'coding@v1', concurrency });
   const phase = store.createPhase(campaign.id, { name: 'Phase' });
   const preview = store.previewImport({ phaseId: phase.id, format: 'jsonl', allowedRepos: ['org/a', 'org/b', 'org/c'],
-    content: '{"task":"A"}\n{"task":"B","repo":"org/b"}\n{"task":"C","repo":"org/c"}' });
+    content: sameRepo ? '{"task":"A"}\n{"task":"B"}\n{"task":"C"}' : '{"task":"A"}\n{"task":"B","repo":"org/b"}\n{"task":"C","repo":"org/c"}' });
   const tasks = store.confirmImport(preview.id);
   store.setPhaseState(phase.id, 'start');
   const runs = new Map<string, { status: 'running' | 'succeeded' | 'failed' | 'stopped' }>();
@@ -22,6 +22,13 @@ function setup(concurrency = 2) {
 }
 
 describe('campaign dispatcher', () => {
+  it('starts independent tasks in the same galleon up to campaign capacity', async () => {
+    const f = setup(2, true);
+    await f.dispatcher.poll();
+    expect(f.launch).toHaveBeenCalledTimes(2);
+    expect(f.launch.mock.calls.every(([task]) => task.repo === 'org/a')).toBe(true);
+  });
+
   it('starts bounded work with stable IDs and pinned workflow, then fills freed capacity', async () => {
     const f = setup();
     await f.dispatcher.poll();
@@ -118,5 +125,14 @@ describe('campaign dispatcher', () => {
     f.runs.set(f.tasks[0]!.runId, { status: 'succeeded' });
     await f.dispatcher.poll();
     expect(f.store.task(f.tasks[0]!.id)?.state).toBe('succeeded');
+  });
+
+  it('keeps a stale preflight claim while its run reservation is active despite free capacity', async () => {
+    const f = setup(1);
+    f.store.claim(f.tasks[0]!.id);
+    f.advance();
+    await createCampaignDispatcher({ ...f.options, isRunActive: id => id === f.tasks[0]?.runId }).poll();
+    expect(f.store.task(f.tasks[0]!.id)?.state).toBe('claiming');
+    expect(f.launch).not.toHaveBeenCalled();
   });
 });

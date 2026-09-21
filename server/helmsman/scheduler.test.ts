@@ -1,7 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutoClaimScheduler, type SchedulerDeps } from './scheduler';
+import { ProcessManager } from './process-manager';
 
 describe('AutoClaimScheduler', () => {
+  it('keeps overlapping polls from launching the same ticket while allowing another ticket in that galleon', async () => {
+    const pm = new ProcessManager(3);
+    let ticketId = 'T-1';
+    const launch = vi.fn((task: { repo: string; ticketId: string }) => {
+      pm.reserve(task.ticketId, task.repo, () => undefined, { ticketId: task.ticketId });
+    });
+    const scheduler = new AutoClaimScheduler({
+      canStart: (repo, item) => pm.canStart(repo, item ? { ticketId: item.ticketId } : {}).ok,
+      fetchTopBacklog: async () => ({ ticketId, title: 'Work' }), launch,
+    });
+    scheduler.setEnabled('o/r', true);
+    await Promise.all([scheduler.tick(), scheduler.tick()]);
+    expect(launch).toHaveBeenCalledTimes(1);
+    ticketId = 'T-2';
+    await scheduler.tick();
+    expect(launch).toHaveBeenCalledTimes(2);
+    expect(pm.count()).toBe(2);
+  });
+
   it('tick() launches enabled idle repos with top backlog tickets, skipping busy repos', async () => {
     const launchSpy = vi.fn();
     const fetchTopBacklogIdle = vi.fn().mockResolvedValue({ ticketId: 'TICK-1', title: 'Idle ticket' });

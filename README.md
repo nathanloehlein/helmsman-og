@@ -64,8 +64,10 @@ Standalone PR reviews inspect a pinned revision and publish review comments;
 feedback reruns update an existing PR branch without the new-code review loop.
 
 The server's timers drive automatic dispatch; a separate cron job is not required.
-A global concurrency limit and one active run per repository apply across launch
-sources. Campaign phases add batch ordering and their own concurrency limit.
+A global concurrency limit applies across launch sources. Independent tasks can run
+in the same repository using separate worktrees. Active ticket identities and writable
+branches are reserved to prevent duplicate work and branch collisions; pinned, detached
+PR reviews can run alongside writers. Campaign phases add batch ordering and their own concurrency limit.
 Durable run identities, logs, exit records, and saved evidence support restart
 reattachment and validated checkpoint continuation.
 
@@ -402,8 +404,8 @@ against persisted voyages. Todos are stored in the same SQLite database as voyag
 The Todos tab offers opt-in auto-claim for the selected repository. The backend API
 is also available for either source. Every `AUTO_CLAIM_INTERVAL_MS` a
 per-repo heartbeat pulls the top backlog ticket for the repo's mapped Jira project
-(`REPO_PROJECT_MAP`) and launches an agent — but only while that repo is idle, so it
-never double-claims (it defers to the same single-flight gate as manual Launch). One
+(`REPO_PROJECT_MAP`) and launches an agent when capacity is available. Active tickets
+are skipped, and the same task and branch reservations apply as manual Launch. One
 ticket per tick; off by default; toggling off stops further claims. With Jira disabled,
 it selects described To do items by priority (P0 first), then creation order; no Jira
 project mapping is required. In Jira mode, a repo needs a `REPO_PROJECT_MAP` entry.

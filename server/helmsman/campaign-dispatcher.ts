@@ -10,7 +10,8 @@ export interface CampaignLaunch extends CampaignRecord {
 }
 export interface CampaignDispatcherOptions {
   store: CampaignStore;
-  canStart(repo: string): boolean;
+  canStart(repo: string, record?: CampaignRecord): boolean;
+  isRunActive?(runId: string): boolean;
   getRun(runId: string): { status: 'running' | 'succeeded' | 'failed' | 'stopped' } | null;
   launch(task: CampaignLaunch): string | Promise<string>;
   stop(runId: string): unknown | Promise<unknown>;
@@ -36,7 +37,7 @@ export function createCampaignDispatcher(options: CampaignDispatcherOptions): { 
       return;
     }
     if (item.state === 'claiming' && item.claimToken && item.claimedAt
-      && now() - Date.parse(item.claimedAt) >= ttl && options.canStart(item.record.repo)) {
+      && now() - Date.parse(item.claimedAt) >= ttl && !options.isRunActive?.(item.runId) && options.canStart(item.record.repo, item.record)) {
       store.releaseClaim(item.id, item.claimToken, 'Previous dispatch was not recorded; retrying the same run ID');
     }
   }
@@ -48,14 +49,14 @@ export function createCampaignDispatcher(options: CampaignDispatcherOptions): { 
     }
     store.completePhases();
     for (const candidate of store.queuedTasks()) {
-      if (store.phase(candidate.phaseId)?.state !== 'running' || !options.canStart(candidate.record.repo)) continue;
+      if (store.phase(candidate.phaseId)?.state !== 'running' || !options.canStart(candidate.record.repo, candidate.record)) continue;
       const item = store.claim(candidate.id);
       if (!item?.claimToken) continue;
       const token = item.claimToken;
       const existing = options.getRun(item.runId);
       if (existing) { await reconcile(item); continue; }
       const campaign = store.get(item.campaignId);
-      if (!campaign || store.phase(item.phaseId)?.state !== 'running' || !options.canStart(item.record.repo)) {
+      if (!campaign || store.phase(item.phaseId)?.state !== 'running' || !options.canStart(item.record.repo, item.record)) {
         store.releaseClaim(item.id, token); continue;
       }
       try {

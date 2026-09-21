@@ -297,7 +297,7 @@ export function openCampaignStore(path: string, options: { now?: () => string } 
       if (!campaign) return null;
       const active = rows<CampaignTask>('campaign_tasks', "WHERE state IN ('claiming', 'running')");
       if (active.filter(item => item.campaignId === current.campaignId).length >= campaign.concurrency
-        || active.some(item => item.record.repo.toLowerCase() === current.record.repo.toLowerCase())) return null;
+        || current.record.ticketId && active.some(item => item.record.ticketId?.toLowerCase() === current.record.ticketId?.toLowerCase())) return null;
       const claimed: CampaignTask = { ...current, state: 'claiming', claimToken: randomUUID(), claimedAt: now(), updatedAt: now() };
       saveTask(claimed);
       return claimed;

@@ -98,7 +98,7 @@ describe('campaign lifecycle and claims', () => {
     expect(() => store.setPhaseState(phase.id, 'resume')).toThrow('already finished');
   });
 
-  it('atomically claims across connections, enforces caps and keeps one writer per galleon', () => {
+  it('atomically claims across connections and permits independent writers within the campaign cap', () => {
     const { store, path, phase } = setup();
     const preview = store.previewImport({ phaseId: phase.id, format: 'jsonl', allowedRepos: ['org/app', 'org/b', 'org/c'],
       content: ['{"task":"A"}', '{"task":"B"}', '{"task":"C","repo":"org/b"}', '{"task":"D","repo":"org/c"}'].join('\n') });
@@ -107,12 +107,26 @@ describe('campaign lifecycle and claims', () => {
     const second = openCampaignStore(path); stores.push(second);
     const firstClaim = store.claim(tasks[0]!.id)!;
     expect(second.claim(tasks[0]!.id)).toBeNull();
-    expect(second.claim(tasks[1]!.id)).toBeNull();
-    expect(second.claim(tasks[2]!.id)).not.toBeNull();
+    expect(second.claim(tasks[1]!.id)).not.toBeNull();
+    expect(second.claim(tasks[2]!.id)).toBeNull();
     expect(store.claim(tasks[3]!.id)).toBeNull();
     expect(store.releaseClaim(firstClaim.id, 'wrong-token')).toBe(false);
     expect(store.releaseClaim(firstClaim.id, firstClaim.claimToken!)).toBe(true);
     expect(second.claim(tasks[3]!.id)).not.toBeNull();
+  });
+
+  it('prevents simultaneous claims for the same ticket across campaigns', () => {
+    const { store, phase, preview } = setup();
+    const [first] = store.confirmImport(preview('{"ticketId":"T-1"}').id);
+    store.setPhaseState(phase.id, 'start');
+    const other = store.create({ name: 'Another campaign', repo: 'org/app', workflowRef: 'coding@v1', concurrency: 2 });
+    const otherPhase = store.createPhase(other.id, { name: 'Tasks' });
+    const otherPreview = store.previewImport({ phaseId: otherPhase.id, format: 'jsonl', content: '{"ticketId":"T-1"}\n{"ticketId":"T-2"}' });
+    const tasks = store.confirmImport(otherPreview.id);
+    store.setPhaseState(otherPhase.id, 'start');
+    expect(store.claim(first!.id)).not.toBeNull();
+    expect(store.claim(tasks[0]!.id)).toBeNull();
+    expect(store.claim(tasks[1]!.id)).not.toBeNull();
   });
 
   it('pause retains active work, finish cancels queued and retry changes IDs only for failed tasks', () => {

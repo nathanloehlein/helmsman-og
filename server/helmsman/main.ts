@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
-import { extname, join, normalize, sep } from 'node:path';
+import { basename, extname, join, normalize, sep } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +27,8 @@ import { createClarificationRuntime, clarificationPaths } from './clarification-
 import { createOutcomeService } from './outcome-service';
 import { recoverRuns } from './recovery';
 import { handleApi } from './router';
-import { ProcessManager } from './process-manager';
+import { ProcessManager, RunConflictError } from './process-manager';
+import { launchResources, restoredResources } from './run-reservations';
 import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
@@ -207,7 +208,8 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
     hasRequiredUnanswered: clarificationRuntime.hasUnanswered,
     onRunComplete: run => { runTelemetry.complete(run); clarificationRuntime.complete(run.id); gateway.revokeRun(run.id); if (host.kind === 'docker') void stopDockerStages(run.id); },
     createWorktree: (repo: string, id: string) => standaloneWorkspace(repo, id, 'fresh', () => createWorktree(AGENTS_ROOT, repo, id)),
-    createWorktreeFromBranch: (repo: string, id: string, branch: string) => standaloneWorkspace(repo, id, 'branch', () => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch)),
+    createWorktreeFromBranch: (repo: string, id: string, branch: string) => standaloneWorkspace(repo, id, 'branch', () => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch,
+      path => pm.hasRun(basename(path)) || db.activeRuns().some(run => run.worktreePath === path))),
     createReviewWorktree: (repo, id, number, headSha) => standaloneWorkspace(repo, id, 'review', () => createReviewWorktree(AGENTS_ROOT, repo, id, number, headSha), headSha),
     removeWorktree: (repo: string, path: string) => path.startsWith(`${DOCKER_WORKSPACES}/`) ? removeDockerWorkspace(DOCKER_WORKSPACES, path) : removeWorktree(AGENTS_ROOT, repo, path),
     now: () => new Date().toISOString(),
@@ -269,10 +271,10 @@ function dispatchReattach(row: RunRow, control: { stopped: boolean; stop: (() =>
   const cfg: AppConfig = configStore.current();
   const jira: JiraActions | null = cfg.jira ? makeLiveJiraActions(() => configStore.current().jira) : null;
   const adapter = restoreRunAdapter(row, { runsDir: RUNS_DIR, agentCmd: cfg.agentCmd });
-  pm.add(row.id, row.repo, () => {
+  pm.restore(row.id, row.repo, () => {
     control.stopped = true;
     void control.stop?.();
-  });
+  }, restoredResources(row));
   const deps: RunnerDeps = {
     ...baseRunnerDeps(cfg, jira),
     adapter,
@@ -298,13 +300,14 @@ async function resumeVoyage(runId: string): Promise<void> {
   const cfg = configStore.current();
   const repos = repositoryScope(cfg, todos.list());
   if (!repos.some(repo => repo.toLowerCase() === row.repo.toLowerCase())) throw new ResumeError('Configure this galleon before continuing the voyage.');
-  const gate = pm.canStart(row.repo);
+  const gate = pm.canStart(row.repo, restoredResources(row));
   if (!gate.ok) throw new ResumeError(gate.reason ?? 'Cannot continue this voyage while another voyage is active.');
   if (cfg.maxCostUsd !== null && (row.costUsd ?? 0) >= cfg.maxCostUsd) throw new ResumeError('The voyage has reached its cost cap. Update the cap before continuing.');
   const task = row.taskJson ? JSON.parse(row.taskJson) as Partial<AgentTask> | null : null;
   if (!task?.task && !task?.todoId && !cfg.jira) throw new ResumeError('Configure Jira before continuing this Jira voyage.');
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
-  pm.add(row.id, row.repo, () => { control.stopped = true; void control.stop?.(); });
+  if (pm.hasRun(row.id)) throw new ResumeError('This voyage is already active.');
+  pm.reserve(row.id, row.repo, () => { control.stopped = true; void control.stop?.(); }, restoredResources(row));
   try {
     const resumed = await resumeFailedPrePrRun(row, { db, host: host.kind === 'docker' && row.hostKind === 'detached' ? { ...host, kind: 'detached' } : host,
       runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped,
@@ -362,19 +365,19 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
   }
   const runId: string = body.runId ?? randomUUID();
   if (db.getRun(runId) || pm.hasRun(runId)) return runId;
-  const capacity = pm.canStart(body.repo);
-  if (!capacity.ok) throw new Error(capacity.reason ?? 'Cannot launch while another voyage is active');
   const cfg: AppConfig = configStore.current();
   const priorRun = body.retryOf ? db.getRun(body.retryOf) : null;
   const adapterId = priorRun?.adapter.replace(/^pre-pr:/, '') ?? body.adapter ?? cfg.agentAdapter;
   const priorTask = priorRun?.taskJson ? JSON.parse(priorRun.taskJson) as AgentTask | null : null;
+  const capacity = pm.canStart(body.repo, launchResources(runId, body, priorTask));
+  if (!capacity.ok) throw new RunConflictError(capacity.reason);
   if (priorTask && Boolean(priorTask.dockerExecution) !== (host.kind === 'docker')) throw new RetryError('Retry requires the original local or Docker execution mode.');
   if (body.retryOf && adapterId === 'command' && !cfg.agentCmd) throw new RetryError('The original command agent is no longer configured. Configure it before retrying.');
   let localTodo = body.mode === 'todo' && body.todoId ? todos.get(body.todoId) : null;
   if (body.mode === 'todo') {
     if (cfg.jiraEnabled) throw new TodoConflictError('Disable Jira before launching todos.');
     if (!localTodo) throw new TodoConflictError('Todo not found.');
-    const gate = pm.canStart(localTodo.repo);
+    const gate = pm.canStart(localTodo.repo, { ticketId: localTodo.id, branch: `agent/${runId}` });
     if (!gate.ok) throw new TodoConflictError(gate.reason ?? 'Cannot start voyage.');
     localTodo = todos.claim(localTodo.id, runId, body.retryOf);
     if (!localTodo) throw new TodoConflictError('Todo is no longer ready to launch.');
@@ -386,10 +389,10 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
   }
   const launchJson = launchIntentJson(body);
   const control: { stopped: boolean; stop: (() => Promise<void>) | null } = { stopped: false, stop: null };
-  pm.add(runId, body.repo, () => {
+  pm.reserve(runId, body.repo, () => {
     control.stopped = true;
     void control.stop?.();
-  });
+  }, launchResources(runId, body, priorTask));
   const adapter: AgentAdapter =
     adapterId === 'command' && cfg.agentCmd
       ? commandAdapter(cfg.agentCmd)
@@ -465,6 +468,7 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
           ? await jiraTask(cfg.jira, { ticketId, title: body.title, repo: body.repo })
           : { ticketId, title: body.title ?? ticketId, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
       }
+      pm.updateResources(runId, launchResources(runId, body, taskObj));
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;
       if (body.retryOf) {
@@ -537,13 +541,15 @@ function fetchTopBacklog(repo: string): Promise<BacklogItem | null> {
   const project: string | undefined = cfg.repoProjectMap[repo];
   if (!project || !cfg.jira) return Promise.resolve(null);
   return fetchQueueIssues({ ...cfg.jira, project }).then(
-    (issues: JiraIssue[]): { ticketId: string; title: string } | null =>
-      issues[0]?.key && issues[0]?.fields?.summary ? { ticketId: issues[0].key, title: issues[0].fields.summary } : null,
+    (issues: JiraIssue[]): { ticketId: string; title: string } | null => {
+      const issue = issues.find(item => item?.key && item.fields?.summary && pm.canStart(repo, { ticketId: item.key }).ok);
+      return issue?.key && issue.fields?.summary ? { ticketId: issue.key, title: issue.fields.summary } : null;
+    },
   );
 }
 
 const scheduler: AutoClaimScheduler = new AutoClaimScheduler({
-  canStart: (r: string) => pm.canStart(r).ok,
+  canStart: (repo, item) => pm.canStart(repo, item ? { ticketId: item.ticketId } : {}).ok,
   fetchTopBacklog,
   launch,
   onLog: (m: string) => process.stderr.write(m + '\n'),
@@ -640,7 +646,9 @@ void pollGithubReviews();
 
 const campaignsStore = openCampaignStore(dbPath);
 const configuredRepos = () => { const cfg = configStore.current(); return [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])]; };
-const campaignDispatcher = createCampaignDispatcher({ store: campaignsStore, canStart: repo => pm.canStart(repo).ok,
+const campaignDispatcher = createCampaignDispatcher({ store: campaignsStore,
+  canStart: (repo, record) => pm.canStart(repo, record?.ticketId ? { ticketId: record.ticketId } : {}).ok,
+  isRunActive: id => pm.hasRun(id),
   getRun: id => db.getRun(id), stop: id => pm.stop(id),
   launch: input => launch({ repo: input.repo, mode: input.mode, runId: input.runId, workflowRef: input.workflowRef,
     ...(input.task === null ? {} : { task: input.task }), ...(input.ticketId === null ? {} : { ticketId: input.ticketId }),

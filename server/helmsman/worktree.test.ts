@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createReviewWorktree, createWorktreeFromBranch, sweepOrphanedWorktrees, discoverRepoDirs, type Worktree } from './worktree';
+import { createWorktree, createReviewWorktree, createWorktreeFromBranch, sweepOrphanedWorktrees, discoverRepoDirs, type Worktree } from './worktree';
 
 const execFileAsync = promisify(execFile);
 
@@ -115,7 +115,7 @@ describe('createWorktreeFromBranch', () => {
       await rm(agentsRoot, { recursive: true, force: true });
     }
   });
-  it('reuses the branch when a prior rerun left its worktree behind (no refusing-to-fetch)', async () => {
+  it('preserves active worktrees and their changes, then permits cleanup once the owner is inactive', async () => {
     const agentsRoot: string = await mkdtemp(join(tmpdir(), 'agents-'));
     try {
       const sourceDir: string = join(agentsRoot, 'source');
@@ -131,13 +131,40 @@ describe('createWorktreeFromBranch', () => {
 
       const first: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-1', 'fix/x');
       expect(existsSync(first.path)).toBe(true);
+      await writeFile(join(first.path, 'unfinished.txt'), 'work in progress');
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => true)).rejects.toThrow('active or unmanaged');
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x')).rejects.toThrow('active or unmanaged');
+      expect(await readFile(join(first.path, 'unfinished.txt'), 'utf8')).toBe('work in progress');
 
-      const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x');
+      const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => false);
       expect(existsSync(second.path)).toBe(true);
       expect(existsSync(first.path)).toBe(false);
     } finally {
       await rm(agentsRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('concurrent worktrees', () => {
+  it('isolates independent writers in the same repository and refuses to remove its main checkout', async () => {
+    const agentsRoot = await mkdtemp(join(tmpdir(), 'parallel-agents-'));
+    try {
+      const repoDir = join(agentsRoot, 'repo');
+      await mkdir(repoDir);
+      await execFileAsync('git', ['-C', repoDir, 'init', '-q', '-b', 'main']);
+      await execFileAsync('git', ['-C', repoDir, 'config', 'user.email', 'test@example.com']);
+      await execFileAsync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
+      await execFileAsync('git', ['-C', repoDir, 'commit', '-q', '--allow-empty', '-m', 'base']);
+      const [first, second] = await Promise.all([
+        createWorktree(agentsRoot, 'o/repo', 'first'), createWorktree(agentsRoot, 'o/repo', 'second'),
+      ]);
+      await writeFile(join(first.path, 'change.txt'), 'first');
+      await writeFile(join(second.path, 'change.txt'), 'second');
+      expect(await readFile(join(first.path, 'change.txt'), 'utf8')).toBe('first');
+      expect(await readFile(join(second.path, 'change.txt'), 'utf8')).toBe('second');
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'third', 'main', () => false)).rejects.toThrow('active or unmanaged');
+      expect(existsSync(join(repoDir, '.git'))).toBe(true);
+    } finally { await rm(agentsRoot, { recursive: true, force: true }); }
   });
 });
 

@@ -6,7 +6,7 @@ export interface BacklogItem {
 }
 
 export interface SchedulerDeps {
-  canStart: (repo: string) => boolean;
+  canStart: (repo: string, item?: BacklogItem) => boolean;
   fetchTopBacklog: (repo: string) => Promise<BacklogItem | null>;
   launch: (body: BacklogItem & { repo: string }) => void;
   onLog?: (msg: string) => void;
@@ -50,7 +50,7 @@ export class AutoClaimScheduler {
           continue;
         }
 
-        if (!this.enabledRepoSet.has(repo) || !this.deps.canStart(repo)) {
+        if (!this.enabledRepoSet.has(repo) || !this.deps.canStart(repo, ticket)) {
           continue;
         }
 

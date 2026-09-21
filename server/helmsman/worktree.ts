@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readdir } from 'node:fs/promises';
+import { readdir, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { basename, join, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { isGithubRepo } from '../pr-lists';
 
 const run = promisify(execFile);
@@ -24,24 +24,28 @@ export async function createWorktree(agentsRoot: string, repo: string, runId: st
   return { path, branch };
 }
 
-async function removeWorktreeForBranch(repoDir: string, branch: string): Promise<void> {
-  const result = await run('git', ['-C', repoDir, 'worktree', 'list', '--porcelain']).catch(() => null);
-  if (!result) return;
+async function removeWorktreeForBranch(repoDir: string, branch: string, isActive: (path: string) => boolean): Promise<void> {
+  const result = await run('git', ['-C', repoDir, 'worktree', 'list', '--porcelain']);
+  const managedDirectory = join(await realpath(repoDir), '.worktrees');
   const target: string = `refs/heads/${branch}`;
   let currentPath: string | null = null;
   for (const line of result.stdout.split('\n')) {
     if (line.startsWith('worktree ')) currentPath = line.slice('worktree '.length).trim();
     else if (line.startsWith('branch ') && line.slice('branch '.length).trim() === target && currentPath) {
-      await removeWorktreeAt(repoDir, currentPath).catch(() => undefined);
+      if (dirname(resolve(currentPath)) !== managedDirectory || isActive(currentPath)) {
+        throw new Error(`Branch ${branch} is checked out in an active or unmanaged workspace.`);
+      }
+      await removeWorktreeAt(repoDir, currentPath);
       currentPath = null;
     } else if (line === '') currentPath = null;
   }
 }
 
-export async function createWorktreeFromBranch(agentsRoot: string, repo: string, runId: string, branch: string): Promise<Worktree> {
+export async function createWorktreeFromBranch(agentsRoot: string, repo: string, runId: string, branch: string,
+  isActive: (path: string) => boolean = () => true): Promise<Worktree> {
   const repoDir: string = join(agentsRoot, repoBasename(repo));
   await run('git', ['-C', repoDir, 'worktree', 'prune']).catch(() => undefined);
-  await removeWorktreeForBranch(repoDir, branch);
+  await removeWorktreeForBranch(repoDir, branch, isActive);
   await run('git', ['-C', repoDir, 'fetch', 'origin', `+${branch}:${branch}`], { maxBuffer: 1024 * 1024 * 16 });
   const path: string = join(repoDir, '.worktrees', runId);
   await run('git', ['-C', repoDir, 'worktree', 'add', path, branch], { maxBuffer: 1024 * 1024 * 16 });

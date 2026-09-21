@@ -13,6 +13,7 @@ import type { SlackState } from '../../src/data/slack';
 import type { GithubProfile } from '../../src/data/profile';
 import { retryIntent, RetryError, type LaunchIntent } from './retry';
 import { ResumeError } from './resume';
+import { RunConflictError } from './process-manager';
 import type { OutcomeService } from './outcome-service';
 import { OutcomeValidationError } from './outcomes';
 import type { CampaignService } from './campaign-service';
@@ -104,6 +105,16 @@ export interface RouterDeps {
 }
 
 export async function handleApi(
+  ...args: Parameters<typeof routeApi>
+): Promise<ApiResult | null> {
+  try { return await routeApi(...args); }
+  catch (error) {
+    if (error instanceof RunConflictError) return { status: 409, json: { error: error.message } };
+    throw error;
+  }
+}
+
+async function routeApi(
   method: string,
   path: string,
   query: URLSearchParams,

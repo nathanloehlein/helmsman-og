@@ -1,4 +1,12 @@
-interface Entry {
+export interface RunResources {
+  ticketId?: string;
+  branch?: string;
+  prNumber?: number;
+}
+
+export class RunConflictError extends Error {}
+
+interface Entry extends RunResources {
   repo: string;
   stop: () => void;
 }
@@ -11,16 +19,35 @@ export class ProcessManager {
     this.maxConcurrency = maxConcurrency;
   }
 
-  canStart(repo: string): { ok: true } | { ok: false; reason: string } {
-    if (this.entries.size >= this.maxConcurrency) return { ok: false, reason: 'max concurrency reached' };
-    for (const entry of this.entries.values()) {
-      if (entry.repo.toLowerCase() === repo.toLowerCase()) return { ok: false, reason: `a run is already active for ${repo}` };
+  canStart(repo: string, resources: RunResources = {}, existingRunId?: string): { ok: true } | { ok: false; reason: string } {
+    if (!existingRunId && this.entries.size >= this.maxConcurrency) return { ok: false, reason: 'max concurrency reached' };
+    for (const [runId, entry] of this.entries) {
+      if (runId === existingRunId) continue;
+      if (resources.ticketId && entry.ticketId?.toLowerCase() === resources.ticketId.toLowerCase()) return { ok: false, reason: `a run is already active for ticket ${resources.ticketId}` };
+      if (entry.repo.toLowerCase() !== repo.toLowerCase()) continue;
+      if (resources.branch && entry.branch === resources.branch) return { ok: false, reason: `a run is already writing branch ${resources.branch}` };
+      if (resources.prNumber && entry.prNumber === resources.prNumber) return { ok: false, reason: `a run is already updating PR #${resources.prNumber}` };
     }
     return { ok: true };
   }
 
-  add(runId: string, repo: string, stop: () => void): void {
-    this.entries.set(runId, { repo, stop });
+  reserve(runId: string, repo: string, stop: () => void, resources: RunResources = {}): void {
+    if (this.entries.has(runId)) throw new RunConflictError('This voyage is already active.');
+    const gate = this.canStart(repo, resources);
+    if (!gate.ok) throw new RunConflictError(gate.reason);
+    this.restore(runId, repo, stop, resources);
+  }
+
+  updateResources(runId: string, resources: RunResources): void {
+    const entry = this.entries.get(runId);
+    if (!entry) throw new RunConflictError('The voyage reservation is unavailable.');
+    const gate = this.canStart(entry.repo, resources, runId);
+    if (!gate.ok) throw new RunConflictError(gate.reason);
+    this.entries.set(runId, { repo: entry.repo, stop: entry.stop, ...resources });
+  }
+
+  restore(runId: string, repo: string, stop: () => void, resources: RunResources = {}): void {
+    this.entries.set(runId, { repo, stop, ...resources });
   }
 
   remove(runId: string): void {
