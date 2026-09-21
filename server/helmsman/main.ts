@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { buildDashboardResponse } from '../dashboard-endpoint';
 import { buildTriageResponse } from '../triage-endpoint';
 import { buildBugsResponse } from '../bugs-endpoint';
+import { createFeedback } from './feedback';
 import type { AppConfig } from '../config';
 import { openDb } from './db';
 import { openOutcomeStore } from './outcomes';
@@ -742,6 +743,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         if (!jira) throw new Error('Jira is not configured.');
         await assignIssueToCurrentUser(jira, ticketId);
       },
+      submitFeedback: input => createFeedback(configStore.current().github, input),
       triage: (repo) => buildTriageResponse(configStore.effectiveEnv(), undefined, repo),
       bugs: (repo) => buildBugsResponse(configStore.effectiveEnv(), new Date(), undefined, repo),
       db,

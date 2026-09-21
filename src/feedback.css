@@ -1,0 +1,16 @@
+.footer-actions { display: flex; align-items: center; gap: 8px; }
+.feedback-trigger { font: inherit; color: var(--text-dim); background: transparent; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; cursor: pointer; }
+.feedback-trigger:hover { color: var(--text); border-color: var(--accent); }
+.feedback-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.feedback-dialog { box-sizing: border-box; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 24px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); }
+.feedback-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.feedback-form { display: grid; gap: 16px; }
+.feedback-form h2, .feedback-form p { margin: 0; }
+.feedback-form label { display: grid; gap: 6px; }
+.feedback-form input, .feedback-form textarea { box-sizing: border-box; width: 100%; font: inherit; padding: 10px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
+.feedback-form textarea { resize: vertical; }
+.feedback-form a { color: var(--accent); overflow-wrap: anywhere; }
+.feedback-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
+.feedback-actions button { font: inherit; padding: 8px 12px; cursor: pointer; }
+.feedback-status:empty { display: none; }
+.feedback-status { overflow-wrap: anywhere; }

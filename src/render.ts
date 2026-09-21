@@ -323,7 +323,7 @@ export function renderAppShell(opts: HelmHeadOpts, content: string): string {
         <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-repos>${opts.repos.length} ${term(opts.repos.length === 1 ? 'repository' : 'repositories').toLowerCase()} tracked</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span data-footer-running>${running} ${term('running').toLowerCase()}</span>
       </div>
-      <button class="pirate-mode-toggle" type="button" data-pirate-mode aria-label="Pirate mode" aria-pressed="${isPirateMode()}" title="Turn Pirate mode ${isPirateMode() ? 'off' : 'on'}">${ICON_PIRATE_FLAG}</button>
+      <div class="footer-actions"><button class="feedback-trigger" type="button" data-feedback>Feedback</button><button class="pirate-mode-toggle" type="button" data-pirate-mode aria-label="Pirate mode" aria-pressed="${isPirateMode()}" title="Turn Pirate mode ${isPirateMode() ? 'off' : 'on'}">${ICON_PIRATE_FLAG}</button></div>
     </footer>
   </div>`;
 }

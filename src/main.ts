@@ -1,4 +1,5 @@
 import { renderLoading } from './renderLoading';
+import { openFeedback } from './renderFeedback';
 import { applyBootTerminology } from './logic/bootTerminology';
 import { term, setPirateMode, isPirateMode } from './logic/terminology';
 import { loadProfile } from './data/profile';
@@ -2281,6 +2282,8 @@ export class DashboardView {
   private handleClick(event: MouseEvent): void {
     const target: EventTarget | null = event.target;
     if (!(target instanceof Element)) return;
+    const feedback = target.closest<HTMLButtonElement>('[data-feedback]');
+    if (feedback) { openFeedback(feedback); return; }
     const pirateToggle = target.closest<HTMLButtonElement>('[data-pirate-mode]');
     if (pirateToggle) {
       if (!pirateToggle.disabled) this.changePirateMode(!isPirateMode());

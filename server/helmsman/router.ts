@@ -1,4 +1,5 @@
 import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
+import { FeedbackError } from './feedback';
 import { SlackReviewError, type SlackReviewResult } from './slack/review-request';
 import type { SlackReviewRequestState } from '../../src/data/slackReview';
 import type { Db, RunRow } from './db';
@@ -70,6 +71,7 @@ export interface RouterDeps {
   slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean };
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   assignTicket?: (ticketId: string) => Promise<void>;
+  submitFeedback?: (input: unknown) => Promise<{ url: string }>;
   triage: (repo: string | null) => Promise<TriageResponse>;
   bugs: (repo: string | null) => Promise<BugsResponse>;
   db: Db;
@@ -228,6 +230,11 @@ export async function handleApi(
   if (path === '/api/dashboard' && method === 'GET') {
     const payload = await deps.dashboard(query.get('repo'));
     return { status: 200, json: payload };
+  }
+  if (path === '/api/feedback' && method === 'POST') {
+    if (!deps.submitFeedback) return { status: 503, json: { error: 'Feedback is unavailable.' } };
+    try { return { status: 201, json: await deps.submitFeedback(_body) }; }
+    catch (error) { return { status: error instanceof FeedbackError ? error.status : 502, json: { error: error instanceof FeedbackError ? error.message : 'Could not confirm submission. Check GitHub before trying again.' } }; }
   }
   const assignTicket = path.match(/^\/api\/tickets\/([A-Z][A-Z0-9_]*-\d+)\/assign-self$/);
   if (assignTicket && method === 'POST') {
