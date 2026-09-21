@@ -49,7 +49,7 @@ describe('buildDashboardResponse', () => {
     });
     expect(r.snapshot.underwayAvailable).toBe(true);
     expect(r.snapshot.underway).toEqual([{
-      id: 'PROJA-1', title: 'Older assigned work', status: 'backlog', priority: 'P2', repo: 'o/a',
+      id: 'PROJA-1', title: 'Older assigned work', description: '', status: 'backlog', priority: 'P2', repo: 'o/a',
       updatedAt: '2025-01-01T00:00:00.000Z',
     }]);
   });

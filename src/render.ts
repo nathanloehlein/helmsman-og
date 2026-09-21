@@ -1084,8 +1084,9 @@ export interface BugsViewOpts {
 }
 
 function bugChip(text: string, kind: 'priority' | 'severity'): string {
-  const level = text?.trim().match(/^[PS]([0-5])\b/i)?.[1];
-  const label = level ? `${kind === 'priority' ? 'P' : 'S'}${level}` : text || '—';
+  const match = text?.trim().match(/^([PS])([0-5])\b/i);
+  const level = match?.[2];
+  const label = match ? `${match[1]?.toUpperCase()}${level}` : text || '—';
   return `<span class="chip ${level ? `pri-p${level}` : 'chip-queued'}" title="${esc(text)}" aria-label="${kind}: ${esc(text || 'Unknown')}">${esc(label)}</span>`;
 }
 
