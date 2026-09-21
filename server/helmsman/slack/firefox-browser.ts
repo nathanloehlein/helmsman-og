@@ -1,7 +1,7 @@
 import type { SlackBrowserTransport } from './browser';
 
 const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
-const DRIVER_UNAVAILABLE = 'Firefox automation is unavailable. Start the Helmsman Firefox bridge with geckodriver --connect-existing and Firefox Marionette enabled.';
+const DRIVER_UNAVAILABLE = 'Firefox automation is unavailable. Enable Firefox Marionette and start the local bridge with npm run slack:firefox. Restart the bridge after restarting Helmsman or Firefox.';
 const KEYS: Record<string, string> = {
   Enter: '\uE007', Escape: '\uE00C', Tab: '\uE004', Backspace: '\uE003', Delete: '\uE017',
   ArrowLeft: '\uE012', ArrowUp: '\uE013', ArrowRight: '\uE014', ArrowDown: '\uE015', Home: '\uE011', End: '\uE010',

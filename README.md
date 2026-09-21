@@ -588,7 +588,10 @@ Then run `npm run slack:firefox` from this checkout and keep the bridge running.
 The bridge binds to localhost:4444 and attaches to the existing Firefox through
 Marionette on localhost:2828. It never launches a replacement profile. Keep your
 signed-in `https://app.slack.com/client/...` tab open. No Slack bot token is needed.
-Restart the bridge and Helmsman after restarting Firefox to clear the old session.
+After restarting Helmsman or Firefox, stop and restart the bridge to clear its
+previous automation session. If Firefox restarted, restart Helmsman too. The
+bridge deliberately does not delete sessions, because doing so can close your
+regular browser.
 
 Firefox discovery briefly selects tabs to read their URLs, then restores the
 original selection. Slack actions also restore the original selection. WebDriver

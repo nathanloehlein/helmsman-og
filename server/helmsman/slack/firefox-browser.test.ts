@@ -183,7 +183,7 @@ describe('Firefox Slack WebDriver transport', () => {
 
   it('reports driver availability without propagating network error details', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('sensitive network details')));
-    await expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('Start the Helmsman Firefox bridge');
+    await expect(createFirefoxSlackBrowserTransport()(treeCommand)).rejects.toThrow('Restart the bridge after restarting Helmsman or Firefox');
   });
 
   it('does not restore over a user-changed selection', async () => {
