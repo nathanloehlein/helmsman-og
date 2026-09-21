@@ -60,7 +60,7 @@ describe('pirate interface wording', () => {
     expect(element.querySelector('#work-source-title')?.textContent).toBe(enabled ? 'Voyage source' : 'Run source');
   });
 
-  it.each(['dashboard', 'prs', 'runs', 'todos', 'triage', 'bugs', 'cmux', 'config'] as const)('provides one accessible footer flag on %s', active => {
+  it.each(['dashboard', 'prs', 'runs', 'todos', 'triage', 'bugs', 'cmux', 'config'] as const)('provides accessible feedback beside one footer flag on %s', active => {
     setPirateMode(false);
     const element = mount(renderAppShell({ ...opts, active, readout: null }, 'Content'));
     const button = element.querySelector<HTMLButtonElement>('.app-footer [data-pirate-mode]');
@@ -71,6 +71,12 @@ describe('pirate interface wording', () => {
     expect(button?.title).toBe('Turn Pirate mode on');
     expect(button?.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     expect(button?.querySelector('svg')?.getAttribute('stroke')).toBe('currentColor');
-    expect(button?.previousElementSibling?.classList.contains('footer-meta')).toBe(true);
+    const feedback = element.querySelector<HTMLButtonElement>('.app-footer [data-feedback]');
+    expect(element.querySelectorAll('[data-feedback]')).toHaveLength(1);
+    expect(feedback?.type).toBe('button');
+    expect(feedback?.textContent).toBe('Feedback');
+    expect(feedback?.nextElementSibling).toBe(button);
+    expect(feedback?.parentElement).toBe(button?.parentElement);
+    expect(button?.closest('.footer-actions')?.previousElementSibling?.classList.contains('footer-meta')).toBe(true);
   });
 });
