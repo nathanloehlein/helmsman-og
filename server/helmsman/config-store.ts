@@ -1,6 +1,6 @@
 import { loadConfig, type AppConfig } from '../config';
 import type { Db } from './db';
-import { SLACK_CONFIG_KEYS } from './slack/config';
+import { parseFirefoxWebDriverUrl, SLACK_CONFIG_KEYS } from './slack/config';
 import { SLACK_REVIEW_CONFIG_KEYS } from './slack/review-request';
 import { PRE_PR_CONFIG_KEYS, PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue } from '../../src/logic/prePrSettings';
 
@@ -73,6 +73,8 @@ export class ConfigStore {
     if (['JIRA_ENABLED', 'SLACK_ENABLED', 'SLACK_WATCH_ENABLED', 'GITHUB_REVIEW_WATCH_ENABLED'].includes(key) && value !== 'true' && value !== 'false') {
       throw new Error(`${key} must be true or false`);
     }
+    if (key === 'SLACK_BROWSER' && value !== 'cmux' && value !== 'firefox') throw new Error('Slack browser must be cmux or firefox');
+    if (key === 'SLACK_FIREFOX_WEBDRIVER_URL') parseFirefoxWebDriverUrl(value);
     const slackTarget = value.trim().replace(key === 'SLACK_REVIEW_CHANNEL' ? /^#/ : /^@/, '');
     if (key === 'SLACK_REVIEW_CHANNEL' && slackTarget && !/^(?:[CG][A-Z\d]{2,31}|[a-z\d_-]{1,80})$/.test(slackTarget)) {
       throw new Error('Slack review channel must be a channel name or channel ID');

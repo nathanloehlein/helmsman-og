@@ -2,6 +2,7 @@ import { slackIntegrationEnabled } from './config';
 import Database from 'better-sqlite3';
 import { isGithubRepo } from '../../pr-lists';
 import type { PrStatus } from '../../github';
+import type { SlackReviewRequestState } from '../../../src/data/slackReview';
 
 export const SLACK_REVIEW_CONFIG_KEYS = ['SLACK_REVIEW_CHANNEL', 'SLACK_REVIEW_MENTION'] as const;
 
@@ -29,6 +30,7 @@ export interface SlackReviewResult {
   channel: string;
   mention: string;
   permalink: string | null;
+  sentAt?: string | null;
 }
 
 interface ReviewInput { requestId: string; repo: string; prNumber: number }
@@ -37,6 +39,7 @@ interface Receipt extends ReviewInput {
   mentionTarget: string;
   status: 'pending' | 'sent' | 'failed' | 'uncertain';
   createdAt: number;
+  sentAt: number | null;
   channel: string | null;
   mention: string | null;
   permalink: string | null;
@@ -68,11 +71,13 @@ function validateInput(value: unknown): ReviewInput {
 }
 
 function sentReceipt(row: Receipt): SlackReviewResult {
-  return { ok: true, channel: row.channel ?? row.channelTarget, mention: row.mention ?? row.mentionTarget, permalink: row.permalink };
+  return { ok: true, channel: row.channel ?? row.channelTarget, mention: row.mention ?? row.mentionTarget, permalink: row.permalink,
+    sentAt: row.sentAt === null ? null : new Date(row.sentAt).toISOString() };
 }
 
 export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
   request(input: unknown): Promise<SlackReviewResult>;
+  list(repo: string | null): SlackReviewRequestState[];
   close(): void;
 } {
   const sql = new Database(path);
@@ -83,6 +88,8 @@ export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
     createdAt INTEGER NOT NULL, channel TEXT, mention TEXT, permalink TEXT
   );
   CREATE INDEX IF NOT EXISTS slack_review_cooldown ON slack_review_requests(repo, prNumber, channelTarget, mentionTarget, createdAt);`);
+  const columns = sql.prepare('PRAGMA table_info(slack_review_requests)').all() as { name: string }[];
+  if (!columns.some(column => column.name === 'sentAt')) sql.exec('ALTER TABLE slack_review_requests ADD COLUMN sentAt INTEGER');
   const now = deps.now ?? Date.now;
   const flights = new Map<string, { key: string; promise: Promise<SlackReviewResult> }>();
 
@@ -103,16 +110,17 @@ export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
         if (prior.status !== 'failed') throw new SlackReviewError('Delivery is pending or unconfirmed. Check Slack before requesting again.', 409, true);
       }
       const recent = sql.prepare(`SELECT * FROM slack_review_requests WHERE repo = ? COLLATE NOCASE AND prNumber = ?
-        AND channelTarget = ? AND mentionTarget = ? AND createdAt > ? AND status IN ('pending', 'sent', 'uncertain') ORDER BY createdAt DESC LIMIT 1`)
+        AND channelTarget = ? AND mentionTarget = ? AND (status IN ('pending', 'uncertain') OR status = 'sent' AND COALESCE(sentAt, createdAt) > ?)
+        ORDER BY CASE WHEN status IN ('pending', 'uncertain') THEN 0 ELSE 1 END, createdAt DESC LIMIT 1`)
         .get(input.repo, input.prNumber, settings.channel, settings.mention, now() - 60_000) as Receipt | undefined;
       if (recent?.status === 'sent') {
-        sql.prepare(`INSERT INTO slack_review_requests (requestId, repo, prNumber, channelTarget, mentionTarget, status, createdAt, channel, mention, permalink)
-          VALUES (@requestId, @repo, @prNumber, @channelTarget, @mentionTarget, 'sent', @createdAt, @channel, @mention, @permalink)
-          ON CONFLICT(requestId) DO UPDATE SET status = 'sent', createdAt = excluded.createdAt, channel = excluded.channel, mention = excluded.mention, permalink = excluded.permalink`)
+        sql.prepare(`INSERT INTO slack_review_requests (requestId, repo, prNumber, channelTarget, mentionTarget, status, createdAt, channel, mention, permalink, sentAt)
+          VALUES (@requestId, @repo, @prNumber, @channelTarget, @mentionTarget, 'sent', @createdAt, @channel, @mention, @permalink, @sentAt)
+          ON CONFLICT(requestId) DO UPDATE SET status = 'sent', createdAt = excluded.createdAt, channel = excluded.channel, mention = excluded.mention, permalink = excluded.permalink, sentAt = excluded.sentAt`)
           .run({ ...recent, ...input, createdAt: now() });
         return sentReceipt(recent);
       }
-      if (recent) throw new SlackReviewError('A request was just attempted for this PR. Check Slack before requesting again.', 409, true);
+      if (recent) throw new SlackReviewError('Delivery is pending or unconfirmed. Check Slack before requesting again.', 409, true);
       sql.prepare(`INSERT INTO slack_review_requests (requestId, repo, prNumber, channelTarget, mentionTarget, status, createdAt)
         VALUES (@requestId, @repo, @prNumber, @channelTarget, @mentionTarget, 'pending', @createdAt)
         ON CONFLICT(requestId) DO UPDATE SET status = 'pending', createdAt = excluded.createdAt`)
@@ -143,9 +151,10 @@ export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
             && /^\/archives\/[CG][A-Z\d]+\/p\d+$/.test(url.pathname)) permalink = url.href;
         } catch {}
       }
-      const result: SlackReviewResult = { ok: true, channel: receipt.channel, mention: receipt.mention, permalink };
-      sql.prepare("UPDATE slack_review_requests SET status = 'sent', channel = ?, mention = ?, permalink = ? WHERE requestId = ?")
-        .run(result.channel, result.mention, result.permalink, input.requestId);
+      const sentAt = now();
+      const result: SlackReviewResult = { ok: true, channel: receipt.channel, mention: receipt.mention, permalink, sentAt: new Date(sentAt).toISOString() };
+      sql.prepare("UPDATE slack_review_requests SET status = 'sent', channel = ?, mention = ?, permalink = ?, sentAt = ? WHERE requestId = ?")
+        .run(result.channel, result.mention, result.permalink, sentAt, input.requestId);
       return result;
     } catch (error) {
       const uncertain = senderStarted && (!(error instanceof SlackReviewError) || error.uncertain);
@@ -157,6 +166,28 @@ export function openSlackReviewRequester(path: string, deps: RequesterDeps): {
   }
 
   return {
+    list(repo) {
+      if (repo !== null && (typeof repo !== 'string' || !isGithubRepo(repo))) throw new SlackReviewError('Galleon must be owner/name.', 400);
+      const rows = sql.prepare(`SELECT * FROM slack_review_requests${repo === null ? '' : ' WHERE repo = ? COLLATE NOCASE'} ORDER BY createdAt DESC, rowid DESC`)
+        .all(...(repo === null ? [] : [repo])) as Receipt[];
+      const states = new Map<string, SlackReviewRequestState>();
+      const sent = new Set<string>();
+      for (const row of rows) {
+        const key = `${row.repo.toLowerCase()}#${row.prNumber}`;
+        let state = states.get(key);
+        if (!state) {
+          state = { requestId: row.requestId, repo: row.repo, prNumber: row.prNumber, status: row.status, lastRequestedAt: new Date(row.createdAt).toISOString(), lastSentAt: null, permalink: null, error: null };
+          states.set(key, state);
+        }
+        if (row.status === 'sent' && (!sent.has(key) || row.sentAt !== null
+          && (state.lastSentAt === null || row.sentAt > Date.parse(state.lastSentAt)))) {
+          state.lastSentAt = row.sentAt === null ? null : new Date(row.sentAt).toISOString();
+          state.permalink = row.permalink;
+          sent.add(key);
+        }
+      }
+      return [...states.values()];
+    },
     request(value) {
       let input: ReviewInput;
       try { input = validateInput(value); } catch (error) { return Promise.reject(error); }

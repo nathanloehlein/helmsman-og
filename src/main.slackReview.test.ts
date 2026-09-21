@@ -7,7 +7,7 @@ const permalink = 'https://godaddy.slack.com/archives/C123/p1789730000000000';
 const success = { ok: true, channel: 'airo-editing', mention: 'airo-editing-squad', permalink };
 const json = (data: unknown, status = 200): Response => new Response(JSON.stringify(data), { status });
 
-async function setup(post: (body: Record<string, unknown>) => Response | Promise<Response> = () => json(success), withRun = false) {
+async function setup(post: (body: Record<string, unknown>) => Response | Promise<Response> = () => json(success), withRun = false, savedRequests: unknown[] = []) {
   window.history.replaceState(null, '', withRun ? '/prs?run=review-run' : '/prs');
   const snapshot = await loadDashboard();
   snapshot.myOpenPrs = [{ repo: 'org/repo', number: 42, title: 'Improve search', draft: false, reviewDecision: '', createdAt: '2026-09-18T12:00:00Z' }];
@@ -33,6 +33,7 @@ async function setup(post: (body: Record<string, unknown>) => Response | Promise
       reviewDecision: '', comments: 0, checks: { passed: 1, failed: 0, pending: 0 }, url: 'https://github.com/org/repo/pull/42',
     });
     if (url.pathname === '/api/config') return json({ config: {}, overridden: [] });
+    if (url.pathname === '/api/slack/review-requests') return json({ requests: savedRequests });
     if (url.pathname === '/api/slack') return json({ health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null }, notifications: [] });
     if (url.pathname === '/api/pr/review-requests' || url.pathname === '/api/pr/open') return json({ prs: [], degraded: false, truncated: false });
     return json({}, 404);
@@ -60,6 +61,92 @@ afterEach(() => {
 });
 
 describe('Slack review requests from authored PRs', () => {
+  const receipt = { requestId: 'cf94674b-727a-4aa8-99ae-70cbccfa6dd8', repo: 'org/repo', prNumber: 42, status: 'sent',
+    lastRequestedAt: '2026-09-18T12:00:00Z', lastSentAt: '2026-09-18T12:00:01Z', permalink, error: null };
+
+  it('restores confirmed delivery history after reload and sends reminders only on an explicit click with a new ID', async () => {
+    const { root, view, button, writes } = await setup(() => json({ ...success, sentAt: new Date().toISOString() }), false, [receipt]);
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).toBe(receipt.lastSentAt);
+    expect(root.querySelector('.slack-review-result')?.textContent).toContain('Last requested');
+    expect(root.querySelector<HTMLAnchorElement>('.slack-review-result a')?.href).toBe(permalink);
+    expect(button().textContent).toBe('Request again in Slack');
+    await view.refresh();
+    expect(writes).toEqual([]);
+    button().click();
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.requestId).not.toBe(receipt.requestId);
+    expect(button().disabled).toBe(true);
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).not.toBe(receipt.lastSentAt);
+  });
+
+  it.each(['pending', 'uncertain'])('preserves %s delivery across reload without enabling another send', async status => {
+    const { root, view, button, writes } = await setup(() => json(success), false, [{ ...receipt, status }]);
+    expect(button().disabled).toBe(true);
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).toBe(receipt.lastSentAt);
+    expect(root.querySelector('.slack-review-result')?.textContent).toContain(status === 'pending' ? 'already in progress' : 'Delivery unconfirmed');
+    await view.refresh();
+    button().click();
+    expect(writes).toEqual([]);
+  });
+
+  it('keeps unknown historical confirmation times explicit', async () => {
+    const { root } = await setup(() => json(success), false, [{ ...receipt, lastSentAt: null }]);
+    expect(root.querySelector('.slack-review-result')?.textContent).toContain('Request time unavailable');
+    expect(root.querySelector('.slack-review-result time')).toBeNull();
+  });
+
+  it('accepts a later persisted confirmation when the local response had no timestamp', async () => {
+    const saved: unknown[] = [];
+    const { root, view, button, writes } = await setup(() => json(success), false, saved);
+    button().click();
+    await vi.waitFor(() => expect(button().disabled).toBe(true));
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
+    saved.push({ ...receipt, requestId: writes[0]?.requestId, lastRequestedAt: new Date().toISOString() });
+    await view.refresh();
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).toBe(receipt.lastSentAt);
+    expect(button().textContent).toBe('Request again in Slack');
+    expect(button().disabled).toBe(false);
+  });
+
+  it('ignores a delayed pending snapshot for an already confirmed request', async () => {
+    const saved: unknown[] = [];
+    const sentAt = new Date().toISOString();
+    const { root, view, button, writes } = await setup(() => json({ ...success, sentAt }), false, saved);
+    button().click();
+    await vi.waitFor(() => expect(button().textContent).toBe('Inspection requested'));
+    saved.push({ ...receipt, requestId: writes[0]?.requestId, status: 'pending',
+      lastRequestedAt: new Date(Date.now() + 1000).toISOString(), lastSentAt: null, permalink: null });
+    await view.refresh();
+    expect(button().textContent).toBe('Inspection requested');
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).toBe(sentAt);
+    expect(root.querySelector<HTMLAnchorElement>('.slack-review-result a')?.href).toBe(permalink);
+  });
+
+  it('retains the last successful timestamp and link during a failed repeat request', async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    const { root, button } = await setup(() => pending, false, [receipt]);
+    button().click();
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).toBe(receipt.lastSentAt);
+    expect(root.querySelector<HTMLAnchorElement>('.slack-review-result a')?.href).toBe(permalink);
+    finish(json({ error: 'Browser disconnected', uncertain: false }, 409));
+    await vi.waitFor(() => expect(button().disabled).toBe(false));
+    expect(root.querySelector<HTMLTimeElement>('.slack-review-result time')?.dateTime).toBe(receipt.lastSentAt);
+    expect(root.querySelector<HTMLAnchorElement>('.slack-review-result a')?.href).toBe(permalink);
+  });
+
+  it.each(['pending', 'uncertain'])('replaces local success with a newer %s receipt from another tab', async status => {
+    const saved: unknown[] = [];
+    const { root, view, button } = await setup(() => json({ ...success, sentAt: receipt.lastSentAt }), false, saved);
+    button().click();
+    await vi.waitFor(() => expect(button().textContent).toBe('Request again in Slack'));
+    saved.push({ ...receipt, status, lastRequestedAt: new Date(Date.now() + 1000).toISOString() });
+    await view.refresh();
+    expect(button().disabled).toBe(true);
+    expect(root.querySelector('.slack-review-result')?.textContent).toContain(status === 'pending' ? 'already in progress' : 'Delivery unconfirmed');
+  });
+
   it('preserves the successful Slack receipt when reopening a voyage drawer', async () => {
     const { root, writes } = await setup(() => json(success), true);
     const drawerButton = () => root.querySelector<HTMLButtonElement>('.run-drawer-pr [data-slack-review-request]');

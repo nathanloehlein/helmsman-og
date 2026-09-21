@@ -1,5 +1,6 @@
 import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
 import { SlackReviewError, type SlackReviewResult } from './slack/review-request';
+import type { SlackReviewRequestState } from '../../src/data/slackReview';
 import type { Db, RunRow } from './db';
 import type { PrStatus } from '../github';
 import { isGithubRepo, type PrListResponse } from '../pr-lists';
@@ -61,6 +62,7 @@ export interface RouterDeps {
   resumeRun?: (runId: string) => Promise<void>;
   githubProfile?: () => Promise<GithubProfile>;
   slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
+  slackReviewRequests?: (repo: string | null) => SlackReviewRequestState[];
   todos?: TodoStore;
   jiraEnabled?: () => boolean;
   outboundUsage?: () => unknown;
@@ -156,6 +158,12 @@ export async function handleApi(
       if (error instanceof OutcomeValidationError) return { status: 400, json: { error: error.message } };
       throw error;
     }
+  }
+  if (path === '/api/slack/review-requests' && method === 'GET') {
+    const repo = query.get('repo');
+    if (repo !== null && !isGithubRepo(repo)) return { status: 400, json: { error: 'Galleon must be owner/name' } };
+    if (!deps.slackReviewRequests) return { status: 503, json: { error: 'Slack review history is unavailable.' } };
+    return { status: 200, json: { requests: deps.slackReviewRequests(repo) } };
   }
   if (path === '/api/slack/review-request' && method === 'POST') {
     if (!deps.slackReviewRequest) return { status: 503, json: { error: 'Slack review requests are unavailable.' } };

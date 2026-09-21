@@ -561,19 +561,47 @@ Changing `JIRA_STATUS_*` does not rewrite those dashboard queries.
 | Value | Default | Where it applies / how to set it | Change |
 | --- | --- | --- | --- |
 | `SLACK_ENABLED` | `true` | Master switch in Config → Slack integration. Disabling stops automatic Slack reviews and blocks manual review requests without clearing saved settings. | Live |
-| `SLACK_WATCH_ENABLED` | `false` | Set exactly `true` after filling the channel fields and opening signed-in Slack in cmux. No Slack app/token or Slack MCP is used. | Live |
+| `SLACK_WATCH_ENABLED` | `false` | Set exactly `true` after filling the channel fields and opening signed-in Slack in the selected browser. No Slack app/token or Slack MCP is used. | Live |
 | `SLACK_CLIENT_ID` | Empty | First identifier after `/client/` in the open Slack URL. This is the browser client/workspace identifier, not an OAuth app client ID. | Live |
 | `SLACK_CHANNEL_ID` | Empty | Channel identifier beginning with `C`, from the Slack channel URL. Must match the channel being watched. | Live |
 | `SLACK_CHANNEL_NAME` | Empty | Channel name without `#`, using lowercase letters, digits, `_`, or `-`; used to scope Slack search. | Live |
-| `SLACK_BROWSER_SURFACE` | Empty | Optional cmux browser reference, e.g. `surface:24` or its UUID. Leave empty to discover the matching signed-in Slack tab. Useful when multiple tabs match. | Live |
+| `SLACK_BROWSER` | `cmux` | Browser containing signed-in Slack: `firefox` for regular Firefox, or `cmux` for its embedded browser. | Live |
+| `SLACK_FIREFOX_WEBDRIVER_URL` | `http://127.0.0.1:4444` | Local Firefox bridge. HTTP loopback addresses only. | Live |
+| `SLACK_BROWSER_SURFACE` | Empty | Optional browser tab reference (`firefox:<handle>` or cmux `surface:24`). Leave empty to discover the matching signed-in Slack tab. | Live |
 
 Slack text fields are blank by default and the watcher is off. See
 [Automatic PR reviews](#automatic-pr-reviews) for first-time browser setup and triggers.
 
+### Using regular Firefox
+
+Select **Firefox** in Config → Slack integration. Helmsman can be viewed in any
+browser; the selected browser is where it reads and sends Slack messages.
+
+On macOS, install `geckodriver` with `brew install geckodriver`. Quit Firefox when
+convenient and relaunch your regular profile with automation enabled:
+
+```sh
+/Applications/Firefox.app/Contents/MacOS/firefox --marionette
+```
+
+Then run `npm run slack:firefox` from this checkout and keep the bridge running.
+The bridge binds to localhost:4444 and attaches to the existing Firefox through
+Marionette on localhost:2828. It never launches a replacement profile. Keep your
+signed-in `https://app.slack.com/client/...` tab open. No Slack bot token is needed.
+Restart the bridge and Helmsman after restarting Firefox to clear the old session.
+
+Firefox discovery briefly selects tabs to read their URLs, then restores the
+original selection. Slack actions also restore the original selection. WebDriver
+cannot reliably distinguish a simultaneous user focus change; avoid interacting
+with tabs during a request. Existing cmux installations retain their browser until
+you change the setting.
+
 ### Requesting reviews in Slack
 
 Your open PRs have a **Request review in Slack** button, also available in an owned
-open PR's details. It posts the canonical PR link and mentions the configured Slack
+open PR's details. Underway tickets in Inspection use this action instead of
+Start voyage. Clicking an Underway row opens its associated run or PR panel;
+multiple PR matches remain explicit choices. It posts the canonical PR link and mentions the configured Slack
 user group. Sending is manual; the button reports delivery or an actionable error
 and links to the message when Slack provides a permalink.
 
@@ -592,8 +620,12 @@ Sending works independently of whether automatic Slack watching is enabled.
 
 The server verifies that the PR is open and authored by the configured GitHub user.
 Persisted request receipts prevent repeated delivery for the same request ID, and a
-short per-PR cooldown protects against double-clicks and concurrent tabs. If delivery
-cannot be confirmed, check Slack before attempting another request.
+60-second per-PR cooldown protects against double-clicks and concurrent tabs.
+Last-requested timestamps and message links survive reloads and server restarts.
+After the cooldown, **Request again in Slack** sends only when explicitly clicked.
+Pending or uncertain delivery blocks new request IDs to avoid duplicate messages;
+check Slack and resolve the existing receipt before sending again. Older receipts
+without confirmation timestamps show that their send time is unknown.
 
 ### Agent execution and server storage
 
@@ -611,7 +643,7 @@ cannot be confirmed, check Slack before attempting another request.
 | `AGENTS_ROOT` | Server working directory | Parent directory of target repo checkouts, e.g. `/absolute/path/to/agent-repos`; not the path to a single checkout. | Restart |
 | `RUNS_DIR` | `<AGENTS_ROOT>/.helmsman-runs` | Directory for detached-run specifications, logs, and exit records. Created on startup; use a writable absolute path. | Restart |
 | `RUN_HOST` | Detached process | `detached`, `cmux`, `wezterm`, or `docker`. Native terminals fall back to detached if unavailable; requested Docker execution fails if its prerequisites are missing. See [execution hosts](#frozen-workflows-and-execution-hosts). | Restart |
-| `TERM_BRIDGE` | `wezterm` on Windows, `cmux` elsewhere | Terminal page backend, independent of the run host. Slack reading uses cmux regardless of this setting. | Restart |
+| `TERM_BRIDGE` | `wezterm` on Windows, `cmux` elsewhere | Terminal page backend, independent of the run host. Slack uses SLACK_BROWSER independently of this setting. | Restart |
 | `HELMSMAN_DOCKER_IMAGE` | Empty | Built runtime image required for Docker execution; resolved to an image pin for the run. See [Docker setup](docs/docker-run-host.md) for provider credentials and dependency provisioning. | Restart |
 | `HELMSMAN_GATEWAY_PORT` | `8790` | Capability-authenticated provider/GitHub gateway used by Docker stages. | Restart |
 | `HELMSMAN_DB` | `<server working directory>/.helmsman.sqlite` | SQLite file for runs, config overrides, watcher state, and notifications. Use a writable path and retain it across restarts. A Config-saved Jira token is stored here, so treat this file as sensitive. | Restart |
@@ -711,8 +743,8 @@ Helmsman can discover PRs every five minutes from two sources:
 
 Both sources persist their queues and notifications in the Helmsman SQLite database. The header notification bell shows source health, queued/started/failed/blocked reviews, links to the source and run, and the selected model/effort. Marking a notification read persists across reloads and restarts. Existing concurrency limits apply; repositories must be configured in `GITHUB_REPO` or `REPO_PROJECT_MAP`. Requests for unconfigured repositories remain visible as blocked.
 
-Both watchers start disabled. For Slack, install/open cmux with its `cmux` command
-available to Helmsman, and open Slack in a **cmux browser tab**. Sign in and navigate
+Both watchers start disabled. For Slack, connect regular Firefox as described
+above, or select cmux and open Slack in a cmux browser tab. Sign in and navigate
 to the one channel you want to watch. Its URL has this shape:
 
 ```text
@@ -721,9 +753,8 @@ https://app.slack.com/client/<client-id>/<channel-id>
 
 Copy those two identifiers into `SLACK_CLIENT_ID` and `SLACK_CHANNEL_ID`, and set
 `SLACK_CHANNEL_NAME` to the channel name without `#`. Fill and save those fields
-before enabling the watcher. A normal browser tab outside cmux is not discoverable.
-Leave `SLACK_BROWSER_SURFACE` empty unless you need to pin a particular tab; use
-`cmux tree --json` to find that browser's `surface_ref` when needed.
+before enabling the watcher. Leave `SLACK_BROWSER_SURFACE` empty to discover the
+matching tab. For cmux, `cmux tree --json` provides its `surface_ref` when needed.
 
 The initial `.env` values are deliberately empty/disabled:
 
@@ -744,7 +775,7 @@ set `GITHUB_REVIEW_WATCH_ENABLED=true`; no Slack fields or browser are needed. T
 can immediately launch reviews for existing pending requests. Automatic reviews
 publish their findings to GitHub, so enable a source only when ready for that behavior.
 
-Keep one signed-in Slack browser tab open in cmux for the configured channel/client. The reader discovers that tab on each scan; set `SLACK_BROWSER_SURFACE` only when multiple matching tabs exist. It briefly selects its Slack browser tab and restores the previous tab and focus unless the user changes them during the scan. It uses browser UI searches and rendered message anchors, without Slack MCP or extracted session tokens. Browser closure, sign-out, or incomplete search results appear in source health. Catch-up resumes from the last successful scan with an overlapping search window. Five minutes is a target while the machine, browser, and server are running; Slack search indexing may add delay. Reading Slack views can affect unread state.
+Keep one signed-in Slack tab open in your selected browser for the configured channel/client. The reader discovers that tab on each scan; set `SLACK_BROWSER_SURFACE` only when multiple matching tabs exist. It briefly selects its Slack browser tab and restores the previous selection (see the Firefox focus limitation above). It uses browser UI searches and rendered message anchors, without Slack MCP or extracted session tokens. Browser closure, sign-out, or incomplete search results appear in source health. Catch-up resumes from the last successful scan with an overlapping search window. Five minutes is a target while the machine, browser, and server are running; Slack search indexing may add delay. Reading Slack views can affect unread state.
 
 Review model selection defaults to these tiers for Codex:
 

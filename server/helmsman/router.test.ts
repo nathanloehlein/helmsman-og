@@ -58,6 +58,20 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('reads Slack request history with explicit galleon scope without sending', async () => {
+    const slackReviewRequests = vi.fn(() => []);
+    const slackReviewRequest = vi.fn();
+    const local = { ...deps, slackReviewRequests, slackReviewRequest };
+    expect(await handleApi('GET', '/api/slack/review-requests', new URLSearchParams('repo=o/r'), null, local))
+      .toEqual({ status: 200, json: { requests: [] } });
+    expect(slackReviewRequests).toHaveBeenLastCalledWith('o/r');
+    await handleApi('GET', '/api/slack/review-requests', new URLSearchParams(), null, local);
+    expect(slackReviewRequests).toHaveBeenLastCalledWith(null);
+    expect((await handleApi('GET', '/api/slack/review-requests', new URLSearchParams('repo=bad'), null, local))?.status).toBe(400);
+    expect(slackReviewRequests).toHaveBeenCalledTimes(2);
+    expect(slackReviewRequest).not.toHaveBeenCalled();
+    expect((await handleApi('GET', '/api/slack/review-requests', new URLSearchParams(), null, deps))?.status).toBe(503);
+  });
   it('continues an existing voyage without creating a replacement run', async () => {
     const resumeRun = vi.fn(async () => {});
     const launch = vi.fn(deps.launch);

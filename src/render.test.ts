@@ -459,7 +459,7 @@ describe('renderDashboard', () => {
     el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
 
     const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-panel:not(.pre-pr-config-panel) .config-row:not(.config-secret-row)');
-    expect(rows.length).toBe(11);
+    expect(rows.length).toBe(13);
     const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');

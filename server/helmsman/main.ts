@@ -59,10 +59,11 @@ import { createWezTermBridge } from './wezterm/bridge';
 import { openSlackStore } from './slack/store';
 import { openVoyageNotifications } from './voyage-notifications';
 import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
-import { createSlackBrowserReader } from './slack/browser';
+import { createSlackBrowserReader, runSlackBrowserCommand } from './slack/browser';
+import { createFirefoxSlackBrowserTransport } from './slack/firefox-browser';
 import { createSlackBrowserReviewSender } from './slack/browser-review';
-import { publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
-import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings } from './slack/review-request';
+import { createSlackBrowserTransportSelector, publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
+import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings, SlackReviewError } from './slack/review-request';
 import type { SlackState } from '../../src/data/slack';
 import { createGithubReviewWatcher } from './github-review-watcher';
 import { createCreatedPrReviews } from './created-pr-reviews';
@@ -102,9 +103,14 @@ const outcomes = createOutcomeService({ db, store: outcomeStore, fetchPr: (repo,
   const github = configStore.current().github;
   return github ? fetchPrStatus(github, repo, number) : Promise.resolve(null);
 } });
+const slackBrowserTransport = createSlackBrowserTransportSelector(createFirefoxSlackBrowserTransport, runSlackBrowserCommand);
 const slackReviewRequester = openSlackReviewRequester(dbPath, {
   settings: () => slackReviewSettings(configStore.effectiveEnv()),
-  send: input => createSlackBrowserReviewSender(slackSettings(configStore.effectiveEnv())).send(input),
+  send: input => {
+    const settings = slackSettings(configStore.effectiveEnv());
+    if (settings.error) throw new SlackReviewError(settings.error, 400);
+    return createSlackBrowserReviewSender(settings, slackBrowserTransport(settings)).send(input);
+  },
   getPr: (repo, prNumber) => {
     const github = configStore.current().github;
     return github ? fetchPrStatus(github, repo, prNumber) : Promise.resolve(null);
@@ -554,7 +560,7 @@ function configuredSlackWatcher(): SlackWatcher | null {
   if (key === slackSettingsKey) return slackWatcher;
   slackSettingsKey = key;
   slackWatcher = settings.enabled && !settings.error ? createSlackWatcher({
-    ...settings, store: slackStore, source: createSlackBrowserReader(settings),
+    ...settings, store: slackStore, source: createSlackBrowserReader(settings, slackBrowserTransport(settings)),
     allowedRepos: () => {
       const cfg = configStore.current();
       return [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
@@ -727,6 +733,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         return id.startsWith('voyage-') ? voyageNotifications.markRead(id, now) : slackStore.markRead(id, now);
       } },
       slackReviewRequest: (input) => slackReviewRequester.request(input),
+      slackReviewRequests: repo => slackReviewRequester.list(repo),
       todos,
       jiraEnabled: () => configStore.current().jiraEnabled,
       dashboard: (repo) => buildDashboardResponse(configStore.effectiveEnv(), new Date(), undefined, repo, todos.list()),

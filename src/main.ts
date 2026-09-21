@@ -12,7 +12,8 @@ import { emptyLocalGit, fetchLocalGit, updateLocalGit, type LocalGitAction, type
 import { renderLocalGit } from './renderLocalGit';
 import { fetchSlack, markSlackNotificationRead, unavailableSlack, type SlackState } from './data/slack';
 import { renderSlack } from './renderSlack';
-import { requestSlackReview, SlackReviewRequestError, type SlackReviewResult } from './data/slackReview';
+import { fetchSlackReviewRequests, requestSlackReview, SlackReviewRequestError, type SlackReviewResult, type SlackReviewRequestState } from './data/slackReview';
+import { formatRelativeTime } from './logic/time';
 import './style.css';
 import { parseRoute, routeHref, type AppRoute, type PageView } from './logic/routes';
 import { renderRunsView, renderRunHistory, type RunHistoryState } from './renderRuns';
@@ -104,6 +105,20 @@ interface RunTab {
   prLoadedAt?: number;
   prVersion?: number;
   prPending?: Promise<void>;
+}
+
+interface SlackReviewUiState {
+  requestId: string;
+  requestedAt: string;
+  pending: boolean;
+  error?: string;
+  result?: SlackReviewResult;
+}
+
+function canRequestSlackAgain(state: SlackReviewUiState | undefined, saved: SlackReviewRequestState | undefined): boolean {
+  const savedAt = saved?.status === 'sent' ? saved.lastSentAt ?? saved.lastRequestedAt : null;
+  const sentAt = state ? state.result ? state.result.sentAt ?? (saved?.requestId === state.requestId ? savedAt : null) : null : savedAt;
+  return Boolean(sentAt && Number.isFinite(Date.parse(sentAt)) && Date.now() - Date.parse(sentAt) >= 60_000);
 }
 
 function deriveTicketStatus(summary: RunStatusSummary): string {
@@ -224,7 +239,9 @@ export class DashboardView {
   private slackError: string | null = null;
   private slackSeq: number = 0;
   private slackReads = new Set<string>();
-  private slackReviewRequests = new Map<string, { requestId: string; pending: boolean; error?: string; result?: SlackReviewResult }>();
+  private slackReviewRequests = new Map<string, SlackReviewUiState>();
+  private slackReviewHistory = new Map<string, SlackReviewRequestState>();
+  private slackReviewHistoryUnavailable = false;
   private outcomes: OutcomeSummary | null = null;
   private outcomeDays: OutcomeWindow = 30;
   private outcomesLoading = false;
@@ -295,6 +312,11 @@ export class DashboardView {
       }
       if (event.key !== 'Enter' && event.key !== ' ') return;
       const target = event.target;
+      if (target instanceof HTMLElement && target.matches('.underway-row[data-underway-href]')) {
+        event.preventDefault();
+        this.openUnderwayRow(target);
+        return;
+      }
       if (!(target instanceof HTMLElement) || !target.matches('.pr-list-row')) return;
       event.preventDefault();
       this.handlePrListClick(target);
@@ -702,14 +724,32 @@ export class DashboardView {
     const seq: number = ++this.refreshSeq;
     const slackSeq = ++this.slackSeq;
     const repo: string | null = this.selectedRepo;
-    const [response, agents, , slack, context] = await Promise.all([
+    const [response, agents, , slack, context, slackReviews] = await Promise.all([
       dashboardDue ? loadDashboard(repo).catch((): DashboardResponse | null => null) : null,
       localDue ? fetchAgents() : null,
       force ? this.loadUiConfig(false) : null,
       localDue ? fetchSlack() : undefined,
       localDue ? getContext() : null,
+      localDue && (this.view === 'dashboard' || this.view === 'prs' || this.view === 'runs' || this.route.run)
+        ? fetchSlackReviewRequests() : undefined,
     ]);
     if (seq !== this.refreshSeq || repo !== this.selectedRepo) return;
+    if (slackReviews !== undefined) {
+      this.slackReviewHistoryUnavailable = slackReviews === null;
+      if (slackReviews) {
+        for (const saved of slackReviews) {
+          const key = `${saved.repo.toLowerCase()}#${saved.prNumber}`;
+          const local = this.slackReviewRequests.get(key);
+          const previous = this.slackReviewHistory.get(key);
+          if (local?.pending || previous && Date.parse(previous.lastRequestedAt) > Date.parse(saved.lastRequestedAt)) continue;
+          if (saved.status !== 'sent' && (previous?.requestId === saved.requestId && previous.status === 'sent'
+            || local?.requestId === saved.requestId && local.result)) continue;
+          this.slackReviewHistory.set(key, saved);
+          if (local && (saved.requestId === local.requestId && saved.status === 'sent'
+            || Date.parse(saved.lastRequestedAt) > Date.parse(local.requestedAt))) this.slackReviewRequests.delete(key);
+        }
+      }
+    }
     const priorJiraEnabled = this.jiraEnabled;
     if (dashboardDue) this.dashboardUnavailable = !response;
     if (response) {
@@ -789,6 +829,7 @@ export class DashboardView {
       void this.loadOutcomes();
     }
     this.paintRunRetries();
+    this.paintSlackReviewRequests();
   }
 
   private loadRunHistory(offset = this.runHistory.offset): Promise<void> {
@@ -849,7 +890,7 @@ export class DashboardView {
     const next = document.createElement('div');
     renderDashboard(next, this.snapshot, new Date(), this.degraded, this.repos, this.selectedRepo,
       this.runs, this.autoClaimRepos, this.caps, this.themeId, this.rackLayout, this.jiraBaseUrl, this.repoPrs, this.jiraEnabled);
-    const selectors = [...['running', 'recent'].flatMap(panel =>
+    const selectors = [...['underway', 'running', 'recent'].flatMap(panel =>
       ['.faceplate-body', '.faceplate-count', '.faceplate-lamp'].map(part => `[data-panel="${panel}"] ${part}`))];
     for (const selector of selectors) {
       const current = this.root.querySelector(selector);
@@ -1243,28 +1284,46 @@ export class DashboardView {
       const repo = control.dataset.repo;
       const number = Number(control.dataset.number);
       if (!repo || !Number.isSafeInteger(number)) continue;
-      const state = this.slackReviewRequests.get(`${repo}#${number}`);
+      const key = `${repo.toLowerCase()}#${number}`;
+      const state = this.slackReviewRequests.get(key);
+      const saved = this.slackReviewHistory.get(key);
       const button = control.querySelector<HTMLButtonElement>('[data-slack-review-request]');
       const status = control.querySelector<HTMLElement>('.slack-review-result');
       if (!button || !status) continue;
       const disabled = String(this.uiConfig.config?.SLACK_ENABLED) === 'false';
-      button.disabled = disabled || Boolean(state?.pending || state?.result);
-      button.title = disabled ? 'Enable Slack integration in Config to request a review.' : '';
-      button.textContent = state?.pending ? 'Sending…' : state?.result ? term('reviewRequested') : term('requestSlackReview');
-      status.classList.toggle('is-error', Boolean(state?.error));
-      status.setAttribute('role', state?.error ? 'alert' : 'status');
+      const pending = state?.pending || !state && saved?.status === 'pending';
+      const sent = state?.result || !state && saved?.status === 'sent';
+      const canRepeat = canRequestSlackAgain(state, saved);
+      const uncertain = !state && saved?.status === 'uncertain';
+      const error = state?.error ?? (uncertain ? 'Delivery unconfirmed. Check Slack before requesting again.'
+        : !state && saved?.status === 'failed' ? 'The last Slack request failed. You can retry.' : undefined);
+      button.disabled = disabled || Boolean(control.dataset.unavailable || pending || sent && !canRepeat || uncertain);
+      button.title = disabled ? 'Enable Slack integration in Config to request a review.' : control.dataset.unavailable ?? '';
+      button.textContent = pending ? 'Sending…' : canRepeat ? term('requestSlackReviewAgain') : sent ? term('reviewRequested') : term('requestSlackReview');
+      status.classList.toggle('is-error', Boolean(error));
+      status.setAttribute('role', error ? 'alert' : 'status');
       status.replaceChildren();
-      if (state?.error) status.textContent = state.error;
-      else if (state?.result) {
-        status.textContent = `Sent to #${state.result.channel.replace(/^#/, '')}. `;
-        if (state.result.permalink) {
-          const link = document.createElement('a');
-          link.href = state.result.permalink;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          link.textContent = 'View message ↗';
-          status.append(link);
-        }
+      if (error) status.textContent = error;
+      else if (state?.result) status.textContent = `Sent to #${state.result.channel.replace(/^#/, '')}. `;
+      else if (pending) status.textContent = 'A request is already in progress. ';
+      else if (sent) status.textContent = 'Review requested in Slack. ';
+      else if (this.slackReviewHistoryUnavailable) status.textContent = 'Request history unavailable. ';
+      const sentAt = state?.result?.sentAt ?? saved?.lastSentAt;
+      if (sentAt && Number.isFinite(Date.parse(sentAt))) {
+        const time = document.createElement('time');
+        time.dateTime = sentAt;
+        time.title = new Date(sentAt).toLocaleString();
+        time.textContent = `Last requested ${formatRelativeTime(sentAt, new Date())}. `;
+        status.append(' ', time);
+      } else if (sent) status.append('Request time unavailable. ');
+      const permalink = state?.result?.permalink ?? saved?.permalink;
+      if (permalink) {
+        const link = document.createElement('a');
+        link.href = permalink;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'View message ↗';
+        status.append(link);
       }
     }
   }
@@ -1273,16 +1332,19 @@ export class DashboardView {
     const repo = button.dataset.repo;
     const number = Number(button.dataset.number);
     if (!repo || !Number.isSafeInteger(number) || number < 1) return;
-    const key = `${repo}#${number}`;
+    const key = `${repo.toLowerCase()}#${number}`;
     const previous = this.slackReviewRequests.get(key);
-    if (previous?.pending || previous?.result) return;
-    const state = { requestId: previous?.requestId || crypto.randomUUID(), pending: true } as {
-      requestId: string; pending: boolean; error?: string; result?: SlackReviewResult;
-    };
+    const saved = this.slackReviewHistory.get(key);
+    const canRepeat = canRequestSlackAgain(previous, saved);
+    if (previous?.pending || previous?.result && !canRepeat) return;
+    if (!previous && saved && saved.status !== 'failed' && !canRepeat) return;
+    const state: SlackReviewUiState = { requestId: !canRepeat && previous?.requestId || crypto.randomUUID(), requestedAt: new Date().toISOString(), pending: true };
     this.slackReviewRequests.set(key, state);
     this.paintSlackReviewRequests();
     try {
       state.result = await requestSlackReview(repo, number, state.requestId);
+      this.slackReviewHistory.set(key, { requestId: state.requestId, repo, prNumber: number, status: 'sent',
+        lastRequestedAt: state.requestedAt, lastSentAt: state.result.sentAt ?? null, permalink: state.result.permalink, error: null });
     } catch (error: unknown) {
       state.error = error instanceof Error ? error.message : 'Slack request failed. Check the channel before retrying.';
       if (error instanceof SlackReviewRequestError && !error.uncertain) state.requestId = '';
@@ -2476,6 +2538,11 @@ export class DashboardView {
     }
 
     if (target.closest('a')) return;
+    const underwayRow = target.closest<HTMLElement>('.underway-row[data-underway-href]');
+    if (underwayRow && !target.closest('button, input, select, textarea, label')) {
+      this.openUnderwayRow(underwayRow);
+      return;
+    }
     const runRow: HTMLElement | null = target.closest<HTMLElement>('.agent-row, .recent-run');
     if (runRow) this.handleRunRowClick(runRow);
   }
@@ -2592,6 +2659,11 @@ export class DashboardView {
       this.root.querySelector<HTMLElement>('.pr-lookup-panel')?.scrollIntoView?.({ block: 'start' });
       this.root.querySelector<HTMLInputElement>('.pr-lookup-input')?.focus({ preventScroll: true });
     });
+  }
+
+  private openUnderwayRow(row: HTMLElement): void {
+    const href = row.dataset.underwayHref;
+    if (href) void this.navigate(parseRoute(new URL(href, window.location.origin)));
   }
 
   private async handleStopClick(btn: HTMLButtonElement): Promise<void> {

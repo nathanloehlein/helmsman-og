@@ -60,7 +60,7 @@ describe('recent PR voyages local refresh', () => {
     runs[0]!.reviewOutcome = 'APPROVE';
     runs.push({ ...runs[0]!, id: 'review-b', startedAt: '2026-09-17T20:30:00Z', reviewOutcome: 'COMMENT' });
     await vi.advanceTimersByTimeAsync(LOCAL_POLL_MS);
-    expect(requests.slice(initialCalls).sort()).toEqual(['/api/agents', '/api/context', '/api/slack']);
+    expect(requests.slice(initialCalls).sort()).toEqual(['/api/agents', '/api/context', '/api/slack', '/api/slack/review-requests']);
     expect(requests.filter(path => path === '/api/agents')).toHaveLength(initialAgentsCalls + 1);
     expect(root.querySelectorAll('.pr-recent-runs .recent-run')).toHaveLength(2);
     expect(root.querySelector('.pr-recent-runs [data-runid="review-a"] .voyage-result')?.getAttribute('aria-label')).toBe('Inspection recommendation: Approve');

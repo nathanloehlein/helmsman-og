@@ -7,6 +7,7 @@ import type { PrInboxState, PrListState } from './data/prLists';
 import type { DashboardSnapshot } from './data/mock';
 import { formatRelativeTime } from './logic/time';
 import { sortByPriority } from './logic/queue';
+import { resolveUnderwayTarget, type UnderwayOptions } from './logic/underway';
 import { escapeHtml as esc } from './logic/html';
 import type { BugCard, BugsResponse, PrFileDiff, PrStatus, Priority, OpenPr, Ticket, TicketStatus } from './types';
 import type { TriageGroupsView } from './data/triage';
@@ -44,7 +45,9 @@ export const CONFIG_HELP: Record<string, string> = {
   SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
   SLACK_CHANNEL_ID: 'Exact Slack channel ID to watch. Only messages matching this channel are eligible for automatic review. Example: C0123456789',
   SLACK_CHANNEL_NAME: 'Channel name used in the Slack search query, without #. Example: pr-reviews',
-  SLACK_BROWSER_SURFACE: 'Optional cmux browser surface containing signed-in Slack. Set this when multiple Slack browser surfaces are open. Example: surface:17',
+  SLACK_BROWSER: 'Browser containing signed-in Slack: firefox or cmux. Example: firefox.',
+  SLACK_FIREFOX_WEBDRIVER_URL: 'Local Firefox bridge address. Example: http://127.0.0.1:4444',
+  SLACK_BROWSER_SURFACE: 'Optional tab reference containing signed-in Slack. Leave empty to discover the matching tab. Example: surface:17',
   SLACK_REVIEW_CHANNEL: 'Slack channel for manual PR review requests. Use a channel name or ID. Example: airo-editing',
   SLACK_REVIEW_MENTION: 'Slack user group handle to mention in manual PR review requests. Example: airo-editing-squad',
   AGENT_ADAPTER: "Which agent runs tasks: 'codex' (default), 'claude-code', or 'command' (runs your custom AGENT_CMD). Example: codex",
@@ -386,7 +389,9 @@ export function renderDashboard(
   const underway = Array.isArray(data.underway) ? data.underway.filter(ticket => ticket && ticket.status !== 'done') : [];
   const underwayKnown = data.underwayAvailable !== false && Array.isArray(data.underway);
   const underwayItems = underwayKnown && underway.length
-    ? sortByPriority(underway).map(ticket => triageStatusRow(ticket, jiraBaseUrl, jiraEnabled ? selectedRepo : null)).join('')
+    ? sortByPriority(underway).map(ticket => underwayRow(ticket, jiraBaseUrl, jiraEnabled, {
+      selectedRepo, runs: scopedRuns, prs: data.myOpenPrs, prsAvailable: !degraded.includes('github'),
+    })).join('')
     : `<li class="empty-note">${underwayKnown ? jiraEnabled ? 'No unfinished tickets assigned to you.' : 'No todos in progress or review.' : term('unavailableRunningTickets')}</li>`;
 
   const sortedRepos: string[] = [...repos].sort((a, b) => shortRepo(a).localeCompare(shortRepo(b)));
@@ -732,9 +737,9 @@ function validListPrs(state?: PrListState): OpenPr[] {
     : [];
 }
 
-function slackReviewButton(repo: string, number: number): string {
-  return `<span class="slack-review-control" data-slack-review-control data-repo="${esc(repo)}" data-number="${number}">
-    <button type="button" class="slack-review-request" data-slack-review-request data-repo="${esc(repo)}" data-number="${number}">${term('requestSlackReview')}</button>
+function slackReviewButton(repo: string, number: number, unavailable: string = ''): string {
+  return `<span class="slack-review-control" data-slack-review-control data-repo="${esc(repo)}" data-number="${number}"${unavailable ? ` data-unavailable="${esc(unavailable)}"` : ''}>
+    <button type="button" class="slack-review-request" data-slack-review-request data-repo="${esc(repo)}" data-number="${number}"${unavailable ? ` disabled title="${esc(unavailable)}"` : ''}>${term('requestSlackReview')}</button>
     <span class="slack-review-result" role="status"></span>
   </span>`;
 }
@@ -946,6 +951,33 @@ function triageStatusRow(ticket: Ticket, jiraBaseUrl: string | null, launchRepo:
         <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
         ${triageLaunchAction(ticket, launchRepo)}
       </li>`;
+}
+
+function underwayRow(ticket: Ticket, jiraBaseUrl: string | null, jiraEnabled: boolean, options: UnderwayOptions): string {
+  const { run, prs } = resolveUnderwayTarget(ticket, options);
+  const inspection = ticket.status === 'in-review';
+  const pr = prs.length === 1 ? prs[0] : undefined;
+  const reviewHref = (target?: { repo: string; number: number }) => routeHref({ view: 'prs', repo: options.selectedRepo,
+    prRepo: target?.repo ?? null, pr: target?.number ?? null, pane: target ? 'lookup' : 'authored' });
+  const href = inspection ? reviewHref(pr) : run
+    ? routeHref({ view: 'runs', repo: options.selectedRepo, pane: 'tasks', run: run.id })
+    : routeHref({ view: jiraEnabled ? 'runs' : 'todos', repo: options.selectedRepo, pane: jiraEnabled ? 'newrun' : 'list', ticket: ticket.id });
+  const action = inspection
+    ? `<span class="underway-actions">${prs.length ? prs.map(target => `<span class="underway-pr-action">
+        <a class="app-link mono" href="${esc(reviewHref(target))}">${esc(options.selectedRepo ? '' : `${target.repo} `)}#${target.number}</a>
+        ${slackReviewButton(target.repo, target.number, target.canRequest ? '' : 'An open, non-draft pull request authored by you must be available before requesting a review.')}
+      </span>`).join('') : `<button type="button" class="slack-review-request" disabled title="Find the associated open pull request first.">${term('requestSlackReview')}</button>
+        <a class="app-link" href="${esc(reviewHref())}">Find associated ${term('pr').toLowerCase()}</a>`}</span>`
+    : run ? `<a class="app-link underway-open" href="${esc(href)}">Open ${term('run').toLowerCase()}</a>`
+    : jiraEnabled ? triageLaunchAction(ticket, options.selectedRepo) : '';
+  return `<li class="lane triage-row underway-row" role="link" tabindex="0" data-underway-href="${esc(href)}"
+      aria-label="Open ${inspection ? term('review').toLowerCase() : term('run').toLowerCase()} for ${esc(ticket.id)}">
+      <span class="ticket-id">${ticketLabel(ticket.id, jiraBaseUrl)}</span>
+      <span class="queue-title">${esc(ticket.title)}</span>
+      <span class="chip ${STATUS_CHIP_CLASS[ticket.status]}">${STATUS_LABEL[ticket.status]}</span>
+      <span class="pri-chip ${PRIORITY_CLASS[ticket.priority]}">${ticket.priority}</span>
+      ${action}
+    </li>`;
 }
 
 function triageGroup(
@@ -1257,14 +1289,22 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
               </select>
               <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
-          ${[['SLACK_CLIENT_ID', 'Slack client ID', ''], ['SLACK_CHANNEL_ID', 'Watched channel ID', ''], ['SLACK_CHANNEL_NAME', 'Watched channel name', ''], ['SLACK_BROWSER_SURFACE', 'Browser surface (optional)', ''], ['SLACK_REVIEW_CHANNEL', 'Review request channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
+          <div class="config-row" data-key="SLACK_BROWSER">
+            <label class="config-key" for="config-SLACK_BROWSER">Slack browser</label>
+            <select id="config-SLACK_BROWSER" class="config-input" aria-describedby="slack-review-setup error-SLACK_BROWSER">
+              <option value="firefox"${uiConfig.config?.SLACK_BROWSER === 'firefox' ? ' selected' : ''}>Firefox</option>
+              <option value="cmux"${uiConfig.config?.SLACK_BROWSER !== 'firefox' ? ' selected' : ''}>cmux embedded browser</option>
+            </select>
+            <button type="button" class="config-save" data-key="SLACK_BROWSER" aria-label="Save Slack browser">Save</button><span class="config-error" id="error-SLACK_BROWSER" role="alert"></span>
+          </div>
+          ${[['SLACK_FIREFOX_WEBDRIVER_URL', 'Firefox bridge address', 'http://127.0.0.1:4444'], ['SLACK_CLIENT_ID', 'Slack client ID', ''], ['SLACK_CHANNEL_ID', 'Watched channel ID', ''], ['SLACK_CHANNEL_NAME', 'Watched channel name', ''], ['SLACK_BROWSER_SURFACE', 'Browser tab reference (optional)', ''], ['SLACK_REVIEW_CHANNEL', 'Review request channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
               <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup error-${key}">
               <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
         </div>
-        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved.</p>
+        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved. Firefox uses your regular signed-in browser with Marionette enabled and the local bridge running (<code>npm run slack:firefox</code>). The browser used to view Helmsman can be different.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">

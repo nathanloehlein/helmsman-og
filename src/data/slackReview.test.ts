@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestSlackReview, SlackReviewRequestError } from './slackReview';
+import { fetchSlackReviewRequests, requestSlackReview, SlackReviewRequestError } from './slackReview';
 
 const requestId = 'cf94674b-727a-4aa8-99ae-70cbccfa6dd8';
 const permalink = 'https://godaddy.slack.com/archives/C123/p1789730000000000';
@@ -8,6 +8,39 @@ const json = (data: unknown, status = 200): Response => new Response(JSON.string
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Slack review request client', () => {
+  const state = { requestId, repo: 'org/repo', prNumber: 42, status: 'sent', lastRequestedAt: '2026-09-21T12:00:00Z',
+    lastSentAt: '2026-09-21T12:00:01Z', permalink, error: null };
+
+  it('loads persisted request state for the selected galleon without sending', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ requests: [state] }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await fetchSlackReviewRequests('org/repo')).toEqual([state]);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/slack/review-requests?repo=org%2Frepo', { signal: expect.any(AbortSignal) });
+  });
+
+  it.each([null, {}, { requests: [null] }, { requests: [{ ...state, repo: 'other/repo' }] },
+    { requests: [{ ...state, lastSentAt: 'invalid' }] }, { requests: [{ ...state, status: 'delivered' }] }])('rejects invalid or out-of-scope history %#', async payload => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(payload)));
+    expect(await fetchSlackReviewRequests('org/repo')).toBeNull();
+  });
+
+  it('keeps legacy unknown timestamps and unresolved delivery state without unsafe links', async () => {
+    const value = { ...state, status: 'uncertain', lastSentAt: null, permalink: 'javascript:alert(1)' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ requests: [value] })));
+    expect(await fetchSlackReviewRequests()).toEqual([{ ...value, permalink: null }]);
+  });
+
+  it('distinguishes unavailable history from an empty journal', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    expect(await fetchSlackReviewRequests()).toBeNull();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ requests: [] })));
+    expect(await fetchSlackReviewRequests()).toEqual([]);
+  });
+
+  it('returns the confirmed send timestamp for immediate rendering', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...result, sentAt: state.lastSentAt })));
+    expect(await requestSlackReview('org/repo', 42, requestId)).toMatchObject({ sentAt: state.lastSentAt });
+  });
   it('sends only the selected PR and stable idempotency key to the server', async () => {
     const fetch = vi.fn().mockResolvedValue(json(result));
     vi.stubGlobal('fetch', fetch);

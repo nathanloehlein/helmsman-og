@@ -2,11 +2,35 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { openDb, type Db } from './db';
 import { loadConfig } from '../config';
 import { ConfigStore, EDITABLE_KEYS, publicConfig } from './config-store';
+import { slackSettings } from './slack/config';
 
 let db: Db;
 afterEach(() => db?.close());
 
 describe('ConfigStore', () => {
+  it('persists browser choice and a validated local Firefox endpoint', () => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({}, db);
+    store.setOverride('SLACK_BROWSER', 'firefox', () => 'now');
+    store.setOverride('SLACK_FIREFOX_WEBDRIVER_URL', 'http://localhost:5555/', () => 'now');
+    expect(slackSettings(new ConfigStore({}, db).effectiveEnv())).toMatchObject({ browser: 'firefox', firefoxWebDriverUrl: 'http://localhost:5555' });
+    store.setOverride('SLACK_BROWSER', 'cmux', () => 'now');
+    expect(slackSettings(store.effectiveEnv()).browser).toBe('cmux');
+  });
+
+  it.each([
+    ['SLACK_BROWSER', 'chrome'], ['SLACK_BROWSER', ''],
+    ['SLACK_FIREFOX_WEBDRIVER_URL', 'http://remote.example:4444'],
+    ['SLACK_FIREFOX_WEBDRIVER_URL', 'http://secret@localhost:4444'],
+    ['SLACK_FIREFOX_WEBDRIVER_URL', 'http://localhost:4444/path'],
+    ['SLACK_FIREFOX_WEBDRIVER_URL', 'https://localhost:4444'],
+  ])('rejects invalid browser settings %s=%s before saving', (key, value) => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({}, db);
+    expect(() => store.setOverride(key, value, () => 'now')).toThrow();
+    expect(store.overrides()).toEqual({});
+  });
+
   it('exposes effective pre-PR defaults and updates overrides immediately', () => {
     db = openDb(':memory:');
     const store = new ConfigStore({}, db);

@@ -91,6 +91,7 @@ export const TERMINOLOGY = {
   prLookupHint: { plain: 'Enter a PR above to review it.', pirate: 'Enter a bounty above to inspect it.' },
   prPlaceholder: { plain: 'Paste a PR URL or owner/name#number', pirate: 'Paste a bounty URL or owner/name#number' },
   requestSlackReview: { plain: 'Request review in Slack', pirate: 'Request inspection in Slack' },
+  requestSlackReviewAgain: { plain: 'Request again in Slack', pirate: 'Request again in Slack' },
   crewUnavailable: { plain: 'Agent actions unavailable: this repository is not checked out locally.', pirate: 'Deckhand actions unavailable: this galleon is not checked out locally.' },
   operatorNote: { plain: 'Read/write scoped to this branch only. Merge requires human approval — the agent never merges to main, and there is no merge control here.', pirate: 'Read/write scoped to this branch only. Merge requires human approval — the deckhand never merges to main, and there is no merge control here.' },
 } as const;

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "helmsman": "tsx server/helmsman/main.ts",
     "serve": "tsx server/helmsman/main.ts",
+    "slack:firefox": "node scripts/slack-firefox.mjs",
     "cmux:costs": "node scripts/cmux-codex-cost.mjs",
     "cmux:costs:install": "node scripts/install-cmux-codex-cost.mjs",
     "cmux:costs:uninstall": "node scripts/install-cmux-codex-cost.mjs --uninstall"
