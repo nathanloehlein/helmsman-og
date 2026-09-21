@@ -312,7 +312,6 @@ export function renderAppShell(opts: HelmHeadOpts, content: string): string {
     ${renderHelmHead(opts)}
     <main class="page-content" id="page-content" role="tabpanel" aria-labelledby="page-tab-${opts.active}" tabindex="0">${content}</main>
     <footer class="app-footer mono">
-      <div class="operator-note">${ICON_LOCK}<span>${term('operatorNote')}</span></div>
       <div class="footer-meta">
         <span class="footer-attr">nloehlein@godaddy.com</span>
         <span class="footer-dot" aria-hidden="true">&bull;</span><span>Helmsman v${esc(__APP_VERSION__)}</span>
@@ -1219,10 +1218,11 @@ function configCustomizationPanel(themeId: string): string {
 
 export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): string {
   const customization = configCustomizationPanel(opts.themeId);
+  const operatorNote = `<div class="operator-note mono">${ICON_LOCK}<span>${term('operatorNote')}</span></div>`;
   const intro = `<header class="page-intro"><h1>Config</h1><p>Configure work sources, integrations, and ${term('agent').toLowerCase()} defaults. Save each setting separately.</p></header>`;
   const status = `${opts.error ? `<div class="config-load-error degraded-banner" role="alert">${esc(opts.error)}${opts.unavailable ? '' : ' Showing the last loaded settings.'} <button type="button" data-config-retry${opts.loading ? ' disabled' : ''}>Try again</button></div>` : ''}${opts.loading ? '<p class="empty-note" role="status">Loading configuration…</p>' : ''}`;
   if (opts.unavailable) {
-    return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `${intro}<section class="panel config-loading" aria-label="Configuration" aria-busy="${Boolean(opts.loading)}">${status || '<p class="empty-note">Configuration is unavailable. <button type="button" data-config-retry>Try again</button></p>'}</section>${customization}`);
+    return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `${intro}<section class="panel config-loading" aria-label="Configuration" aria-busy="${Boolean(opts.loading)}">${status || '<p class="empty-note">Configuration is unavailable. <button type="button" data-config-retry>Try again</button></p>'}</section>${customization}${operatorNote}`);
   }
   const jiraEnabled = uiConfig.config?.JIRA_ENABLED !== 'false' && uiConfig.config?.JIRA_ENABLED !== false;
   return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
@@ -1276,6 +1276,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
         </div>
       </section>
       ${prePrConfigPanel(uiConfig)}
+      ${operatorNote}
 `);
 }
 

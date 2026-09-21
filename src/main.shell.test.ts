@@ -63,7 +63,7 @@ afterEach(() => {
 describe('persistent app shell', () => {
   it('keeps the same header, tabs, counts, footer, and notification controls across all seven views', async () => {
     const { root, switchTo } = await setup();
-    const selectors = ['.helm-head', '.nameplate', '.repo-select', '.helm-readout', '.page-tabs', '.app-footer', '.operator-note', '[data-slack-toggle]', '.slack-popover', '#page-content'];
+    const selectors = ['.helm-head', '.nameplate', '.repo-select', '.helm-readout', '.page-tabs', '.app-footer', '[data-slack-toggle]', '.slack-popover', '#page-content'];
     const elements = selectors.map(selector => root.querySelector(selector));
     const counts = root.querySelector('.helm-readout')?.textContent;
     const footer = root.querySelector('.app-footer')?.textContent;
@@ -77,6 +77,8 @@ describe('persistent app shell', () => {
       expect(root.querySelector('.app-footer')?.textContent).toBe(footer);
       expect(root.querySelector('#page-content .app-footer')).toBeNull();
       expect(root.querySelector('#page-content .helm-head')).toBeNull();
+      expect(root.querySelectorAll('.operator-note')).toHaveLength(page === 'config' ? 1 : 0);
+      if (page === 'config') expect(root.querySelector('#page-content')?.lastElementChild?.classList.contains('operator-note')).toBe(true);
     }
   });
 

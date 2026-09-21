@@ -749,7 +749,6 @@ select { text-transform: none; }
   color: var(--text-faint);
 }
 .footer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
-.app-footer .operator-note { grid-column: 1 / -1; padding: 0; border: 0; background: none; }
 .app-footer .footer-attr { color: var(--text-dim); }
 .app-footer .footer-dot { color: var(--line-strong, var(--line)); }
 .pirate-mode-toggle { display: inline-flex; align-items: center; justify-content: center; align-self: end; width: 44px; height: 44px; padding: 4px; border: 1px solid transparent; border-radius: var(--radius); color: var(--text); background: transparent; opacity: 1; cursor: pointer; }
