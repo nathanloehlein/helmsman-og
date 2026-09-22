@@ -286,6 +286,13 @@ export function openSlackOAuth(options: {
 
   return {
     status, begin, complete, accessToken,
+    isConnected() {
+      if (closed) return false;
+      const current = context();
+      const token = readToken();
+      return configured(current.settings) && !lastError && Boolean(token)
+        && (token?.expiresAt === null || (token?.expiresAt ?? 0) > now());
+    },
     disconnect() { context(); clear(); },
     close() {
       if (closed) return;

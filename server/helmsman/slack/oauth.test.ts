@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openSlackOAuth, SLACK_USER_SCOPES, validateSlackOAuthRedirectUri, type SlackOAuthSettings } from './oauth';
+import { openSlackStore } from './store';
+import { createSlackWatcher } from './watcher';
 
 const clients: ReturnType<typeof openSlackOAuth>[] = [];
 const directories: string[] = [];
@@ -48,6 +50,54 @@ function deferred() {
 }
 
 describe('Slack user OAuth', () => {
+  it('keeps queued reviews paused across watcher reconstruction after disconnect until reconnect', async () => {
+    const { client, connect } = fixture();
+    const store = openSlackStore(':memory:');
+    let capacity = false;
+    const launch = vi.fn(({ runId }: { runId: string }) => runId);
+    const scan = vi.fn(async () => ({ complete: true, messages: [{
+      channelId: 'C123', ts: '1789646401.000000', permalink: '', author: 'U456',
+      prUrls: ['https://github.com/org/repo/pull/42'],
+    }] }));
+    const watcher = () => createSlackWatcher({
+      store, clientId: 'T123', channelId: 'C123', channelName: 'reviews', source: { scan },
+      allowedRepos: () => ['org/repo'], canLaunch: () => client.isConnected() && capacity,
+      isOwnPr: async () => false, getRun: () => null, isRunActive: () => false, launch,
+      now: () => '2026-09-17T12:00:00.000Z',
+    });
+    try {
+      await connect();
+      await watcher().poll();
+      expect(store.listNotifications()[0]?.status).toBe('queued');
+      client.disconnect();
+      capacity = true;
+      scan.mockRejectedValueOnce(new Error('Disconnected'));
+      await watcher().poll();
+      expect(launch).not.toHaveBeenCalled();
+      expect(store.listNotifications()[0]?.status).toBe('queued');
+      await connect();
+      await watcher().poll();
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(store.listNotifications()[0]?.status).toBe('launched');
+    } finally { store.close(); }
+  });
+
+  it('checks local authorization without refreshing and invalidates expired tokens and changed credentials', async () => {
+    const { client, connect, setTime, setSettings, fetcher } = fixture();
+    expect(client.isConnected()).toBe(false);
+    await connect(grant({ authed_user: user({ expires_in: 120, refresh_token: 'private-refresh' }) }));
+    expect(client.isConnected()).toBe(true);
+    setTime(220_000);
+    expect(client.isConnected()).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await connect();
+    expect(client.isConnected()).toBe(true);
+    setSettings({ ...defaults, clientSecret: 'changed-secret' });
+    expect(client.isConnected()).toBe(false);
+    client.close();
+    expect(client.isConnected()).toBe(false);
+  });
+
   it('requires the registered HTTPS callback with no embedded credentials or extra parameters', () => {
     expect(validateSlackOAuthRedirectUri(defaults.redirectUri)).toBe(defaults.redirectUri);
     for (const url of [

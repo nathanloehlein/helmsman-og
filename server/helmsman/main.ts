@@ -626,6 +626,7 @@ function configuredSlackWatcher(): SlackWatcher | null {
       return [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
     },
     canLaunch: (repo) => slackWatcherKey() === key
+      && (settings.transport !== 'mcp' || slackOAuth.isConnected())
       && Boolean(configStore.current().github) && pm.canStart(repo).ok,
     isOwnPr: async (repo, prNumber) => {
       const github = configStore.current().github;
