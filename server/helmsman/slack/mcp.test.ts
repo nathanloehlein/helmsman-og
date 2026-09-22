@@ -63,7 +63,7 @@ describe('Slack MCP transport', () => {
   it('resolves an alternate channel by its exact name', async () => {
     const { client, calls } = fixture({ channel: { ...channel, name: 'other', id: 'COTHER' }, tool: () => ({ channel: 'COTHER', ts: '1700000000.000001' }) });
     await expect(client.send({ ...input, channel: 'other' })).resolves.toMatchObject({ channel: 'other' });
-    expect(calls[0]).toEqual({ name: 'get_channel_info_by_name', args: { team_id: 'T123', channel_name: 'other' } });
+    expect(calls[0]).toEqual({ name: 'get_channel_info_by_name', args: { team_id: 'T123', channel_name: 'other', types: 'public_channel' } });
   });
 
   it('requires an actual configured user-group ID before any network request', async () => {

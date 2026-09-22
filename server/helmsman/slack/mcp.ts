@@ -143,7 +143,7 @@ export function createSlackMcp(options: SlackMcpOptions) {
     }
     async function channel(target: string) {
       const id = [config.channelId, config.channelName].includes(target) ? config.channelId : CHANNEL_ID.test(target) ? target : null;
-      const data = await call(id ? 'get_channel_info' : 'get_channel_info_by_name', id ? { channel_id: id } : { channel_name: target });
+      const data = await call(id ? 'get_channel_info' : 'get_channel_info_by_name', id ? { channel_id: id } : { channel_name: target, types: 'public_channel' });
       if (typeof data.id !== 'string' || !CHANNEL_ID.test(data.id) || typeof data.name !== 'string' || !NAME.test(data.name)
         || (id ? data.id !== id : data.name !== target)
         || (data.id === config.channelId && data.name !== config.channelName)

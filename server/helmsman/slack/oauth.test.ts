@@ -122,7 +122,7 @@ describe('Slack user OAuth', () => {
     const first = client.begin();
     const url = new URL(first.authorizationUrl);
     expect(url.origin + url.pathname).toBe('https://slack.com/oauth/v2/authorize');
-    expect(url.searchParams.get('user_scope')?.split(',')).toEqual(SLACK_USER_SCOPES);
+    expect(url.searchParams.get('user_scope')?.split(',')).toEqual(['channels:read', 'chat:write', 'search:read']);
     expect(url.searchParams.get('scope')).toBeNull();
     expect(url.searchParams.get('team')).toBe('T123');
     expect(url.searchParams.get('redirect_uri')).toBe(defaults.redirectUri);

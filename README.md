@@ -606,8 +606,12 @@ reuse credentials from OI.
 1. Register the app's exact HTTPS callback ending `/api/slack/oauth/callback`.
    Route that address to this Helmsman instance using your approved private HTTPS
    proxy. The local HTTP listener alone is insufficient for Slack's HTTPS callback.
-2. Grant these **user** scopes: `channels:read`, `channels:history`, `groups:read`,
-   `groups:history`, `chat:write`, `search:read`, `users:read`, and `users:read.email`.
+2. Grant only these **user** scopes: `channels:read` for public-channel metadata,
+   `chat:write` for explicit review requests, and `search:read` for discovering PR
+   links. No bot scopes, message-history scopes, or user-profile/email scopes are
+   requested. Slack's search permission covers content accessible to the user;
+   Helmsman restricts its searches to the configured channel. Slack does not offer
+   a single-channel scope for the `search.messages` method used by this MCP.
 3. In **Config → Slack integration**, select **GoCaaS MCP**, save the OAuth app
    settings, workspace ID, and channel ID/name. Set the review group ID and matching
    handle for posting.

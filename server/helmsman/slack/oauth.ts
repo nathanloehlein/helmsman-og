@@ -4,8 +4,7 @@ import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 
 export const SLACK_USER_SCOPES = [
-  'channels:read', 'channels:history', 'groups:read', 'groups:history',
-  'chat:write', 'search:read', 'users:read', 'users:read.email',
+  'channels:read', 'chat:write', 'search:read',
 ] as const;
 
 export interface SlackOAuthSettings {
