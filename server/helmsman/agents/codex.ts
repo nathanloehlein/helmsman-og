@@ -3,6 +3,7 @@ import { buildPrompt } from './prompt';
 import { parsePrNumber } from './claude-stream';
 import { parseCodexStreamLine } from './codex-stream';
 import { codexSettings } from '../agent-attribution';
+import { routeAgentCommand } from '../gocaas';
 export { validCodexEffort } from '../agent-attribution';
 
 export function codexArgs(task: AgentTask): string[] {
@@ -21,7 +22,7 @@ export function codexArgs(task: AgentTask): string[] {
 export const codexAdapter: AgentAdapter = {
   id: 'codex',
   buildCommand(task: AgentTask): { cmd: string; args: string[] } {
-    return { cmd: 'codex', args: codexArgs(task) };
+    return routeAgentCommand(task, 'codex', { cmd: 'codex', args: codexArgs(task) });
   },
   parseLine(line: string): AgentEvent | null {
     if (!line) return null;

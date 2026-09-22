@@ -89,7 +89,9 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
     attribution,
     `- Explore, implement the change, run the tests, commit on a new branch.`,
     openPrStep,
-    `- Reviewer requests are handled by Helmsman, which requests only Copilot after the PR is created. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review. Do not duplicate the Copilot request or remove existing reviewers.`,
+    task.modelRouting === 'gocaas'
+      ? '- Reviewer requests are handled by Helmsman through GoCaaS. Do not request Copilot or any other external AI reviewer. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review, or remove existing reviewers.'
+      : `- Reviewer requests are handled by Helmsman, which requests only Copilot after the PR is created. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review. Do not duplicate the Copilot request or remove existing reviewers.`,
     `- Pushing the branch and opening the PR are required, not optional — do them without asking.`,
     `- Do NOT merge the PR. Stop only after the PR is open.`,
   ].join('\n');

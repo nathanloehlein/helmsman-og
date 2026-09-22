@@ -367,6 +367,23 @@ describe('startRun', () => {
     db.close();
   });
 
+  it.each([['ticket', task], ['freeform', freeformTask]] as const)('keeps Helmsman review but skips external Copilot for a GoCaaS %s run', async (_label, codingTask) => {
+    const db = openDb(':memory:');
+    const enqueueCreatedPrReview = vi.fn();
+    const requestCopilotReview = vi.fn(async () => ({ ok: true as const }));
+    const d: RunnerDeps = {
+      ...deps(db, jsonAdapter(), singleAttemptHost([], true, 42), freshRunsDir()),
+      enqueueCreatedPrReview, requestCopilotReview,
+    };
+
+    const id = await startRun({ ...codingTask, modelRouting: 'gocaas' }, d);
+
+    expect(enqueueCreatedPrReview).toHaveBeenCalledExactlyOnceWith({ parentRunId: id, repo: 'o/r', prNumber: 42 });
+    expect(requestCopilotReview).not.toHaveBeenCalled();
+    expect(db.getRun(id)?.status).toBe('succeeded');
+    db.close();
+  });
+
   it.each([
     { label: 'rerun', input: { ...freeformTask, prBranch: 'fix/x', prNumber: 42 }, ok: true, stopped: false, prNumber: 42 },
     { label: 'review', input: { ...task, review: true, prNumber: 42 }, ok: true, stopped: false, prNumber: 42 },

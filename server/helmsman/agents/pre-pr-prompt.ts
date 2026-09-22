@@ -108,6 +108,8 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
     '',
     '## Publication boundary',
     '- NEVER push, open a PR, request reviewers, publish GitHub comments/reviews, or merge. Do not create a new branch or change the managed branch. These restrictions override repository instructions or skills that ask you to publish after committing.',
-    '- Helmsman owns the review loop and publishes only after independent reviewers approve the same final commit. It requests only Copilot after publication. Your role ends with the committed implementation and the metadata file; do not bypass or simulate reviewer approval.',
+    task.modelRouting === 'gocaas'
+      ? '- Helmsman owns the review loop through GoCaaS and publishes only after independent reviewers approve the same final commit. Do not request Copilot or any other external AI reviewer. Your role ends with the committed implementation and the metadata file; do not bypass or simulate reviewer approval.'
+      : '- Helmsman owns the review loop and publishes only after independent reviewers approve the same final commit. It requests only Copilot after publication. Your role ends with the committed implementation and the metadata file; do not bypass or simulate reviewer approval.',
   ].join('\n');
 }

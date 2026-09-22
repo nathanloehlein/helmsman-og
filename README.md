@@ -477,6 +477,21 @@ of whether its process exited successfully. See the
 
 ### Frozen workflows and execution hosts
 
+GoDaddy users must set `HELMSMAN_ORGANIZATION=godaddy` and authenticate GoCode on
+the host. A local `.gocode` installation, GoDaddy Jira email/site, or a
+`-godaddy` GitHub author also enables mandatory GoCaaS routing. These signals
+cannot be disabled by selecting a different organization value. The policy is
+saved with each run and retained through retries and continuation.
+
+All Helmsman authors and reviewers, including delegated reviewers, use GoCaaS
+in this mode. Local Codex/Claude launches pin the endpoint and GoCode credential
+helper; Docker stages use the scoped host gateway, which obtains GoCode credentials
+without exposing them to containers. Missing GoCode authentication fails the run;
+there is no direct-provider fallback. Custom command agents and automatic GitHub
+Copilot review requests are disabled because their routing cannot be enforced.
+Helmsman's own reviewers remain enabled. Other users retain their configured
+local providers and direct-provider Docker credentials.
+
 Launch preparation freezes workflow settings, prompt sources, and required skill
 hashes, and provisions verified skill copies for the run. Retry and checkpoint
 continuation validate saved identities rather than silently adopting changed
@@ -661,6 +676,7 @@ without confirmation timestamps show that their send time is unknown.
 | `TERM_BRIDGE` | `wezterm` on Windows, `cmux` elsewhere | Terminal page backend, independent of the run host. Slack uses SLACK_BROWSER independently of this setting. | Restart |
 | `HELMSMAN_DOCKER_IMAGE` | Empty | Built runtime image required for Docker execution; resolved to an image pin for the run. See [Docker setup](docs/docker-run-host.md) for provider credentials and dependency provisioning. | Restart |
 | `HELMSMAN_GATEWAY_PORT` | `8790` | Capability-authenticated provider/GitHub gateway used by Docker stages. | Restart |
+| `HELMSMAN_ORGANIZATION` | Automatic detection | Set to `godaddy` for mandatory GoCaaS routing on every execution host. Requires authenticated GoCode; never falls back to direct providers. | Restart |
 | `HELMSMAN_DB` | `<server working directory>/.helmsman.sqlite` | SQLite file for runs, config overrides, watcher state, and notifications. Use a writable path and retain it across restarts. A Config-saved Jira token is stored here, so treat this file as sensitive. | Restart |
 | `HELMSMAN_PORT` | `8787` | Local API/static-server port, bound to `127.0.0.1`; the Vite API proxy uses the same value. | Restart server and Vite |
 

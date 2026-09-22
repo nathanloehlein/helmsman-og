@@ -238,7 +238,7 @@ async function finalizeRun(p: FinalizeParams): Promise<void> {
     await markInReview(deps.jira, task.ticketId, statusInReview, onEvent);
   }
 
-  if (createdPr && deps.requestCopilotReview) {
+  if (createdPr && task.modelRouting !== 'gocaas' && deps.requestCopilotReview) {
     try {
       const r: { ok: true } | { ok: false; error: string } = await deps.requestCopilotReview(task.repo, prNumber);
       if (r.ok) {

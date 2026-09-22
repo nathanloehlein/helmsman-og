@@ -17,6 +17,7 @@ export function commandAdapter(template: string): AgentAdapter {
   return {
     id: 'command',
     buildCommand(task: AgentTask): { cmd: string; args: string[] } {
+      if (task.modelRouting === 'gocaas') throw new Error('Custom command agents cannot enforce GoCaaS routing. Select Codex or Claude Code.');
       const argv: string[] = buildArgv(template, task);
       const [cmd, ...args]: string[] = argv;
       return { cmd: cmd ?? '', args };

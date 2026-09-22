@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentAdapter, AgentTask } from './agents/adapter';
 import { prepareDockerStage, sanitizeDockerGit } from './docker-stage';
+import { codexAdapter } from './agents/codex';
+import { claudeCodeAdapter } from './agents/claude-code';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -30,6 +32,29 @@ function runtime(args: string[]): string {
 }
 
 describe('Docker agent stages', () => {
+  it.each([codexAdapter, claudeCodeAdapter])('routes corporate $id stages through the scoped gateway without a host wrapper or credential', async adapter => {
+    const env = await fixture();
+    env.task.modelRouting = 'gocaas';
+    const stage = await prepareDockerStage(adapter, env.task, env.cwd, env.control);
+    try {
+      const args = stage.command.args;
+      expect(args[args.indexOf('--entrypoint') + 1]).toBe(adapter.id === 'codex' ? 'codex' : 'claude');
+      expect(args.join(' ')).not.toContain('gocaas-cli.ts');
+      expect(args.join(' ')).not.toContain('api.openai.com');
+      expect(args.join(' ')).not.toContain('api.anthropic.com');
+      expect(args.join(' ')).toContain('GoCaaS');
+      expect(args.join(' ')).not.toContain('It requests only Copilot after publication');
+      if (adapter.id === 'codex') {
+        expect(args).toContain('model_provider="helmsman"');
+        expect(args.some(arg => arg.includes('base_url="http://gateway:8080/openai/v1"'))).toBe(true);
+      } else {
+        const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? 'null');
+        expect(settings?.env?.ANTHROPIC_BASE_URL).toBe('http://gateway:8080/anthropic');
+      }
+      expect(env.control).toHaveBeenCalledWith(['network', 'create', '--internal', '--label', 'helmsman.runId=run-1', expect.any(String)]);
+    } finally { await stage.cleanup(false); }
+  });
+
   it('mounts only the clone, stage output and readonly skills and uses scoped provider credentials', async () => {
     const env = await fixture();
     env.task.skillsPath = join(env.root, 'skills');

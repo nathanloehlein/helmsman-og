@@ -86,7 +86,7 @@ export async function prepareDockerStage(adapter: AgentAdapter, task: AgentTask,
     await mkdir(join(runtime, 'home'), { mode: 0o700 });
     await mkdir(join(runtime, 'codex-home'), { mode: 0o700 });
     await writeFile(join(runtime, 'codex-home', 'config.toml'), `model_provider = "helmsman"\n[model_providers.helmsman]\nname = "Helmsman"\nbase_url = ${JSON.stringify(`${isolatedGateway}/openai/v1`)}\nenv_key = "HELMSMAN_CAPABILITY"\nwire_api = "responses"\nrequires_openai_auth = false\n`, { mode: 0o600 });
-    const mapped: AgentTask = { ...task, dockerExecution: undefined,
+    const mapped: AgentTask = { ...task,
       skillsPath: task.skillsPath ? '/skills' : undefined,
       reviewOutputPaths: task.review ? { markdown: '/runtime/review.md', comments: '/runtime/review-comments.json' } : undefined,
       prePr: task.prePr ? { ...task.prePr, reportPath: '/runtime/report.json',
@@ -111,6 +111,15 @@ export async function prepareDockerStage(adapter: AgentAdapter, task: AgentTask,
       relay = relay.then(syncClarification).catch(error => { relayError = error; void stop().catch(() => undefined); });
     }, 500);
     const child = adapter.buildCommand(mapped);
+    if (adapter.id === 'codex') {
+      child.args.unshift('-c', 'model_provider="helmsman"', '-c',
+        `model_providers.helmsman={name="Helmsman",base_url="${isolatedGateway}/openai/v1",env_key="HELMSMAN_CAPABILITY",wire_api="responses",requires_openai_auth=false}`);
+    } else if (adapter.id === 'claude-code') {
+      child.args.unshift('--settings', JSON.stringify({ apiKeyHelper: '', env: {
+        ANTHROPIC_BASE_URL: `${isolatedGateway}/anthropic`, ANTHROPIC_AUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN: '',
+        CLAUDE_CODE_USE_BEDROCK: '0', CLAUDE_CODE_USE_VERTEX: '0', CLAUDE_CODE_USE_FOUNDRY: '0',
+      } }));
+    }
     const mount = (source: string, target: string, readOnly = false) => {
       if (source.includes(',') || /[\r\n]/.test(source)) throw new Error('Unsupported Docker mount path');
       return `type=bind,src=${resolve(source)},dst=${target}${readOnly ? ',readonly' : ''}`;

@@ -9,6 +9,7 @@ export interface ScopedGatewayOptions {
   path?: string;
   openaiKey: string | (() => string | undefined);
   anthropicKey?: () => string | undefined;
+  modelUpstream?: (provider: 'codex' | 'claude-code', runId: string) => Promise<{ baseUrl: string; key: string }>;
   githubKey?: () => string | undefined;
   active(runId: string): boolean;
   scope?: (runId: string) => GatewayScope | null;
@@ -38,6 +39,15 @@ export function createScopedGateway(input: ScopedGatewayOptions) {
   const reply = (res: ServerResponse, status: number, value: unknown) => {
     res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value));
   };
+  async function modelUpstream(provider: 'codex' | 'claude-code', runId: string) {
+    try {
+      const upstream = input.modelUpstream ? await input.modelUpstream(provider, runId) : provider === 'codex'
+        ? { baseUrl: 'https://api.openai.com/v1', key: typeof input.openaiKey === 'function' ? input.openaiKey() : input.openaiKey }
+        : { baseUrl: 'https://api.anthropic.com', key: input.anthropicKey?.() };
+      if (!upstream?.baseUrl?.trim() || !upstream.key?.trim()) return null;
+      return { baseUrl: upstream.baseUrl.replace(/\/+$/, ''), key: upstream.key };
+    } catch { return null; }
+  }
   async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const abort = new AbortController();
     const deadline = setTimeout(() => abort.abort(), 300_000);
@@ -67,12 +77,16 @@ export function createScopedGateway(input: ScopedGatewayOptions) {
       let key: string | undefined;
       let headers: Record<string, string>;
       if (req.method === 'POST' && ['/openai/v1/responses', '/openai/v1/responses/compact'].includes(path)) {
-        key = typeof input.openaiKey === 'function' ? input.openaiKey() : input.openaiKey;
-        url = `https://api.openai.com${path.slice('/openai'.length)}`;
+        const upstream = await modelUpstream('codex', cap.runId);
+        if (!upstream) { reply(res, 503, { error: 'Model upstream configuration or authentication is unavailable' }); return; }
+        key = upstream.key;
+        url = `${upstream.baseUrl}${path.slice('/openai/v1'.length)}`;
         headers = { Authorization: `Bearer ${key}`, 'content-type': 'application/json' };
       } else if (req.method === 'POST' && ['/anthropic/v1/messages', '/anthropic/v1/messages?beta=true'].includes(path)) {
-        key = input.anthropicKey?.(); url = `https://api.anthropic.com/v1/messages${path.endsWith('?beta=true') ? '?beta=true' : ''}`;
-        headers = { 'x-api-key': key ?? '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
+        const upstream = await modelUpstream('claude-code', cap.runId);
+        if (!upstream) { reply(res, 503, { error: 'Model upstream configuration or authentication is unavailable' }); return; }
+        key = upstream.key; url = `${upstream.baseUrl}${path.slice('/anthropic'.length)}`;
+        headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
         const beta = req.headers['anthropic-beta'];
         if (beta !== undefined) {
           if (typeof beta !== 'string' || beta.length > 2048 || !/^[a-z0-9][a-z0-9-]{0,127}(?:,\s*[a-z0-9][a-z0-9-]{0,127})*$/.test(beta)) {

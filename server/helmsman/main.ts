@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join, normalize, sep } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildDashboardResponse } from '../dashboard-endpoint';
@@ -14,6 +14,7 @@ import { openDb } from './db';
 import { openOutcomeStore } from './outcomes';
 import { openRunTelemetry } from './run-telemetry';
 import { prepareExecution } from './prepare-run';
+import { GOCAAS_URL, goCaasKey, pinModelRouting, requiresGoCaas } from './gocaas';
 import { openWebhookIntake, parseWebhookRoutes, WebhookError } from './webhooks';
 import { openWorkflowStore } from './workflow-snapshots';
 import { openCampaignStore } from './campaigns';
@@ -97,6 +98,11 @@ const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-ru
 mkdirSync(RUNS_DIR, { recursive: true });
 const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
+let goCaasRequired = false;
+function requireGoCaas(): boolean {
+  goCaasRequired ||= requiresGoCaas(configStore.effectiveEnv(), existsSync(join(homedir(), '.gocode')));
+  return goCaasRequired;
+}
 const outcomeStore = openOutcomeStore(dbPath);
 const runTelemetry = openRunTelemetry(dbPath, outcomeStore);
 const workflows = openWorkflowStore(dbPath);
@@ -146,6 +152,16 @@ const gatewayPort = Number(process.env.HELMSMAN_GATEWAY_PORT ?? '8790');
 const gatewayUrl = `http://host.docker.internal:${gatewayPort}`;
 const gateway = createScopedGateway({ path: dbPath, openaiKey: () => process.env.OPENAI_API_KEY,
   anthropicKey: () => process.env.ANTHROPIC_API_KEY, githubKey: () => configStore.current().github?.token,
+  modelUpstream: async (provider, runId) => {
+    const row = db.getRun(runId);
+    const task: AgentTask | null = row?.taskJson ? JSON.parse(row.taskJson) : null;
+    if (requireGoCaas() || task?.modelRouting === 'gocaas') {
+      return { baseUrl: provider === 'codex' ? `${GOCAAS_URL}/v1` : GOCAAS_URL, key: await goCaasKey() };
+    }
+    return provider === 'codex'
+      ? { baseUrl: 'https://api.openai.com/v1', key: process.env.OPENAI_API_KEY ?? '' }
+      : { baseUrl: 'https://api.anthropic.com', key: process.env.ANTHROPIC_API_KEY ?? '' };
+  },
   active: runId => db.getRun(runId)?.status === 'running',
   scope: runId => {
     const run = db.getRun(runId);
@@ -235,6 +251,7 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
         : Promise.resolve({ ok: false as const, error: 'GitHub not configured' });
     },
     requestCopilotReview: (repo: string, prNumber: number) => {
+      if (requireGoCaas()) return Promise.resolve({ ok: false as const, error: 'Copilot reviews cannot route through GoCaaS; using Helmsman reviewers.' });
       const g: AppConfig['github'] = configStore.current().github;
       return g
         ? ghRequestCopilotReview(g, repo, prNumber)
@@ -317,6 +334,8 @@ async function resumeVoyage(runId: string): Promise<void> {
     const resumed = await resumeFailedPrePrRun(row, { db, host: host.kind === 'docker' && row.hostKind === 'detached' ? { ...host, kind: 'detached' } : host,
       runsDir: RUNS_DIR, now: () => new Date().toISOString(), isStopped: () => control.stopped,
       prepareTask: async task => {
+        task = pinModelRouting(task, requireGoCaas());
+        if (task.modelRouting === 'gocaas') await goCaasKey();
         const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task, provider: row.adapter === 'pre-pr:codex' ? 'codex' : 'claude-code', workflow: 'coding', reviewSettings: cfg.prePr, model: task.model, effort: task.effort });
         if (prepared.task.dockerExecution) {
           if (host.kind !== 'docker') throw new ResumeError('Select the Docker host before continuing an isolated voyage.');
@@ -374,6 +393,9 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
   const priorRun = body.retryOf ? db.getRun(body.retryOf) : null;
   const adapterId = priorRun?.adapter.replace(/^pre-pr:/, '') ?? body.adapter ?? cfg.agentAdapter;
   const priorTask = priorRun?.taskJson ? JSON.parse(priorRun.taskJson) as AgentTask | null : null;
+  if ((requireGoCaas() || priorTask?.modelRouting === 'gocaas') && adapterId === 'command') {
+    throw new Error('Custom command agents cannot enforce GoCaaS routing. Select Codex or Claude Code.');
+  }
   const capacity = pm.canStart(body.repo, launchResources(runId, body, priorTask));
   if (!capacity.ok) throw new RunConflictError(capacity.reason);
   if (priorTask && Boolean(priorTask.dockerExecution) !== (host.kind === 'docker')) throw new RetryError('Retry requires the original local or Docker execution mode.');
@@ -473,6 +495,8 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
           ? await jiraTask(cfg.jira, { ticketId, title: body.title, repo: body.repo })
           : { ticketId, title: body.title ?? ticketId, repo: body.repo, jiraBaseUrl: cfg.jira?.baseUrl ?? '', task: body.task };
       }
+      taskObj = pinModelRouting(taskObj, requireGoCaas());
+      if (taskObj.modelRouting === 'gocaas') await goCaasKey();
       pm.updateResources(runId, launchResources(runId, body, taskObj));
       taskObj.model ??= body.model;
       taskObj.effort ??= body.effort;
@@ -483,8 +507,10 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
       }
       if (host.kind === 'docker') {
         if (taskObj.prBranch && !taskObj.review) throw new Error('Docker branch reruns require host publication support; use the trusted local run host for this mode.');
-        if (adapter.id === 'codex' && !process.env.OPENAI_API_KEY || adapter.id === 'claude-code' && !process.env.ANTHROPIC_API_KEY) throw new Error('Configure the writer provider API key on the host before Docker execution.');
-        if (!taskObj.review && cfg.prePr.reviewerCount > 1 && (!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)) throw new Error('Docker dual review requires both provider API keys on the host.');
+        if (taskObj.modelRouting !== 'gocaas') {
+          if (adapter.id === 'codex' && !process.env.OPENAI_API_KEY || adapter.id === 'claude-code' && !process.env.ANTHROPIC_API_KEY) throw new Error('Configure the writer provider API key on the host before Docker execution.');
+          if (!taskObj.review && cfg.prePr.reviewerCount > 1 && (!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)) throw new Error('Docker dual review requires both provider API keys on the host.');
+        }
         const image = priorTask?.dockerExecution?.image ?? (await dockerRun(['docker', 'image', 'inspect', '--format', '{{.Id}}', process.env.HELMSMAN_DOCKER_IMAGE!])).stdout.trim();
         if (!/^sha256:[a-f\d]{64}$/.test(image)) throw new Error('Docker image identity could not be pinned');
         const capability = gateway.issue(runId, 86_400_000);

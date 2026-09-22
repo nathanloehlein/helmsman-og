@@ -28,6 +28,61 @@ afterEach(async () => {
 });
 
 describe('scoped gateway', () => {
+  it.each([
+    ['codex', '/openai/v1/responses', 'https://gocaas.example/openai/v1', '/responses'],
+    ['codex', '/openai/v1/responses/compact', 'https://gocaas.example/openai/v1/', '/responses/compact'],
+    ['claude-code', '/anthropic/v1/messages', 'https://gocaas.example/anthropic', '/v1/messages'],
+    ['claude-code', '/anthropic/v1/messages?beta=true', 'https://gocaas.example/anthropic/', '/v1/messages?beta=true'],
+  ] as const)('routes %s %s through the configured model upstream', async (provider, path, baseUrl, suffix) => {
+    const fetcher = vi.fn(async () => new Response('ok'));
+    const modelUpstream = vi.fn(async () => ({ baseUrl, key: 'gocaas-key' }));
+    const { gateway, base } = await open({ openaiKey: 'direct-openai', anthropicKey: () => 'direct-anthropic',
+      modelUpstream, active: () => true, fetcher: fetcher as typeof fetch });
+    const cap = gateway.issue('run_1', 60_000);
+    const response = await request(base, cap.token, path, { method: 'POST', body: '{"model":"test"}',
+      headers: { 'anthropic-beta': 'claude-code-20250219' } });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
+    expect(modelUpstream).toHaveBeenCalledExactlyOnceWith(provider, 'run_1');
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(`${baseUrl.replace(/\/+$/, '')}${suffix}`, expect.objectContaining({
+      method: 'POST', redirect: 'error', headers: provider === 'codex'
+        ? { Authorization: 'Bearer gocaas-key', 'content-type': 'application/json' }
+        : { 'x-api-key': 'gocaas-key', 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-beta': 'claude-code-20250219' },
+    }));
+  });
+
+  it.each(['throws', 'empty-key', 'empty-url'] as const)('never falls back to direct providers when model upstream %s', async failure => {
+    const fetcher = vi.fn();
+    const modelUpstream = vi.fn(async () => {
+      if (failure === 'throws') throw new Error('private authentication details');
+      return { baseUrl: failure === 'empty-url' ? '' : 'https://gocaas.example', key: failure === 'empty-key' ? ' ' : 'gocaas-key' };
+    });
+    const { gateway, base } = await open({ openaiKey: 'direct-openai', anthropicKey: () => 'direct-anthropic',
+      modelUpstream, active: () => true, fetcher: fetcher as typeof fetch });
+    const cap = gateway.issue('run_1', 60_000);
+    for (const path of ['/openai/v1/responses', '/openai/v1/responses/compact', '/anthropic/v1/messages', '/anthropic/v1/messages?beta=true']) {
+      const response = await request(base, cap.token, path, { method: 'POST' });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: 'Model upstream configuration or authentication is unavailable' });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('keeps scoped GitHub reads available independently of model upstream authentication', async () => {
+    const fetcher = vi.fn(async () => new Response('[]'));
+    const modelUpstream = vi.fn(async (): Promise<{ baseUrl: string; key: string }> => { throw new Error('unavailable'); });
+    const { gateway, base } = await open({ openaiKey: '', githubKey: () => 'github-key', modelUpstream,
+      active: () => true, scope: () => ({ repo: 'owner/repo', branch: 'work', readOnly: true }), fetcher: fetcher as typeof fetch });
+    const cap = gateway.issue('run_1', 60_000);
+    const response = await request(base, cap.token, '/github/repos/owner/repo/pulls/1');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect(modelUpstream).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith('https://api.github.com/repos/owner/repo/pulls/1', expect.objectContaining({
+      redirect: 'error', headers: { Authorization: 'Bearer github-key', Accept: 'application/vnd.github+json' },
+    }));
+  });
+
   it('accepts the pinned Claude CLI beta messages request with scoped credentials and validated beta headers', async () => {
     const fetcher = vi.fn(async (_url: string, _init: RequestInit) => new Response('{"type":"message"}', { headers: { 'content-type': 'application/json' } }));
     const { gateway, base } = await open({ openaiKey: 'openai-key', anthropicKey: () => 'host-anthropic-key', active: () => true, fetcher: fetcher as typeof fetch });
