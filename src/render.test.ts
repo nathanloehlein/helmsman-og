@@ -459,7 +459,7 @@ describe('renderDashboard', () => {
     el.innerHTML = renderConfigView(uiConfig, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
 
     const rows: NodeListOf<HTMLElement> = el.querySelectorAll<HTMLElement>('.config-panel:not(.pre-pr-config-panel) .config-row:not(.config-secret-row)');
-    expect(rows.length).toBe(13);
+    expect(rows.length).toBe(14);
     const adapterRow: HTMLElement | null = el.querySelector<HTMLElement>('.config-row[data-key="AGENT_ADAPTER"]');
     expect(adapterRow).not.toBeNull();
     expect(adapterRow!.querySelector<HTMLInputElement>('.config-input')?.value).toBe('claude-code');
@@ -1518,9 +1518,11 @@ describe('renderPrView + renderPrDiff', () => {
   });
 });
 
-it('groups every Slack setting in one panel with integration and watcher switches', () => {
-  const keys = EDITABLE_KEYS.filter(key => key.startsWith('SLACK_'));
-  const config = Object.fromEntries(keys.map(key => [key, key.endsWith('ENABLED') ? 'false' : 'configured']));
+it.each(['browser', 'mcp'])('groups applicable Slack settings in one panel for %s transport', transport => {
+  const mcpKeys = ['SLACK_MCP_TEAM_ID', 'SLACK_OAUTH_CLIENT_ID', 'SLACK_OAUTH_CLIENT_SECRET', 'SLACK_OAUTH_REDIRECT_URI', 'SLACK_REVIEW_GROUP_ID'];
+  const browserKeys = ['SLACK_BROWSER', 'SLACK_CLIENT_ID', 'SLACK_FIREFOX_WEBDRIVER_URL', 'SLACK_BROWSER_SURFACE'];
+  const keys = EDITABLE_KEYS.filter(key => key.startsWith('SLACK_') && !(transport === 'browser' ? mcpKeys : browserKeys).includes(key));
+  const config = { ...Object.fromEntries(keys.map(key => [key, key.endsWith('ENABLED') ? 'false' : 'configured'])), SLACK_TRANSPORT: transport };
   const root = document.createElement('div');
   root.innerHTML = renderConfigView({ config, overridden: [] }, { repos: [], selectedRepo: null, themeId: DEFAULT_THEME_ID });
   const panel = root.querySelector('.slack-review-config');

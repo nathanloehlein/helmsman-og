@@ -67,7 +67,10 @@ import { createSlackBrowserReader, runSlackBrowserCommand } from './slack/browse
 import { createFirefoxSlackBrowserTransport } from './slack/firefox-browser';
 import { createFirefoxBridgeControl } from './slack/firefox-bridge';
 import { createSlackBrowserReviewSender } from './slack/browser-review';
-import { createSlackBrowserTransportSelector, publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
+import { createSlackBrowserTransportSelector, publicSlackSettings, slackIntegrationEnabled, slackMcpTeamId, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
+import { openSlackOAuth } from './slack/oauth';
+import { createSlackMcp } from './slack/mcp';
+import { handleSlackConnection, trustedSlackOrigin } from './slack/oauth-http';
 import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings, SlackReviewError } from './slack/review-request';
 import type { SlackState } from '../../src/data/slack';
 import { createGithubReviewWatcher } from './github-review-watcher';
@@ -117,11 +120,25 @@ const firefoxBridge = createFirefoxBridgeControl(() => configStore.effectiveEnv(
   started: () => { slackBrowserTransport.reset(); slackSettingsKey = ''; },
 });
 const slackBrowserTransport = createSlackBrowserTransportSelector(createFirefoxSlackBrowserTransport, runSlackBrowserCommand);
+const slackOAuth = openSlackOAuth({ path: join(RUNS_DIR, '.slack-auth', 'oauth.sqlite'), settings: () => {
+  const env = configStore.effectiveEnv();
+  return { clientId: env.SLACK_OAUTH_CLIENT_ID?.trim() ?? '', clientSecret: env.SLACK_OAUTH_CLIENT_SECRET?.trim() ?? '',
+    redirectUri: env.SLACK_OAUTH_REDIRECT_URI?.trim() ?? '', teamId: slackMcpTeamId(env) };
+} });
+const slackMcp = createSlackMcp({ accessToken: () => slackOAuth.accessToken(),
+  teamId: () => slackMcpTeamId(configStore.effectiveEnv()),
+  channelId: () => configStore.effectiveEnv().SLACK_CHANNEL_ID?.trim() ?? '',
+  channelName: () => configStore.effectiveEnv().SLACK_CHANNEL_NAME?.trim() ?? '',
+  mentionGroupId: () => configStore.effectiveEnv().SLACK_REVIEW_GROUP_ID?.trim() ?? '',
+  connectionVersion: () => slackWatcherKey(),
+  canSend: () => slackSettings(configStore.effectiveEnv()).transport === 'mcp' && slackIntegrationEnabled(configStore.effectiveEnv()),
+});
 const slackReviewRequester = openSlackReviewRequester(dbPath, {
   settings: () => slackReviewSettings(configStore.effectiveEnv()),
   send: input => {
     const settings = slackSettings(configStore.effectiveEnv());
     if (settings.error) throw new SlackReviewError(settings.error, 400);
+    if (settings.transport === 'mcp') return slackMcp.send(input);
     return createSlackBrowserReviewSender(settings, slackBrowserTransport(settings)).send(input);
   },
   getPr: (repo, prNumber) => {
@@ -591,19 +608,24 @@ setInterval(() => void scheduler.tick(), startupCfg.autoClaimIntervalMs);
 let slackWatcher: SlackWatcher | null = null;
 let slackSettingsKey = '';
 let slackTick: Promise<void> | null = null;
+let slackConnectionGeneration = 0;
+
+function slackWatcherKey(): string {
+  return JSON.stringify([slackSettings(configStore.effectiveEnv()), slackConnectionGeneration]);
+}
 
 function configuredSlackWatcher(): SlackWatcher | null {
   const settings = slackSettings(configStore.effectiveEnv());
-  const key = JSON.stringify(settings);
+  const key = slackWatcherKey();
   if (key === slackSettingsKey) return slackWatcher;
   slackSettingsKey = key;
   slackWatcher = settings.enabled && !settings.error ? createSlackWatcher({
-    ...settings, store: slackStore, source: createSlackBrowserReader(settings, slackBrowserTransport(settings)),
+    ...settings, store: slackStore, source: settings.transport === 'mcp' ? slackMcp : createSlackBrowserReader(settings, slackBrowserTransport(settings)),
     allowedRepos: () => {
       const cfg = configStore.current();
       return [...Object.keys(cfg.repoProjectMap), ...(cfg.github?.repo ? [cfg.github.repo] : [])];
     },
-    canLaunch: (repo) => JSON.stringify(slackSettings(configStore.effectiveEnv())) === key
+    canLaunch: (repo) => slackWatcherKey() === key
       && Boolean(configStore.current().github) && pm.canStart(repo).ok,
     isOwnPr: async (repo, prNumber) => {
       const github = configStore.current().github;
@@ -728,6 +750,15 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   void (async () => {
     const url: URL = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+    if (await handleSlackConnection(req, res, url, { oauth: slackOAuth, check: () => slackMcp.check(),
+      connected: () => {
+        configStore.setOverride('SLACK_TRANSPORT', 'mcp', () => new Date().toISOString());
+        slackConnectionGeneration += 1;
+        slackSettingsKey = '';
+        void pollSlack();
+      },
+      disconnected: () => { slackConnectionGeneration += 1; slackSettingsKey = ''; },
+    })) return;
     if (url.pathname === '/api/webhooks/github' && req.method === 'POST') {
       try {
         const header = (name: string) => { const value = req.headers[name]; return typeof value === 'string' ? value : undefined; };
@@ -755,6 +786,12 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     }
     const hasBody: boolean = req.method === 'POST' || req.method === 'PUT';
     const body: unknown = hasBody ? await readBody(req) : null;
+    if (url.pathname === '/api/config' && req.method === 'PUT' && body && typeof body === 'object' && 'key' in body
+      && typeof body.key === 'string' && (body.key.startsWith('SLACK_OAUTH_') || body.key === 'SLACK_MCP_TEAM_ID')
+      && (!trustedSlackOrigin(req, configStore.effectiveEnv().SLACK_OAUTH_REDIRECT_URI ?? '')
+        || req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json')) {
+      res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Use Helmsman Config to change Slack authentication settings.' })); return;
+    }
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
       clarificationGate: runId => {
         if (db.getRun(runId)?.status !== 'running') return false;
@@ -807,11 +844,17 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         config: { ...publicConfig(configStore.current()), ...(!configStore.current().jiraEnabled ? { JIRA_PROJECT: configStore.effectiveEnv().JIRA_PROJECT ?? null, JIRA_ASSIGNEE: configStore.effectiveEnv().JIRA_ASSIGNEE ?? null, JIRA_JQL: configStore.effectiveEnv().JIRA_JQL ?? null } : {}), ...publicSlackSettings(configStore.effectiveEnv()), ...publicSlackReviewSettings(configStore.effectiveEnv()), GITHUB_REVIEW_WATCH_ENABLED: githubReviewEnabled() ? 'true' : 'false' },
         overridden: Object.keys(configStore.overrides()),
         jiraTokenSet: configStore.hasJiraToken(),
+        slackOAuthClientSecretSet: Boolean(configStore.effectiveEnv().SLACK_OAUTH_CLIENT_SECRET?.trim()),
       }),
       setConfig: (key: string, value: string): { ok: true } | { ok: false; error: string } => {
         try {
           if (WRITABLE_SECRET_KEYS.includes(key)) configStore.setSecret(key, value, () => new Date().toISOString());
           else configStore.setOverride(key, value, () => new Date().toISOString());
+          if (key.startsWith('SLACK_OAUTH_') || key === 'SLACK_MCP_TEAM_ID') {
+            slackOAuth.disconnect();
+            slackConnectionGeneration += 1;
+            slackSettingsKey = '';
+          }
           if (SLACK_CONFIG_KEYS.some((configKey) => configKey === key)) {
             configuredSlackWatcher();
             void pollSlack();

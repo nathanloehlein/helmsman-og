@@ -2,6 +2,7 @@ export interface UiConfig {
   config: Record<string, unknown>;
   overridden: string[];
   jiraTokenSet?: boolean;
+  slackOAuthClientSecretSet?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -13,7 +14,8 @@ function isUiConfig(value: unknown): value is UiConfig {
     && Object.values(value.config).every(item => item === null || typeof item === 'string'
       || typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item)))
     && Array.isArray(value.overridden) && value.overridden.every(key => typeof key === 'string')
-    && (value.jiraTokenSet === undefined || typeof value.jiraTokenSet === 'boolean');
+    && (value.jiraTokenSet === undefined || typeof value.jiraTokenSet === 'boolean')
+    && (value.slackOAuthClientSecretSet === undefined || typeof value.slackOAuthClientSecretSet === 'boolean');
 }
 
 export async function getConfig(): Promise<UiConfig | null> {

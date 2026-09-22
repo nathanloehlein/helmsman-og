@@ -573,12 +573,18 @@ Changing `JIRA_STATUS_*` does not rewrite those dashboard queries.
 | `REPO_PROJECT_MAP` | Empty | Comma-separated `owner/name=PROJECT` pairs. Populates the repo selector, maps dashboard/auto-claim Jira scope, and permits automatic reviews for those repos. | Live |
 | `GITHUB_REVIEW_WATCH_ENABLED` | `false` | Set exactly `true` to poll pending review requests for `GITHUB_PR_AUTHOR`. Existing requests can launch immediately when enabled. Requires GitHub access, configured repositories, local checkouts, and an authenticated agent CLI. | Live |
 
-### Slack browser reader
+### Slack connection
 
 | Value | Default | Where it applies / how to set it | Change |
 | --- | --- | --- | --- |
 | `SLACK_ENABLED` | `true` | Master switch in Config → Slack integration. Disabling stops automatic Slack reviews and blocks manual review requests without clearing saved settings. | Live |
-| `SLACK_WATCH_ENABLED` | `false` | Set exactly `true` after filling the channel fields and opening signed-in Slack in the selected browser. No Slack app/token or Slack MCP is used. | Live |
+| `SLACK_WATCH_ENABLED` | `false` | Set exactly `true` after connecting MCP or opening signed-in Slack in the selected browser. | Live |
+| `SLACK_TRANSPORT` | `browser` | `mcp` uses the GoDaddy Slack MCP; `browser` retains Firefox/cmux. No automatic browser fallback after MCP authentication failures. | Live |
+| `SLACK_MCP_TEAM_ID` | Empty | Slack workspace ID starting with `T`, used to bind OAuth and every MCP operation. Separate from an Enterprise Grid browser client ID. | Live; reconnect |
+| `SLACK_OAUTH_CLIENT_ID` | Empty | Approved Slack app client ID, distinct from the workspace ID. | Live; reconnect |
+| `SLACK_OAUTH_CLIENT_SECRET` | Empty | Slack app client secret. Write-only Config field, retained server-side and never returned by Config reads or saves. | Live; reconnect |
+| `SLACK_OAUTH_REDIRECT_URI` | Empty | Registered HTTPS URL ending `/api/slack/oauth/callback`, routed to this instance. Open Helmsman from the same HTTPS origin to connect. | Live; reconnect |
+| `SLACK_REVIEW_GROUP_ID` | Empty | Real Slack user group ID starting with `S`, paired with the review-group handle. Required for MCP posting. | Live |
 | `SLACK_CLIENT_ID` | Empty | First identifier after `/client/` in the open Slack URL. This is the browser client/workspace identifier, not an OAuth app client ID. | Live |
 | `SLACK_CHANNEL_ID` | Empty | Channel identifier beginning with `C`, from the Slack channel URL. Must match the channel being watched. | Live |
 | `SLACK_CHANNEL_NAME` | Empty | Channel name without `#`, using lowercase letters, digits, `_`, or `-`; used to scope Slack search. | Live |
@@ -587,7 +593,40 @@ Changing `JIRA_STATUS_*` does not rewrite those dashboard queries.
 | `SLACK_BROWSER_SURFACE` | Empty | Optional browser tab reference (`firefox:<handle>` or cmux `surface:24`). Leave empty to discover the matching signed-in Slack tab. | Live |
 
 Slack text fields are blank by default and the watcher is off. See
-[Automatic PR reviews](#automatic-pr-reviews) for first-time browser setup and triggers.
+[Automatic PR reviews](#automatic-pr-reviews) for triggers.
+
+### Using Slack MCP without Firefox
+
+Helmsman connects directly to `https://mcp-slack.goarena.gdcorp.tools/mcp` using
+the authenticated user's Slack OAuth token. GoCode/GoCaaS model credentials do
+not grant Slack access. The production MCP disables OAuth discovery, so use an
+approved Slack app's client ID and secret; Helmsman does not register an app or
+reuse credentials from OI.
+
+1. Register the app's exact HTTPS callback ending `/api/slack/oauth/callback`.
+   Route that address to this Helmsman instance using your approved private HTTPS
+   proxy. The local HTTP listener alone is insufficient for Slack's HTTPS callback.
+2. Grant these **user** scopes: `channels:read`, `channels:history`, `groups:read`,
+   `groups:history`, `chat:write`, `search:read`, `users:read`, and `users:read.email`.
+3. In **Config → Slack integration**, select **GoCaaS MCP**, save the OAuth app
+   settings, workspace ID, and channel ID/name. Set the review group ID and matching
+   handle for posting.
+4. Open Config from the registered HTTPS origin and click **Connect Slack**.
+   Slack sign-in and consent happen in the normal browser. Helmsman verifies the
+   user token, scopes, workspace, and read access to the configured channel before
+   activating MCP. No message is posted during connection or **Check connection**.
+
+OAuth state is short-lived, single-use, and bound to a secure HttpOnly browser
+cookie. User tokens are stored in a private SQLite file under
+`<RUNS_DIR>/.slack-auth/oauth.sqlite`; expiring tokens refresh automatically.
+**Disconnect** removes local tokens and pending authorizations. Changing app or
+workspace settings requires reconnecting. MCP errors never switch to Firefox.
+
+Review discovery uses paginated search, including new replies to older threads.
+Existing own-PR exclusions, saved cursors, request history, cooldowns, and uncertain
+delivery protection are preserved. Only the explicit **Request review in Slack**
+action posts a message. Once connected to MCP, Firefox and geckodriver are no longer
+required for Slack; their settings remain available for an explicit transport switch.
 
 ### Using regular Firefox
 
@@ -638,7 +677,7 @@ and links to the message when Slack provides a permalink.
 In **Config → Slack integration**, set the destination channel and review group.
 Defaults are `airo-editing` and `airo-editing-squad`. Use a channel name or ID and
 the user group's handle.
-Requests use the signed-in Slack browser, sharing `SLACK_CLIENT_ID` and
+With browser transport, requests use the signed-in Slack browser, sharing `SLACK_CLIENT_ID` and
 `SLACK_BROWSER_SURFACE` with the Slack reader. Browser reading and sending are
 serialized so they do not interfere. Existing message drafts are preserved.
 Sending works independently of whether automatic Slack watching is enabled.

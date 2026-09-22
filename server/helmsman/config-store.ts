@@ -1,6 +1,7 @@
 import { loadConfig, type AppConfig } from '../config';
 import type { Db } from './db';
 import { parseFirefoxWebDriverUrl, SLACK_CONFIG_KEYS } from './slack/config';
+import { validateSlackOAuthRedirectUri } from './slack/oauth';
 import { SLACK_REVIEW_CONFIG_KEYS } from './slack/review-request';
 import { PRE_PR_CONFIG_KEYS, PRE_PR_SETTING_DEFINITIONS, parsePrePrSettingValue } from '../../src/logic/prePrSettings';
 
@@ -23,9 +24,9 @@ export const EDITABLE_KEYS: readonly string[] = [
   'GITHUB_PR_AUTHOR',
 ];
 
-export const SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'GITHUB_TOKEN', 'JIRA_EMAIL', 'SLACK_BOT_TOKEN'];
+export const SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'GITHUB_TOKEN', 'JIRA_EMAIL', 'SLACK_BOT_TOKEN', 'SLACK_OAUTH_CLIENT_SECRET'];
 
-export const WRITABLE_SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN'];
+export const WRITABLE_SECRET_KEYS: readonly string[] = ['JIRA_API_TOKEN', 'SLACK_OAUTH_CLIENT_SECRET'];
 
 export function publicConfig(cfg: AppConfig): Record<string, unknown> {
   return {
@@ -74,6 +75,11 @@ export class ConfigStore {
       throw new Error(`${key} must be true or false`);
     }
     if (key === 'SLACK_BROWSER' && value !== 'cmux' && value !== 'firefox') throw new Error('Slack browser must be cmux or firefox');
+    if (key === 'SLACK_TRANSPORT' && !['browser', 'mcp'].includes(value)) throw new Error('Slack transport must be browser or mcp');
+    if (key === 'SLACK_MCP_TEAM_ID' && value.trim() && !/^T[A-Z0-9]{2,31}$/.test(value.trim())) throw new Error('Enter a Slack workspace ID starting with T.');
+    if (key === 'SLACK_REVIEW_GROUP_ID' && value.trim() && !/^S[A-Z0-9]{2,31}$/.test(value.trim())) throw new Error('Enter a Slack user group ID starting with S.');
+    if (key === 'SLACK_OAUTH_CLIENT_ID' && value.trim() && !/^\d+\.\d+$/.test(value.trim())) throw new Error('Enter the Slack OAuth app client ID.');
+    if (key === 'SLACK_OAUTH_REDIRECT_URI' && value.trim()) validateSlackOAuthRedirectUri(value.trim());
     if (key === 'SLACK_FIREFOX_WEBDRIVER_URL') parseFirefoxWebDriverUrl(value);
     const slackTarget = value.trim().replace(key === 'SLACK_REVIEW_CHANNEL' ? /^#/ : /^@/, '');
     if (key === 'SLACK_REVIEW_CHANNEL' && slackTarget && !/^(?:[CG][A-Z\d]{2,31}|[a-z\d_-]{1,80})$/.test(slackTarget)) {

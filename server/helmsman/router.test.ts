@@ -587,6 +587,14 @@ describe('config routes', () => {
     expect(r?.json).toEqual({ key: 'AGENT_MAX_ATTEMPTS', value: '3' });
   });
 
+  it.each(['SLACK_OAUTH_CLIENT_SECRET', 'JIRA_API_TOKEN'])('does not echo %s after saving', async (key) => {
+    const setConfig = vi.fn(() => ({ ok: true as const }));
+    const configDeps = { ...deps, setConfig } as unknown as RouterDeps;
+    const r = await handleApi('PUT', '/api/config', new URLSearchParams(), { key, value: 'private-value' }, configDeps);
+    expect(setConfig).toHaveBeenCalledWith(key, 'private-value');
+    expect(r).toEqual({ status: 200, json: { key, saved: true } });
+  });
+
   it('rejects updates to a non-editable config key', async () => {
     const setConfig = vi.fn(() => ({ ok: false as const, error: 'not an editable config key: JIRA_API_TOKEN' }));
     const configDeps = { ...deps, setConfig } as unknown as RouterDeps;

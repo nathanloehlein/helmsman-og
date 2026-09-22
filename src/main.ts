@@ -1,4 +1,6 @@
 import { fetchFirefoxBridge } from './data/firefoxBridge';
+import { fetchSlackMcp, startSlackOAuth } from './data/slackMcp';
+import { renderSlackMcp, type SlackMcpView } from './renderSlackMcp';
 import { renderFirefoxBridge, type FirefoxBridgeView } from './renderFirefoxBridge';
 import { renderLoading } from './renderLoading';
 import { openFeedback } from './renderFeedback';
@@ -166,6 +168,8 @@ export class DashboardView {
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
   private firefoxBridge: FirefoxBridgeView = { status: null };
+  private slackMcp: SlackMcpView = { status: null };
+  private slackMcpSeq = 0;
   private firefoxBridgeSeq = 0;
   private uiConfig: UiConfig = { config: {}, overridden: [] };
   private configLoaded = false;
@@ -829,7 +833,7 @@ export class DashboardView {
       await this.loadReviewRequests(force);
     } else if (this.view === 'config') {
       if (force) { this.paintConfig(); void this.loadLocalGit(); }
-      if (localDue) void this.loadFirefoxBridge();
+      if (localDue) { void this.loadFirefoxBridge(); void this.loadSlackMcp(); }
     } else if (this.view === 'todos' && localDue) {
       await this.loadTodos();
     } else if (this.view === 'runs' && localDue && this.contentView === 'runs') {
@@ -1614,7 +1618,7 @@ export class DashboardView {
   }
 
   private async loadFirefoxBridge(start = false): Promise<void> {
-    if (this.firefoxBridge.pending || this.uiConfig.config?.SLACK_BROWSER !== 'firefox') return;
+    if (this.firefoxBridge.pending || this.uiConfig.config?.SLACK_TRANSPORT === 'mcp' || this.uiConfig.config?.SLACK_BROWSER !== 'firefox') return;
     const seq = ++this.firefoxBridgeSeq;
     const endpoint = this.uiConfig.config?.SLACK_FIREFOX_WEBDRIVER_URL;
     this.firefoxBridge = { ...this.firefoxBridge, pending: start ? 'start' : 'check', error: null };
@@ -1629,6 +1633,47 @@ export class DashboardView {
     this.firefoxBridge = { status, pending: null, error: status ? null : start
       ? 'Could not confirm bridge startup. Check status before trying again.' : 'Firefox bridge status is unavailable. Check the Helmsman connection.' };
     this.paintFirefoxBridge();
+  }
+
+  private paintSlackMcp(): void {
+    const slot = this.root.querySelector('[data-slack-mcp]');
+    if (!slot) return;
+    const focusAction = document.activeElement instanceof HTMLElement && slot.contains(document.activeElement)
+      ? document.activeElement.dataset.slackMcpAction : undefined;
+    const template = document.createElement('template');
+    template.innerHTML = renderSlackMcp(this.slackMcp);
+    const next = template.content.firstElementChild;
+    if (next) {
+      slot.replaceWith(next);
+      if (focusAction) next.querySelector<HTMLButtonElement>(`[data-slack-mcp-action="${focusAction}"]`)?.focus();
+    }
+  }
+
+  private async loadSlackMcp(action?: 'check' | 'connect' | 'disconnect'): Promise<void> {
+    if (this.slackMcp.pending || this.uiConfig.config?.SLACK_TRANSPORT !== 'mcp') return;
+    const seq = ++this.slackMcpSeq;
+    const callback = new URL(window.location.href).searchParams.get('slack_oauth');
+    this.slackMcp = { ...this.slackMcp, pending: action ?? 'status', error: null };
+    this.paintSlackMcp();
+    if (action === 'connect') {
+      const result = await startSlackOAuth();
+      if (this.destroyed || seq !== this.slackMcpSeq) return;
+      this.slackMcp = { ...this.slackMcp, pending: null, error: 'error' in result ? result.error : null };
+      this.paintSlackMcp();
+      if ('authorizationUrl' in result) window.location.assign(result.authorizationUrl);
+      return;
+    }
+    const status = await fetchSlackMcp(action);
+    if (this.destroyed || seq !== this.slackMcpSeq) return;
+    this.slackMcp = { status, pending: null, error: !status
+      ? 'Slack connection is unavailable. Check the Helmsman connection and try again.'
+      : callback === 'error' ? 'Slack authorization did not complete. Check your OAuth app settings and reconnect.' : null };
+    if (callback) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('slack_oauth');
+      window.history.replaceState(window.history.state, '', url);
+    }
+    this.paintSlackMcp();
   }
 
   private captureConfigDrafts(): void {
@@ -1657,7 +1702,7 @@ export class DashboardView {
       this.configError = 'Settings could not be loaded. Check the Helmsman connection and retry. Unsaved changes are kept.';
     }
     if (paint && this.view === 'config') this.paintConfig();
-    if (this.view === 'config') void this.loadFirefoxBridge();
+    if (this.view === 'config') { void this.loadFirefoxBridge(); void this.loadSlackMcp(); }
   }
 
   private paintConfig(): void {
@@ -1673,6 +1718,7 @@ export class DashboardView {
       localGit: this.localGit,
       loading: this.configLoading,
       firefoxBridge: this.firefoxBridge,
+      slackMcp: this.slackMcp,
       error: this.configError,
       unavailable: !this.configLoaded,
     }));
@@ -2334,6 +2380,12 @@ export class DashboardView {
       event.preventDefault();
       event.stopPropagation();
       if (!retryButton.disabled) void this.handleRetryRun(retryButton);
+      return;
+    }
+    const slackMcpAction = target.closest<HTMLButtonElement>('[data-slack-mcp-action]');
+    if (slackMcpAction) {
+      const action = slackMcpAction.dataset.slackMcpAction;
+      if (!slackMcpAction.disabled && (action === 'connect' || action === 'check' || action === 'disconnect')) void this.loadSlackMcp(action);
       return;
     }
     const firefoxBridgeAction = target.closest<HTMLButtonElement>('[data-firefox-bridge-check], [data-firefox-bridge-start]');
@@ -3194,14 +3246,16 @@ export class DashboardView {
       this.refreshPending = null;
       this.captureConfigDrafts();
       if (this.configDrafts.get(key) === value) this.configDrafts.delete(key);
+      const secret = key === 'JIRA_API_TOKEN' || key === 'SLACK_OAUTH_CLIENT_SECRET';
       if (key === 'JIRA_API_TOKEN') this.uiConfig.jiraTokenSet = true;
+      else if (key === 'SLACK_OAUTH_CLIENT_SECRET') this.uiConfig.slackOAuthClientSecretSet = true;
       else this.uiConfig.config[key] = value;
       for (const currentRow of this.root.querySelectorAll<HTMLElement>('.config-row')) {
         if (currentRow.dataset.key !== key) continue;
         const currentInput = currentRow.querySelector<HTMLInputElement | HTMLSelectElement>('.config-input');
         if (!currentInput) continue;
-        currentInput.dataset.configValue = key === 'JIRA_API_TOKEN' ? '' : value;
-        if (key === 'JIRA_API_TOKEN' && currentInput.value === value) currentInput.value = '';
+        currentInput.dataset.configValue = secret ? '' : value;
+        if (secret && currentInput.value === value) currentInput.value = '';
       }
       if (key === 'JIRA_ENABLED') {
         this.jiraEnabled = value !== 'false';

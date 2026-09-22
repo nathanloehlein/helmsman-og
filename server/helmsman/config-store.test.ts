@@ -8,6 +8,29 @@ let db: Db;
 afterEach(() => db?.close());
 
 describe('ConfigStore', () => {
+  it('persists MCP setup without exposing the OAuth client secret through public settings', () => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({}, db);
+    const fields = { SLACK_TRANSPORT: 'mcp', SLACK_MCP_TEAM_ID: 'T12345', SLACK_REVIEW_GROUP_ID: 'S12345',
+      SLACK_OAUTH_CLIENT_ID: '123.456', SLACK_OAUTH_REDIRECT_URI: 'https://helmsman.example/api/slack/oauth/callback' };
+    for (const [key, value] of Object.entries(fields)) store.setOverride(key, value, () => 'now');
+    store.setSecret('SLACK_OAUTH_CLIENT_SECRET', 'private-app-secret', () => 'now');
+    expect(store.effectiveEnv()).toMatchObject(fields);
+    expect(JSON.stringify(publicConfig(store.current()))).not.toContain('private-app-secret');
+    expect(() => store.setOverride('SLACK_OAUTH_CLIENT_SECRET', 'secret', () => 'now')).toThrow();
+  });
+
+  it.each([
+    ['SLACK_TRANSPORT', 'automatic'], ['SLACK_MCP_TEAM_ID', 'ET1234'], ['SLACK_REVIEW_GROUP_ID', '@squad'],
+    ['SLACK_OAUTH_CLIENT_ID', 'T12345'], ['SLACK_OAUTH_REDIRECT_URI', 'http://localhost:8787/api/slack/oauth/callback'],
+    ['SLACK_OAUTH_REDIRECT_URI', 'https://example.com/wrong'],
+  ])('rejects malformed MCP setup %s', (key, value) => {
+    db = openDb(':memory:');
+    const store = new ConfigStore({}, db);
+    expect(() => store.setOverride(key, value, () => 'now')).toThrow();
+    expect(store.overrides()).toEqual({});
+  });
+
   it('persists browser choice and a validated local Firefox endpoint', () => {
     db = openDb(':memory:');
     const store = new ConfigStore({}, db);

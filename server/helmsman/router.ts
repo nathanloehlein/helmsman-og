@@ -19,6 +19,7 @@ import type { OutcomeService } from './outcome-service';
 import { OutcomeValidationError } from './outcomes';
 import type { CampaignService } from './campaign-service';
 import { ClarificationValidationError, type ClarificationStore } from './clarifications';
+import { SECRET_KEYS } from './config-store';
 
 export interface ApiResult {
   status: number;
@@ -404,7 +405,8 @@ async function routeApi(
       return { status: 400, json: { error: 'key and value required' } };
     }
     const r: { ok: true } | { ok: false; error: string } = deps.setConfig(b.key, b.value);
-    return r.ok ? { status: 200, json: { key: b.key, value: b.value } } : { status: 400, json: { error: r.error } };
+    return r.ok ? { status: 200, json: SECRET_KEYS.includes(b.key) ? { key: b.key, saved: true } : { key: b.key, value: b.value } }
+      : { status: 400, json: { error: r.error } };
   }
   if (path === '/api/pr/review-requests' && method === 'GET') {
     const repo: string | null = query.get('repo');

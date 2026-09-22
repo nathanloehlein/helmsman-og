@@ -9,19 +9,21 @@ const deferred = <T>() => {
   return { promise, resolve };
 };
 
-async function setup(initial: unknown = payload()) {
+async function setup(initial: unknown = payload(), slackRoutes: Record<string, () => Response | Promise<Response>> = {}) {
   let config = initial;
   let nextRead: Promise<Response> | null = null;
   let nextSave: Promise<Response> | null = null;
   const writes: { key: string; value: string }[] = [];
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input), window.location.origin);
+    if (slackRoutes[url.pathname]) return slackRoutes[url.pathname]!();
     if (url.pathname === '/api/config') {
       if (init?.method === 'PUT') {
         const write = JSON.parse(String(init.body)) as { key: string; value: string };
         writes.push(write);
         if (config && typeof config === 'object' && 'config' in config) {
-          (config as ReturnType<typeof payload>).config[write.key as keyof ReturnType<typeof payload>['config']] = write.value;
+          if (write.key === 'SLACK_OAUTH_CLIENT_SECRET') Object.assign(config, { slackOAuthClientSecretSet: true });
+          else (config as ReturnType<typeof payload>).config[write.key as keyof ReturnType<typeof payload>['config']] = write.value;
         }
         const response = nextSave;
         nextSave = null;
@@ -143,5 +145,66 @@ describe('Config loading and drafts', () => {
     setConfig(payload());
     await view!.refresh();
     expect(field('JIRA_ENABLED').value).toBe('false');
+  });
+});
+
+
+describe('Slack MCP connection controls', () => {
+  const configured = () => ({ ...payload(), config: { ...payload().config, SLACK_TRANSPORT: 'mcp' } });
+  const status = { status: 'connected', configured: true, connected: true, teamId: 'T123', userId: 'U123', redirectUri: 'https://helmsman.example.com/api/slack/oauth/callback', message: 'Connected to Slack' };
+
+  it('checks connection without replacing drafts or input focus and disconnects explicitly', async () => {
+    const check = deferred<Response>();
+    const { root, field, fetcher } = await setup(configured(), {
+      '/api/slack/mcp': () => Response.json(status),
+      '/api/slack/mcp/check': () => check.promise,
+      '/api/slack/oauth/disconnect': () => Response.json({ ...status, status: 'disconnected', connected: false, message: 'Disconnected' }),
+    });
+    await vi.waitFor(() => expect(root.querySelector('[data-slack-mcp]')?.textContent).toContain('Connected to Slack'));
+    field('SLACK_OAUTH_CLIENT_ID').value = 'unsaved-app-id';
+    field('SLACK_OAUTH_CLIENT_ID').focus();
+    root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="check"]')!.click();
+    expect(root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="check"]')?.disabled).toBe(true);
+    check.resolve(Response.json(status));
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="check"]')?.disabled).toBe(false));
+    expect(field('SLACK_OAUTH_CLIENT_ID').value).toBe('unsaved-app-id');
+    expect(document.activeElement).toBe(field('SLACK_OAUTH_CLIENT_ID'));
+    root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="disconnect"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-slack-mcp]')?.textContent).toContain('Disconnected'));
+    expect(fetcher).toHaveBeenCalledWith('/api/slack/oauth/disconnect', expect.objectContaining({ method: 'POST', body: '{}' }));
+  });
+
+  it('saves the client secret write-only and keeps other drafts', async () => {
+    const { field, save, writes } = await setup(configured(), { '/api/slack/mcp': () => Response.json(status) });
+    field('SLACK_OAUTH_CLIENT_SECRET').value = 'new-secret';
+    field('SLACK_OAUTH_CLIENT_ID').value = 'unsaved-id';
+    save('SLACK_OAUTH_CLIENT_SECRET');
+    await vi.waitFor(() => expect(field('SLACK_OAUTH_CLIENT_SECRET').value).toBe(''));
+    expect(writes).toContainEqual({ key: 'SLACK_OAUTH_CLIENT_SECRET', value: 'new-secret' });
+    expect(field('SLACK_OAUTH_CLIENT_ID').value).toBe('unsaved-id');
+    expect(document.body.innerHTML).not.toContain('new-secret');
+  });
+
+  it('displays server OAuth setup errors as text', async () => {
+    const error = 'Open Helmsman at https://helmsman.example.com/config to connect Slack <script>invalid</script>';
+    const { root } = await setup(configured(), {
+      '/api/slack/mcp': () => Response.json(status),
+      '/api/slack/oauth/start': () => Response.json({ error }, { status: 400 }),
+    });
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="connect"]')?.disabled).toBe(false));
+    root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="connect"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-slack-mcp] [role="alert"]')?.textContent).toBe(error));
+    expect(root.querySelector('[data-slack-mcp] script')).toBeNull();
+  });
+
+  it('reports a rejected OAuth redirect without navigating', async () => {
+    const { root } = await setup(configured(), {
+      '/api/slack/mcp': () => Response.json(status),
+      '/api/slack/oauth/start': () => Response.json({ authorizationUrl: 'https://evil.example/authorize' }),
+    });
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="connect"]')?.disabled).toBe(false));
+    root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="connect"]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-slack-mcp] [role="alert"]')?.textContent).toContain('Could not start Slack authorization'));
+    expect(window.location.pathname).toBe('/config');
   });
 });

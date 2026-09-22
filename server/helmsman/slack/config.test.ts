@@ -2,15 +2,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSlackBrowserTransportSelector, DEFAULT_FIREFOX_WEBDRIVER_URL, parseFirefoxWebDriverUrl, publicSlackSettings, slackSettings } from './config';
 
 const valid = { SLACK_WATCH_ENABLED: 'true', SLACK_CLIENT_ID: 'ET0BMD4E7', SLACK_CHANNEL_ID: 'C0B1S3BF524', SLACK_CHANNEL_NAME: 'airo-editing' };
+const mcpDefaults = { SLACK_TRANSPORT: 'browser', SLACK_MCP_TEAM_ID: '', SLACK_REVIEW_GROUP_ID: '', SLACK_OAUTH_CLIENT_ID: '', SLACK_OAUTH_REDIRECT_URI: '' };
 
 describe('Slack configuration', () => {
   it('defaults to disabled and exposes no credentials', () => {
     expect(slackSettings({})).toEqual({ enabled: false, clientId: '', channelId: '', channelName: '', surface: undefined,
-      browser: 'cmux', firefoxWebDriverUrl: DEFAULT_FIREFOX_WEBDRIVER_URL, error: null });
+      browser: 'cmux', firefoxWebDriverUrl: DEFAULT_FIREFOX_WEBDRIVER_URL, transport: 'browser', error: null });
     expect(publicSlackSettings({})).toEqual({ SLACK_ENABLED: 'true', SLACK_WATCH_ENABLED: 'false', SLACK_CLIENT_ID: '', SLACK_CHANNEL_ID: '', SLACK_CHANNEL_NAME: '', SLACK_BROWSER_SURFACE: '',
-      SLACK_BROWSER: 'cmux', SLACK_FIREFOX_WEBDRIVER_URL: DEFAULT_FIREFOX_WEBDRIVER_URL });
+      SLACK_BROWSER: 'cmux', SLACK_FIREFOX_WEBDRIVER_URL: DEFAULT_FIREFOX_WEBDRIVER_URL, ...mcpDefaults });
     expect(publicSlackSettings({ ...valid, GITHUB_TOKEN: 'secret' })).toEqual({ ...valid, SLACK_ENABLED: 'true', SLACK_BROWSER_SURFACE: '',
-      SLACK_BROWSER: 'cmux', SLACK_FIREFOX_WEBDRIVER_URL: DEFAULT_FIREFOX_WEBDRIVER_URL });
+      SLACK_BROWSER: 'cmux', SLACK_FIREFOX_WEBDRIVER_URL: DEFAULT_FIREFOX_WEBDRIVER_URL, ...mcpDefaults });
+  });
+
+  it('keeps browser and MCP workspace identities separate and ignores browser-only errors for MCP', () => {
+    const env = { ...valid, SLACK_TRANSPORT: 'mcp', SLACK_MCP_TEAM_ID: 'T12345', SLACK_BROWSER: 'old-browser',
+      SLACK_BROWSER_SURFACE: 'old-tab', SLACK_FIREFOX_WEBDRIVER_URL: 'unavailable', SLACK_OAUTH_CLIENT_SECRET: 'private-secret' };
+    expect(slackSettings(env)).toMatchObject({ transport: 'mcp', clientId: 'T12345', error: null });
+    expect(publicSlackSettings(env)).toMatchObject({ SLACK_CLIENT_ID: 'ET0BMD4E7', SLACK_MCP_TEAM_ID: 'T12345', SLACK_TRANSPORT: 'mcp' });
+    expect(JSON.stringify(publicSlackSettings(env))).not.toContain('private-secret');
+    expect(slackSettings({ ...valid, SLACK_TRANSPORT: 'mcp' }).error).toBeTruthy();
+    expect(slackSettings({ ...valid, SLACK_TRANSPORT: 'mcp', SLACK_CLIENT_ID: 'T12345' }).clientId).toBe('T12345');
   });
 
   it('supports Firefox tab references while ignoring saved cmux references', () => {

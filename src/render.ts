@@ -1,5 +1,6 @@
 import { renderLoading } from './renderLoading';
 import { renderFirefoxBridge, type FirefoxBridgeView } from './renderFirefoxBridge';
+import { renderSlackMcp, type SlackMcpView } from './renderSlackMcp';
 import { term, isPirateMode, TERMINOLOGY, TERMINOLOGY_REFERENCE_KEYS } from './logic/terminology';
 import { renderLocalGit } from './renderLocalGit';
 import { renderThemePreview } from './renderThemePreview';
@@ -42,6 +43,12 @@ const PRIORITY_CLASS: Record<Priority, string> = { P0: 'pri-p0', P1: 'pri-p1', P
 export const CONFIG_HELP: Record<string, string> = {
   get JIRA_ENABLED() { return `Use Jira tickets for ${term('runs').toLowerCase()}; disable to use local todos instead. Applies immediately. Example: false`; },
   GITHUB_REVIEW_WATCH_ENABLED: 'Automatically review GitHub PRs requesting your review every five minutes: true or false. Changes apply immediately. Example: true',
+  SLACK_TRANSPORT: 'Slack connection transport: browser or GoCaaS MCP. Example: mcp',
+  SLACK_MCP_TEAM_ID: 'Slack workspace team ID for OAuth and MCP requests. Example: T0123456789',
+  SLACK_OAUTH_CLIENT_ID: 'Client ID of the approved Slack OAuth app. Example: 123.456',
+  SLACK_OAUTH_CLIENT_SECRET: 'Write-only Slack OAuth app client secret. Example: paste the secret from your approved app',
+  SLACK_OAUTH_REDIRECT_URI: 'Registered HTTPS callback URL ending /api/slack/oauth/callback. Example: https://helmsman.example.com/api/slack/oauth/callback',
+  SLACK_REVIEW_GROUP_ID: 'Slack user group ID to mention in review requests. Example: S0123456789',
   SLACK_ENABLED: 'Turn Slack integration on or off. Disables automatic reviews and manual requests without clearing settings. Example: true',
   SLACK_WATCH_ENABLED: 'Enable automatic PR reviews from the watched Slack channel: true or false. Changes apply immediately. Example: true',
   SLACK_CLIENT_ID: 'Slack client route context from the signed-in browser URL: the value after /client/. Example: T0123456789',
@@ -1172,6 +1179,7 @@ export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
 
 export interface ConfigViewOpts {
   firefoxBridge?: FirefoxBridgeView;
+  slackMcp?: SlackMcpView;
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
@@ -1269,6 +1277,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
   if (opts.unavailable) {
     return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `${intro}<section class="panel config-loading" aria-label="Configuration" aria-busy="${Boolean(opts.loading)}">${status || '<p class="empty-note">Configuration is unavailable. <button type="button" data-config-retry>Try again</button></p>'}</section>${customization}${operatorNote}`);
   }
+  const slackMcp = uiConfig.config?.SLACK_TRANSPORT === 'mcp';
   const jiraEnabled = uiConfig.config?.JIRA_ENABLED !== 'false' && uiConfig.config?.JIRA_ENABLED !== false;
   return renderAppShell({ active: 'config', repos: opts.repos, selectedRepo: opts.selectedRepo, themeId: opts.themeId, readout: null }, `
       ${intro}${status}
@@ -1302,7 +1311,15 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
               </select>
               <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
-          <div class="config-row" data-key="SLACK_BROWSER">
+          <div class="config-row" data-key="SLACK_TRANSPORT">
+            <label class="config-key" for="config-SLACK_TRANSPORT">Slack connection</label>
+            <select id="config-SLACK_TRANSPORT" class="config-input" aria-describedby="slack-review-setup error-SLACK_TRANSPORT">
+              <option value="browser"${slackMcp ? '' : ' selected'}>Browser</option>
+              <option value="mcp"${slackMcp ? ' selected' : ''}>GoCaaS Slack MCP</option>
+            </select>
+            <button type="button" class="config-save" data-key="SLACK_TRANSPORT" aria-label="Save Slack connection">Save</button><span class="config-error" id="error-SLACK_TRANSPORT" role="alert"></span>
+          </div>
+          ${slackMcp ? '' : `          <div class="config-row" data-key="SLACK_BROWSER">
             <label class="config-key" for="config-SLACK_BROWSER">Slack browser</label>
             <select id="config-SLACK_BROWSER" class="config-input" aria-describedby="slack-review-setup error-SLACK_BROWSER">
               <option value="firefox"${uiConfig.config?.SLACK_BROWSER === 'firefox' ? ' selected' : ''}>Firefox</option>
@@ -1310,15 +1327,26 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
             </select>
             <button type="button" class="config-save" data-key="SLACK_BROWSER" aria-label="Save Slack browser">Save</button><span class="config-error" id="error-SLACK_BROWSER" role="alert"></span>
           </div>
-          ${[['SLACK_FIREFOX_WEBDRIVER_URL', 'Firefox bridge address', 'http://127.0.0.1:4444'], ['SLACK_CLIENT_ID', 'Slack client ID', ''], ['SLACK_CHANNEL_ID', 'Watched channel ID', ''], ['SLACK_CHANNEL_NAME', 'Watched channel name', ''], ['SLACK_BROWSER_SURFACE', 'Browser tab reference (optional)', ''], ['SLACK_REVIEW_CHANNEL', 'Review request channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad']].map(([key, label, fallback]) => `
+`}
+          ${[
+            ...(slackMcp ? [['SLACK_MCP_TEAM_ID', 'Slack workspace ID (T…)', ''], ['SLACK_OAUTH_CLIENT_ID', 'Slack OAuth app client ID', ''], ['SLACK_OAUTH_REDIRECT_URI', 'Registered HTTPS callback URL', ''], ['SLACK_REVIEW_GROUP_ID', 'Review group ID (S…)', '']]
+              : [['SLACK_FIREFOX_WEBDRIVER_URL', 'Firefox bridge address', 'http://127.0.0.1:4444'], ['SLACK_CLIENT_ID', 'Slack browser client ID', ''], ['SLACK_BROWSER_SURFACE', 'Browser tab reference (optional)', '']]),
+            ['SLACK_CHANNEL_ID', 'Watched channel ID', ''], ['SLACK_CHANNEL_NAME', 'Watched channel name', ''], ['SLACK_REVIEW_CHANNEL', 'Review request channel', 'airo-editing'], ['SLACK_REVIEW_MENTION', `${term('review')} group handle`, 'airo-editing-squad'],
+          ].map(([key, label, fallback]) => `
             <div class="config-row" data-key="${key}">
               <label class="config-key" for="config-${key}">${label}</label>
-              <input id="config-${key}" class="config-input" value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup error-${key}">
+              <input id="config-${key}" class="config-input"${key === 'SLACK_MCP_TEAM_ID' ? ' placeholder="T…"' : ''} value="${esc(String(uiConfig.config?.[key] ?? fallback))}" aria-describedby="slack-review-setup error-${key}">
               <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
         </div>
-        ${uiConfig.config?.SLACK_BROWSER === 'firefox' ? renderFirefoxBridge(opts.firefoxBridge) : ''}
-        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved. Firefox uses your regular signed-in browser with background automation enabled and the local bridge running (<code>npm run slack:firefox</code>). The browser used to view Helmsman can be different.</p>
+        ${slackMcp ? `<div class="config-list"><div class="config-row config-secret-row" data-key="SLACK_OAUTH_CLIENT_SECRET">
+          <label class="config-key" for="config-SLACK_OAUTH_CLIENT_SECRET">Slack OAuth client secret <span class="config-secret-status">${uiConfig.slackOAuthClientSecretSet || opts.slackMcp?.status?.configured ? 'Set' : 'Not set'}</span></label>
+          <input id="config-SLACK_OAUTH_CLIENT_SECRET" class="config-input config-secret-input" type="password" autocomplete="off" placeholder="Paste secret to update" aria-describedby="error-SLACK_OAUTH_CLIENT_SECRET">
+          <button type="button" class="config-save" data-key="SLACK_OAUTH_CLIENT_SECRET" aria-label="Update Slack OAuth client secret">Update</button><span class="config-error" id="error-SLACK_OAUTH_CLIENT_SECRET" role="alert"></span>
+        </div></div>${renderSlackMcp(opts.slackMcp)}` : uiConfig.config?.SLACK_BROWSER === 'firefox' ? renderFirefoxBridge(opts.firefoxBridge) : ''}
+        <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. ${slackMcp
+          ? 'GoCaaS Slack MCP uses your authorized Slack account. Save the OAuth app settings before connecting. Use a Slack user group ID (S…) for review mentions. Register an HTTPS callback ending /api/slack/oauth/callback and open Helmsman at that address to connect.'
+          : 'Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved. Firefox uses your regular signed-in browser with background automation enabled and the local bridge running (<code>npm run slack:firefox</code>). The browser used to view Helmsman can be different.'}</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}
       <section class="panel config-panel">
