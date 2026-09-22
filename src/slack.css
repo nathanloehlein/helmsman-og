@@ -40,7 +40,18 @@
 .slack-empty { color: var(--text-faint); }
 @media (max-width: 700px) { .slack-popover { position: fixed; top: 100px; right: 20px; } }
 .slack-review-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.pr-list-row .slack-review-control { margin-left: auto; }
+.pr-list-row .slack-review-control { grid-column: var(--pr-action-column, 2 / -1); display: grid; justify-items: start; gap: 6px; margin: 0; }
+.pr-list-row .slack-review-control:has(.slack-review-result:empty) { row-gap: 0; }
+.pr-list-row .slack-review-request { max-width: 100%; white-space: normal; text-align: left; }
+.pr-list-row .slack-review-result { min-width: 0; max-width: 65ch; }
+.pr-list-row .slack-review-result:not(.is-error) { color: var(--text-dim); }
+.pr-list-row .slack-review-result a { color: var(--accent); text-underline-offset: 3px; }
+.pr-list-row .slack-review-result a:hover { color: var(--accent-bright); }
+.pr-list-row .slack-review-result a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .pr-list-row .slack-review-request { min-height: 44px; }
+  .pr-list-row .slack-review-result a { display: inline-flex; align-items: center; min-height: 44px; }
+}
 .slack-review-request { color: var(--accent); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 7px 10px; font: 11px var(--mono); cursor: pointer; }
 .slack-review-request:disabled { opacity: .6; cursor: default; }
 .slack-review-request:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

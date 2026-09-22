@@ -771,11 +771,11 @@ function renderPrList(state: PrListState | undefined, emptyMessage: string, requ
     const chip = reviewChip(pr.reviewDecision ?? '');
     const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
     const stats = prListStats(pr, requestReview);
+    const badges = `${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}`;
     return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}${stats.label ? `; ${esc(stats.label)}` : ''}">
       <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
       <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span>${stats.html}</span>
-      ${pr.draft ? '<span class="chip chip-queued">Draft</span>' : ''}
-      ${pr.reviewDecision ? `<span class="chip ${chip.cls}">${chip.label}</span>` : ''}
+      ${badges ? `<span class="pr-list-badges">${badges}</span>` : ''}
       ${requestReview ? slackReviewButton(pr.repo, pr.number) : ''}
     </li>`;
   }).join('');
