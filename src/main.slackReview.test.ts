@@ -90,6 +90,20 @@ describe('Slack review requests from authored PRs', () => {
     expect(writes).toEqual([]);
   });
 
+  it('opens the Slack message without navigating the PR row', async () => {
+    const { root, reads, writes } = await setup(() => json(success), false, [receipt]);
+    const link = root.querySelector<HTMLAnchorElement>('.pr-authored .slack-review-result a');
+    expect(link?.href).toBe(permalink);
+    expect(link?.target).toBe('_blank');
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link?.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+    expect(window.location.pathname).toBe('/prs');
+    expect(window.location.search).toBe('');
+    expect(reads).not.toContain('/api/pr');
+    expect(writes).toEqual([]);
+  });
+
   it('keeps unknown historical confirmation times explicit', async () => {
     const { root } = await setup(() => json(success), false, [{ ...receipt, lastSentAt: null }]);
     expect(root.querySelector('.slack-review-result')?.textContent).toContain('Request time unavailable');

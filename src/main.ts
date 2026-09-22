@@ -2587,6 +2587,7 @@ export class DashboardView {
 
     const prListRow: HTMLElement | null = target.closest<HTMLElement>('.pr-list-row');
     if (prListRow) {
+      if (target.closest('a')) return;
       this.handlePrListClick(prListRow);
       return;
     }
