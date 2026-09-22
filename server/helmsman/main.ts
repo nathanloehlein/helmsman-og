@@ -64,6 +64,7 @@ import { createSlackWatcher, type SlackWatcher } from './slack/watcher';
 import { fetchPrOwnership } from '../github-pr-ownership';
 import { createSlackBrowserReader, runSlackBrowserCommand } from './slack/browser';
 import { createFirefoxSlackBrowserTransport } from './slack/firefox-browser';
+import { createFirefoxBridgeControl } from './slack/firefox-bridge';
 import { createSlackBrowserReviewSender } from './slack/browser-review';
 import { createSlackBrowserTransportSelector, publicSlackSettings, slackSettings, SLACK_INTERVAL_MS, SLACK_CONFIG_KEYS } from './slack/config';
 import { openSlackReviewRequester, publicSlackReviewSettings, slackReviewSettings, SlackReviewError } from './slack/review-request';
@@ -106,6 +107,9 @@ const outcomes = createOutcomeService({ db, store: outcomeStore, fetchPr: (repo,
   const github = configStore.current().github;
   return github ? fetchPrStatus(github, repo, number) : Promise.resolve(null);
 } });
+const firefoxBridge = createFirefoxBridgeControl(() => configStore.effectiveEnv().SLACK_FIREFOX_WEBDRIVER_URL?.trim() || 'http://127.0.0.1:4444', {
+  started: () => { slackBrowserTransport.reset(); slackSettingsKey = ''; },
+});
 const slackBrowserTransport = createSlackBrowserTransportSelector(createFirefoxSlackBrowserTransport, runSlackBrowserCommand);
 const slackReviewRequester = openSlackReviewRequester(dbPath, {
   settings: () => slackReviewSettings(configStore.effectiveEnv()),
@@ -748,6 +752,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         const now = new Date().toISOString();
         return id.startsWith('voyage-') ? voyageNotifications.markRead(id, now) : slackStore.markRead(id, now);
       } },
+      firefoxBridge,
       slackReviewRequest: (input) => slackReviewRequester.request(input),
       slackReviewRequests: repo => slackReviewRequester.list(repo),
       todos,

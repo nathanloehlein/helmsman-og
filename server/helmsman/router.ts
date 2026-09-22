@@ -1,5 +1,6 @@
 import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
 import { FeedbackError } from './feedback';
+import type { FirefoxBridgeStatus } from '../../src/data/firefoxBridge';
 import { SlackReviewError, type SlackReviewResult } from './slack/review-request';
 import type { SlackReviewRequestState } from '../../src/data/slackReview';
 import type { Db, RunRow } from './db';
@@ -63,6 +64,7 @@ export interface RouterDeps {
   clarifications?: ClarificationStore;
   resumeRun?: (runId: string) => Promise<void>;
   githubProfile?: () => Promise<GithubProfile>;
+  firefoxBridge?: { status: () => Promise<FirefoxBridgeStatus>; start: () => Promise<FirefoxBridgeStatus> };
   slackReviewRequest?: (input: unknown) => Promise<SlackReviewResult>;
   slackReviewRequests?: (repo: string | null) => SlackReviewRequestState[];
   todos?: TodoStore;
@@ -172,6 +174,12 @@ async function routeApi(
       if (error instanceof OutcomeValidationError) return { status: 400, json: { error: error.message } };
       throw error;
     }
+  }
+  if (path === '/api/slack/firefox-bridge' && (method === 'GET' || method === 'POST')) {
+    if (!deps.firefoxBridge) return { status: 503, json: { error: 'Firefox bridge control is unavailable.' } };
+    try {
+      return { status: 200, json: await (method === 'POST' ? deps.firefoxBridge.start() : deps.firefoxBridge.status()) };
+    } catch { return { status: 503, json: { error: 'Could not check the Firefox bridge.' } }; }
   }
   if (path === '/api/slack/review-requests' && method === 'GET') {
     const repo = query.get('repo');

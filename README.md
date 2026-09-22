@@ -586,7 +586,12 @@ convenient and relaunch your regular profile with automation enabled:
 /Applications/Firefox.app/Contents/MacOS/firefox --marionette --remote-debugging-port 9222
 ```
 
-Then run `npm run slack:firefox` from this checkout and keep the bridge running.
+Then use **Config → Slack integration → Start bridge**, or run `npm run slack:firefox`
+from this checkout. Config shows whether the bridge and Firefox automation are
+available, with a **Check status** button. Status checks do not open browser sessions.
+The Start button supports the default `http://127.0.0.1:4444` address and starts only
+the bridge; it does not relaunch Firefox. Custom bridge addresses must be started
+manually. Keep the bridge running.
 The bridge binds to localhost:4444 and attaches to the existing Firefox through
 Marionette on localhost:2828 and WebDriver BiDi on localhost:9222. It never
 launches a replacement profile. Keep your

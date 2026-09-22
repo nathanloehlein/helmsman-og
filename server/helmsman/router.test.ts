@@ -60,6 +60,17 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('exposes bridge status separately from explicit startup, without trusting command input', async () => {
+    const status = { status: 'stopped' as const, bridgeRunning: false, firefoxReady: true, canStart: true, message: 'Bridge stopped.' };
+    const firefoxBridge = { status: vi.fn(async () => status), start: vi.fn(async () => status) };
+    const local = { ...deps, firefoxBridge };
+    expect(await handleApi('GET', '/api/slack/firefox-bridge', new URLSearchParams(), null, local)).toEqual({ status: 200, json: status });
+    expect(firefoxBridge.start).not.toHaveBeenCalled();
+    await handleApi('POST', '/api/slack/firefox-bridge', new URLSearchParams(), { command: 'arbitrary input' }, local);
+    expect(firefoxBridge.start).toHaveBeenCalledExactlyOnceWith();
+    expect((await handleApi('POST', '/api/slack/firefox-bridge', new URLSearchParams(), null, deps))?.status).toBe(503);
+  });
+
   it('reads Slack request history with explicit galleon scope without sending', async () => {
     const slackReviewRequests = vi.fn(() => []);
     const slackReviewRequest = vi.fn();

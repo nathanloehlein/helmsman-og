@@ -52,6 +52,18 @@ describe('Slack configuration', () => {
     expect(reader).not.toHaveBeenCalled();
   });
 
+  it('discards cached Firefox sessions after bridge startup without changing cmux', () => {
+    const cmux = vi.fn(async () => 'cmux');
+    const firefox = vi.fn(() => vi.fn(async () => 'firefox'));
+    const select = createSlackBrowserTransportSelector(firefox, cmux);
+    const settings = slackSettings({ SLACK_BROWSER: 'firefox' });
+    const before = select(settings);
+    select.reset();
+    expect(select(settings)).not.toBe(before);
+    expect(select(slackSettings({}))).toBe(cmux);
+    expect(before).not.toHaveBeenCalled();
+  });
+
   it('validates channel identity and optional surface before enabling', () => {
     expect(slackSettings(valid).error).toBeNull();
     expect(slackSettings({ SLACK_WATCH_ENABLED: 'true' }).error).toBeTruthy();

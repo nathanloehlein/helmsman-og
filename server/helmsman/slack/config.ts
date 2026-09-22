@@ -51,13 +51,14 @@ export function slackSettings(env: Record<string, string | undefined>) {
 
 export function createSlackBrowserTransportSelector(firefox: (endpoint: string) => SlackBrowserTransport, cmux: SlackBrowserTransport) {
   const transports = new Map<string, SlackBrowserTransport>();
-  return (settings: Pick<ReturnType<typeof slackSettings>, 'browser' | 'firefoxWebDriverUrl'>): SlackBrowserTransport => {
+  const select = (settings: Pick<ReturnType<typeof slackSettings>, 'browser' | 'firefoxWebDriverUrl'>): SlackBrowserTransport => {
     if (settings.browser === 'cmux') return cmux;
     const endpoint = parseFirefoxWebDriverUrl(settings.firefoxWebDriverUrl);
     let transport = transports.get(endpoint);
     if (!transport) { transport = firefox(endpoint); transports.set(endpoint, transport); }
     return transport;
   };
+  return Object.assign(select, { reset: () => transports.clear() });
 }
 
 export function publicSlackSettings(env: Record<string, string | undefined>): Record<string, unknown> {

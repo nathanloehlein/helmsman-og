@@ -1,4 +1,5 @@
 import { renderLoading } from './renderLoading';
+import { renderFirefoxBridge, type FirefoxBridgeView } from './renderFirefoxBridge';
 import { term, isPirateMode, TERMINOLOGY, TERMINOLOGY_REFERENCE_KEYS } from './logic/terminology';
 import { renderLocalGit } from './renderLocalGit';
 import { renderThemePreview } from './renderThemePreview';
@@ -1170,6 +1171,7 @@ export function renderBugsView(res: BugsResponse, opts: BugsViewOpts): string {
 }
 
 export interface ConfigViewOpts {
+  firefoxBridge?: FirefoxBridgeView;
   repos: string[];
   selectedRepo: string | null;
   themeId: string;
@@ -1315,6 +1317,7 @@ export function renderConfigView(uiConfig: UiConfig, opts: ConfigViewOpts): stri
               <button type="button" class="config-save" data-key="${key}" aria-label="Save ${label}">Save</button><span class="config-error" id="error-${key}" role="alert"></span>
             </div>`).join('')}
         </div>
+        ${uiConfig.config?.SLACK_BROWSER === 'firefox' ? renderFirefoxBridge(opts.firefoxBridge) : ''}
         <p class="config-warning" id="slack-review-setup">Turning Slack off stops automatic reviews and blocks manual requests. Saved settings are retained. Uses your signed-in Slack browser. Set a channel name or ID and an @group handle. Existing message drafts are preserved. Firefox uses your regular signed-in browser with background automation enabled and the local bridge running (<code>npm run slack:firefox</code>). The browser used to view Helmsman can be different.</p>
       </section>
       ${renderLocalGit(opts.localGit ?? emptyLocalGit(opts.selectedRepo))}

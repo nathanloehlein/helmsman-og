@@ -1,3 +1,5 @@
+import { fetchFirefoxBridge } from './data/firefoxBridge';
+import { renderFirefoxBridge, type FirefoxBridgeView } from './renderFirefoxBridge';
 import { renderLoading } from './renderLoading';
 import { openFeedback } from './renderFeedback';
 import { applyBootTerminology } from './logic/bootTerminology';
@@ -163,6 +165,8 @@ export class DashboardView {
   private runHistoryPending: { repo: string | null; offset: number; promise: Promise<void> } | null = null;
   private autoClaimRepos: string[] = [];
   private caps: AgentCaps = { maxAttempts: 1, maxCostUsd: null };
+  private firefoxBridge: FirefoxBridgeView = { status: null };
+  private firefoxBridgeSeq = 0;
   private uiConfig: UiConfig = { config: {}, overridden: [] };
   private configLoaded = false;
   private configLoading = false;
@@ -823,9 +827,9 @@ export class DashboardView {
         }
       }
       await this.loadReviewRequests(force);
-    } else if (this.view === 'config' && force) {
-      this.paintConfig();
-      void this.loadLocalGit();
+    } else if (this.view === 'config') {
+      if (force) { this.paintConfig(); void this.loadLocalGit(); }
+      if (localDue) void this.loadFirefoxBridge();
     } else if (this.view === 'todos' && localDue) {
       await this.loadTodos();
     } else if (this.view === 'runs' && localDue && this.contentView === 'runs') {
@@ -1600,6 +1604,33 @@ export class DashboardView {
     return promise;
   }
 
+  private paintFirefoxBridge(): void {
+    const slot = this.root.querySelector('[data-firefox-bridge]');
+    if (!slot) return;
+    const template = document.createElement('template');
+    template.innerHTML = renderFirefoxBridge(this.firefoxBridge);
+    const next = template.content.firstElementChild;
+    if (next) slot.replaceWith(next);
+  }
+
+  private async loadFirefoxBridge(start = false): Promise<void> {
+    if (this.firefoxBridge.pending || this.uiConfig.config?.SLACK_BROWSER !== 'firefox') return;
+    const seq = ++this.firefoxBridgeSeq;
+    const endpoint = this.uiConfig.config?.SLACK_FIREFOX_WEBDRIVER_URL;
+    this.firefoxBridge = { ...this.firefoxBridge, pending: start ? 'start' : 'check', error: null };
+    this.paintFirefoxBridge();
+    const status = await fetchFirefoxBridge(start);
+    if (this.destroyed || seq !== this.firefoxBridgeSeq) return;
+    if (endpoint !== this.uiConfig.config?.SLACK_FIREFOX_WEBDRIVER_URL) {
+      this.firefoxBridge = { status: null };
+      void this.loadFirefoxBridge();
+      return;
+    }
+    this.firefoxBridge = { status, pending: null, error: status ? null : start
+      ? 'Could not confirm bridge startup. Check status before trying again.' : 'Firefox bridge status is unavailable. Check the Helmsman connection.' };
+    this.paintFirefoxBridge();
+  }
+
   private captureConfigDrafts(): void {
     for (const row of this.root.querySelectorAll<HTMLElement>('.config-row[data-key]')) {
       const key = row.dataset.key;
@@ -1626,6 +1657,7 @@ export class DashboardView {
       this.configError = 'Settings could not be loaded. Check the Helmsman connection and retry. Unsaved changes are kept.';
     }
     if (paint && this.view === 'config') this.paintConfig();
+    if (this.view === 'config') void this.loadFirefoxBridge();
   }
 
   private paintConfig(): void {
@@ -1640,6 +1672,7 @@ export class DashboardView {
       themeId: this.themeId,
       localGit: this.localGit,
       loading: this.configLoading,
+      firefoxBridge: this.firefoxBridge,
       error: this.configError,
       unavailable: !this.configLoaded,
     }));
@@ -2301,6 +2334,11 @@ export class DashboardView {
       event.preventDefault();
       event.stopPropagation();
       if (!retryButton.disabled) void this.handleRetryRun(retryButton);
+      return;
+    }
+    const firefoxBridgeAction = target.closest<HTMLButtonElement>('[data-firefox-bridge-check], [data-firefox-bridge-start]');
+    if (firefoxBridgeAction) {
+      if (!firefoxBridgeAction.disabled) void this.loadFirefoxBridge(firefoxBridgeAction.hasAttribute('data-firefox-bridge-start'));
       return;
     }
     const slackReview = target.closest<HTMLButtonElement>('[data-slack-review-request]');
