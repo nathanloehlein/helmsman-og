@@ -15,6 +15,23 @@ const mount = (html: string) => {
 const detailed: OpenPr = { ...pr, comments: 7, reviews: { approved: 2, changesRequested: 1, commented: 3, requested: 4 } };
 
 describe('compact PR list stats', () => {
+  it('shows all three requested counts on authored PRs, including zero changes', () => {
+    const element = mount(renderPrLists({ reviewRequests: state([]), authored: state([{ ...detailed, reviews: { approved: 2, changesRequested: 0, commented: 3, requested: 0 } }]) }));
+    const stats = element.querySelector('.pr-authored .pr-list-stats');
+    expect(stats?.querySelectorAll('.pr-list-stat')).toHaveLength(3);
+    expect(stats?.querySelector('[data-pr-stat="approved"]')?.getAttribute('aria-label')).toBe('approvals: 2');
+    expect(stats?.querySelector('[data-pr-stat="changes"]')?.getAttribute('aria-label')).toBe('changes requested: 0');
+    expect(stats?.querySelector('[data-pr-stat="comments"]')?.getAttribute('aria-label')).toBe('comments: 7');
+  });
+
+  it('distinguishes unavailable authored counts from confirmed zeros', () => {
+    const element = mount(renderPrLists({ reviewRequests: state([]), authored: state([{ ...pr, comments: 0 }]) }));
+    const stats = element.querySelector('.pr-authored .pr-list-stats');
+    expect(stats?.querySelector('[data-pr-stat="comments"]')?.textContent).toBe('0');
+    expect(stats?.querySelector('[data-pr-stat="approved"]')?.textContent).toBe('—');
+    expect(stats?.querySelector('[data-pr-stat="changes"]')?.getAttribute('aria-label')).toBe('changes requested: unavailable');
+  });
+
   it('shows supplied counts below the identity with accessible icon labels', () => {
     const element = mount(renderRepoPrs(pr.repo, state([detailed])));
     const stats = element.querySelector('.pr-list-summary .pr-list-stats');

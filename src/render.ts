@@ -746,17 +746,21 @@ function slackReviewButton(repo: string, number: number, unavailable: string = '
   </span>`;
 }
 
-function prListStats(pr: OpenPr): { html: string; label: string } {
+function prListStats(pr: OpenPr, authored = false): { html: string; label: string } {
   const stats = [
     { key: 'comments', value: pr.comments, icon: ICON_COMMENT, label: 'comments', detail: 'Discussion and inline comments', includeZero: true },
     { key: 'approved', value: pr.reviews?.approved, icon: ICON_CHECK, label: 'approvals', detail: 'Approvals', includeZero: true },
     { key: 'changes', value: pr.reviews?.changesRequested, icon: ICON_X_MARK, label: 'changes requested', detail: 'Changes requested', includeZero: false },
     { key: 'pending', value: pr.reviews?.requested, icon: ICON_REVIEW_PENDING, label: `pending ${term('reviews').toLowerCase()}`, detail: `Pending ${term('reviews').toLowerCase()}`, includeZero: false },
-  ].flatMap(stat => typeof stat.value === 'number' && Number.isSafeInteger(stat.value) && stat.value >= 0 && (stat.includeZero || stat.value > 0)
-    ? [{ ...stat, value: stat.value }] : []);
+  ].flatMap(stat => {
+    const required = authored && stat.key !== 'pending';
+    const value = typeof stat.value === 'number' && Number.isSafeInteger(stat.value) && stat.value >= 0 ? stat.value : null;
+    const visible = value === null ? required : stat.includeZero || required || value > 0;
+    return visible ? [{ ...stat, value }] : [];
+  });
   return {
-    label: stats.map(stat => `${stat.label}: ${stat.value}`).join('; '),
-    html: stats.length ? `<span class="pr-list-stats mono">${stats.map(stat => `<span class="pr-list-stat" data-pr-stat="${stat.key}" role="img" aria-label="${esc(stat.label)}: ${stat.value}" title="${esc(stat.detail)}: ${stat.value}">${stat.icon}<span aria-hidden="true">${stat.value}</span></span>`).join('')}</span>` : '',
+    label: stats.map(stat => `${stat.label}: ${stat.value ?? 'unavailable'}`).join('; '),
+    html: stats.length ? `<span class="pr-list-stats mono">${stats.map(stat => `<span class="pr-list-stat" data-pr-stat="${stat.key}" role="img" aria-label="${esc(stat.label)}: ${stat.value ?? 'unavailable'}" title="${esc(stat.detail)}: ${stat.value ?? 'unavailable'}">${stat.icon}<span aria-hidden="true">${stat.value ?? '—'}</span></span>`).join('')}</span>` : '',
   };
 }
 
@@ -765,7 +769,7 @@ function renderPrList(state: PrListState | undefined, emptyMessage: string, requ
   const rows: string = prs.map((pr) => {
     const chip = reviewChip(pr.reviewDecision ?? '');
     const title: string = typeof pr.title === 'string' ? pr.title : 'Untitled pull request';
-    const stats = prListStats(pr);
+    const stats = prListStats(pr, requestReview);
     return `<li class="lane pr-list-row" data-repo="${esc(pr.repo)}" data-number="${pr.number}" role="button" tabindex="0" aria-label="Open ${esc(pr.repo)} ${term('pr')} #${pr.number}: ${esc(title)}${stats.label ? `; ${esc(stats.label)}` : ''}">
       <a class="ticket-id mono app-link" href="${esc(routeHref({ view: 'prs', repo: selectedRepo, prRepo: pr.repo, pr: pr.number, pane: 'lookup' }))}">#${pr.number}</a>
       <span class="pr-list-summary"><span class="queue-title">${esc(title)}</span><span class="agent-repo mono">${esc(pr.repo)}</span>${stats.html}</span>
