@@ -2,6 +2,7 @@ import { clarificationPrompt } from './clarification-prompt';
 import type { AgentTask } from './adapter';
 import { agentAttribution, appendAgentByline } from '../agent-attribution';
 import { PRE_PR_REVIEW_SUMMARY_LIMIT } from '../pre-pr-workflow';
+import { REVIEW_CALIBRATION } from './review-calibration';
 
 export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-code'): string {
   const stage = task.prePr;
@@ -59,7 +60,8 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
       '- Treat the author’s explanation, tests, and claimed success as hypotheses to verify, not proof. Try to falsify the core claims with realistic supported inputs, failure paths, state transitions, boundaries, concurrency, and external effects. Seek counterevidence before accepting any finding.',
       '',
       '## Material findings only',
-      '- REQUEST_CHANGES requires an evidenced material problem introduced or newly exposed by this diff: an obvious logic flaw, a consequential structural or integration defect, or a missed explicit acceptance criterion. Establish the supported trigger, changed code path, expected versus actual behavior, and material consequence. A clear source trace is sufficient evidence; reproduce failures when useful.',
+      ...REVIEW_CALIBRATION,
+      '- REQUEST_CHANGES requires an evidenced material problem introduced or newly exposed by this diff: an obvious logic flaw, a consequential structural or integration defect, or a missed explicit material acceptance criterion. Establish the supported trigger, changed code path, expected versus actual behavior, and material consequence. A clear source trace is sufficient evidence; reproduce failures when useful.',
       '- Omit style preferences, speculative hardening, unsupported hypothetical inputs, refactor wishes, minor visual polish, and standalone missing tests/docs/logs/type annotations. Test gaps qualify only when they demonstrate a defect or miss an explicit material requirement. Accessibility, performance, and external effects qualify when evidence establishes substantial impact.',
       '- Repository instructions and skills inform verification; hygiene checklists do not make every improvement a blocker. Adversarial review has no finding quota. Do not manufacture issues to justify another round.',
       '',
@@ -79,7 +81,7 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
       `- Schema: ${JSON.stringify({ baseSha: stage.baseSha, headSha: stage.headSha, verdict: 'APPROVE | REQUEST_CHANGES | COMMENT', summary: 'Concise review result and any material limitations', findings: [{ title: 'Material defect', body: 'Evidence, consequence, and reliable fix in GitHub-flavored Markdown', path: 'optional/repository-relative-file', line: 1 }] })}`,
       `- baseSha must be exactly ${stage.baseSha}; headSha must be exactly ${stage.headSha}. verdict must be exactly one of APPROVE, REQUEST_CHANGES, or COMMENT. findings must be an array; use [] when there are no material findings. Do not wrap the JSON in Markdown fences.`,
       '- Choose APPROVE only if the required review completed with no material findings or unresolved material questions. Choose REQUEST_CHANGES for verified material findings. Choose COMMENT for missing required tools, skill, context, or other incomplete review; it does not pass the gate.',
-      `- Keep the summary within ${PRE_PR_REVIEW_SUMMARY_LIMIT} characters, including whitespace and any byline, and report at most 40 material findings. Each finding must contain a nonempty title (at most 180 characters) and body (at most 4,000 characters). Prefer an exact repository-relative path and a positive line number from the pinned revision when available. Include a directly applicable code sample or concrete fix when supported; otherwise state the required behavior. Keep summaries concise, without audit diaries or optional improvement lists.`,
+      `- Keep the summary within ${PRE_PR_REVIEW_SUMMARY_LIMIT} characters, including whitespace and any byline, and report at most 40 material findings. Each finding must contain a nonempty title (at most 180 characters) and body (at most 4,000 characters). Prefer an exact repository-relative path and a positive line number from the pinned revision when available. Include a directly applicable code sample or concrete fix when supported; otherwise state the required behavior. Include brief Non-blocking notes for credible rare edge cases in the summary when present. Keep summaries concise, without audit diaries or unrelated optional improvement lists.`,
       `- Before finishing, read the report locally, parse it with JSON.parse, and verify its complete schema and exact revisions. Check that summary is nonempty and summary.length <= ${PRE_PR_REVIEW_SUMMARY_LIMIT} using JavaScript string length, including any byline. If it is too long, shorten only the summary and repeat this validation before finishing.`,
       '- Do not modify code, commit, push, open a PR, request reviewers, publish GitHub comments/reviews, merge, or approve on GitHub. Never include secrets in the report.',
     ].join('\n');

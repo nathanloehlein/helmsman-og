@@ -803,8 +803,15 @@ Review model selection defaults to these tiers for Codex:
 Automatic routing is limited to low and medium. File size, sensitive paths, and unavailable diffs do not trigger high effort. Claude Code uses Sonnet for low/medium and Opus for high; the command adapter keeps its own model behavior. Explicit selections in PR controls override automatic tuning. The assessed revision, model, effort, complexity, and reason are saved with the run; review checkouts are pinned to that revision.
 
 Reviewers reserve request-changes recommendations for demonstrated material logic,
-structural/integration defects, or missed explicit acceptance criteria. They omit
-standalone test/doc/style suggestions and speculative hardening. A lead delegates
+structural/integration defects, or missed explicit material acceptance criteria.
+The goal is a reliable implementation for customers, not perfection. Suggestions
+stay within ticket scope; any necessary expansion must explain the material
+requirement or customer regression it addresses and propose the smallest sufficient fix.
+Credible rare edge cases appear as brief **Non-blocking** summary notes, outside
+findings arrays, and do not prevent approval or trigger another fix round. A rare
+case blocks only with evidence of a material requirement failure or serious customer
+harm. Reviewers omit standalone test/doc/style suggestions and speculative hardening.
+A lead passes these rules to delegates covering
 applicable logic, acceptance/tests, UX, and external-effects scopes, then verifies
 and deduplicates findings. Codex review runs enable multi-agent support and require
 an installed `$review-agent` skill for each read-only leaf reviewer. The lead alone

@@ -37,6 +37,18 @@ describe('pre-PR adversarial workflow', () => {
     expect(publish).toHaveBeenCalledExactlyOnceWith({ baseSha, headSha: firstHead, branch: 'agent/test-1' });
   });
 
+  it('allows approval with advisory summary notes without a fix round', async () => {
+    const { options, review, runAuthor, publish } = setup();
+    review.mockImplementation(async (_reviewer, context) => ({
+      ...report(context.headSha),
+      summary: 'Approved. Non-blocking: a rare upstream delay may keep the progress indicator visible longer; the purchase still completes safely.',
+    }));
+    await expect(runPrePrWorkflow(task, options)).resolves.toBe(123);
+    expect(runAuthor).toHaveBeenCalledTimes(1);
+    expect(runAuthor.mock.calls[0]?.[0]).toBe('implement');
+    expect(publish).toHaveBeenCalledExactlyOnceWith({ baseSha, headSha: firstHead, branch: 'agent/test-1' });
+  });
+
   it('uses the same CLI reviewer when it is the only installed provider', async () => {
     const { options, review } = setup();
     options.writerId = 'claude-code';

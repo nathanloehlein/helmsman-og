@@ -56,6 +56,11 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain('does not pass the gate');
     expect(prompt).toContain('Try to falsify');
     expect(prompt).toContain('no finding quota');
+    expect(prompt).toContain('Keep suggestions within the ticket scope');
+    expect(prompt).toContain('perfection is not the acceptance bar');
+    expect(prompt).toContain('Non-blocking notes do not belong in findings arrays');
+    expect(prompt).toContain('must not change an otherwise APPROVE verdict');
+    expect(prompt).toContain('Pass these scope and calibration rules to every review sub-agent');
     expect(prompt).toContain('focused sub-agents');
     expect(prompt).toContain('Do not modify code, commit, push');
     expect(prompt).toContain(`summary.length <= ${PRE_PR_REVIEW_SUMMARY_LIMIT}`);

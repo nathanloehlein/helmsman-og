@@ -62,6 +62,9 @@ describe('codexArgs', () => {
     expect(args.at(-1)).toContain('Helmsman publishes');
     expect(args.at(-1)).toContain('independent adversarial reviewer');
     expect(args.at(-1)).toContain('realistic supported inputs');
+    expect(args.at(-1)).toContain('Keep suggestions within the ticket scope');
+    expect(args.at(-1)).toContain('Non-blocking notes do not belong in findings arrays');
+    expect(args.at(-1)).toContain('must not change an otherwise APPROVE verdict');
   });
 
   it('does not enable review delegation or its skill for coding and feedback runs', () => {

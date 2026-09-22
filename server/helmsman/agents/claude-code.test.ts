@@ -96,6 +96,9 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('REQUEST_CHANGES requires an evidenced material problem');
     expect(prompt).toContain('Never request changes solely because tests could not run');
     expect(prompt).toContain('no remaining material issues');
+    expect(prompt).toContain('Keep suggestions within the ticket scope');
+    expect(prompt).toContain('Non-blocking notes do not belong in findings arrays');
+    expect(prompt).toContain('must not change an otherwise APPROVE verdict');
     expect(prompt).toContain('reference its original thread once');
     expect(prompt).toContain('focused sub-agents');
     expect(prompt).not.toContain('$review-agent');
