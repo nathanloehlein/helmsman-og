@@ -627,10 +627,10 @@ describe('dashboard GitHub caching', () => {
     vi.stubGlobal('fetch', fetchMock);
     await Promise.all([fetchAuthoredPrs(github), fetchOpenAuthoredPrs(github)]);
     await Promise.all([fetchAuthoredPrs(github), fetchOpenAuthoredPrs(github)]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     await fetchPrStatus(github, 'octo/repo', 5);
     await fetchPrStatus(github, 'octo/repo', 5);
-    expect(fetchMock).toHaveBeenCalledTimes(9);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/reviews'))).toHaveLength(3);
   });
 });

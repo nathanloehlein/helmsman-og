@@ -16,7 +16,7 @@ interface SearchItem {
   pull_request?: { merged_at: string | null };
 }
 
-export interface OpenAuthoredPr {
+export interface OpenAuthoredPr extends PrListStats {
   number: number;
   title: string;
   repo: string;
@@ -228,13 +228,18 @@ export interface PrListStats {
 }
 
 export async function fetchPrListStats(github: GithubConfig, repo: string, prNumber: number, isActive?: () => boolean): Promise<PrListStats> {
+  return (await fetchPrListInfo(github, repo, prNumber, isActive)).stats;
+}
+
+async function fetchPrListInfo(github: GithubConfig, repo: string, prNumber: number, isActive?: () => boolean): Promise<{ stats: PrListStats; reviewDecision: PrReviewDecision }> {
   const [detail, reviews] = await Promise.all([
     cachedGithubRead(github, `${API}/repos/${repo}/pulls/${prNumber}`)
       .then(async response => response.ok ? await response.json() as unknown : null)
       .catch(() => null),
     fetchReviews(github, repo, prNumber, { cached: true, strict: true, isActive }),
   ]);
-  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return {};
+  const reviewDecision = reviews === null ? null : decisionFromTally(tallyReviews(effectiveReviews(reviews), 0));
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return { stats: {}, reviewDecision };
   const body = detail as Record<string, unknown>;
   const count = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
   const stats: PrListStats = {};
@@ -260,7 +265,7 @@ export async function fetchPrListStats(github: GithubConfig, repo: string, prNum
       stats.reviews = tallyReviews(effectiveReviews(reviews), new Set(users).size + new Set(teams).size);
     }
   }
-  return stats;
+  return { stats, reviewDecision };
 }
 
 async function latestReviewDecision(
@@ -370,23 +375,20 @@ interface PullListItem {
   user: { login: string } | null;
 }
 
-async function toOpenAuthoredPr(
-  github: GithubConfig,
+function toOpenAuthoredPr(
   repo: string,
   number: number,
   title: string,
   draft: boolean,
   createdAt: string,
-): Promise<OpenAuthoredPr> {
+): OpenAuthoredPr {
   return {
     number,
     title,
     repo,
     draft,
     createdAt,
-    reviewDecision: await latestReviewDecision(github, repo, number).catch(
-      (): PrReviewDecision => 'REVIEW_REQUIRED',
-    ),
+    reviewDecision: null,
   };
 }
 
@@ -401,14 +403,15 @@ async function searchOpenAuthoredPrs(github: GithubConfig): Promise<OpenAuthored
   if (!res.ok) return [];
   const body: { items?: SearchItem[] } = await res.json();
   const items: SearchItem[] = body.items ?? [];
-  return Promise.all(
-    items.map((item) =>
-      toOpenAuthoredPr(github, repoFromUrl(item.repository_url), item.number, item.title, item.draft ?? false, item.created_at),
-    ),
+  return items.map((item) =>
+    toOpenAuthoredPr(repoFromUrl(item.repository_url), item.number, item.title, item.draft ?? false, item.created_at),
   );
 }
 
 const OPEN_PR_PAGE_CAP: number = 3;
+const OPEN_PR_STATS_LIMIT = 30;
+const OPEN_PR_STATS_CONCURRENCY = 4;
+const OPEN_PR_STATS_TIMEOUT_MS = 8_000;
 
 async function repoOpenAuthoredPrs(github: GithubConfig, repo: string): Promise<OpenAuthoredPr[]> {
   const found: OpenAuthoredPr[] = [];
@@ -425,7 +428,7 @@ async function repoOpenAuthoredPrs(github: GithubConfig, repo: string): Promise<
     if (!Array.isArray(items) || items.length === 0) break;
     for (const item of items) {
       if (item.user?.login === github.author) {
-        found.push(await toOpenAuthoredPr(github, repo, item.number, item.title, item.draft ?? false, item.created_at));
+        found.push(toOpenAuthoredPr(repo, item.number, item.title, item.draft ?? false, item.created_at));
       }
     }
     if (items.length < 100) break;
@@ -450,7 +453,33 @@ export async function fetchOpenAuthoredPrs(
   ]);
   const byKey: Map<string, OpenAuthoredPr> = new Map();
   for (const pr of [...searched, ...direct.flat()]) byKey.set(`${pr.repo}#${pr.number}`, pr);
-  return [...byKey.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const prs = [...byKey.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const pending = prs.slice(0, OPEN_PR_STATS_LIMIT);
+  if (!pending.length) return prs;
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>(resolve => {
+    timer = setTimeout(() => {
+      active = false;
+      resolve();
+    }, OPEN_PR_STATS_TIMEOUT_MS);
+  });
+  const workers = Promise.all(Array.from({ length: Math.min(OPEN_PR_STATS_CONCURRENCY, pending.length) }, async () => {
+    while (active) {
+      const pr = pending.shift();
+      if (!pr) return;
+      const info = await fetchPrListInfo(github, pr.repo, pr.number, () => active);
+      if (!active) return;
+      Object.assign(pr, info.stats, { reviewDecision: info.reviewDecision });
+    }
+  }));
+  try {
+    await Promise.race([workers, deadline]);
+  } finally {
+    active = false;
+    clearTimeout(timer);
+  }
+  return prs;
 }
 
 /**

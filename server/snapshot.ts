@@ -192,6 +192,8 @@ export function openPrToView(pr: OpenAuthoredPr): OpenPr {
     reviewDecision: pr.reviewDecision ?? 'REVIEW_REQUIRED',
     draft: pr.draft,
     createdAt: pr.createdAt,
+    ...(pr.comments === undefined ? {} : { comments: pr.comments }),
+    ...(pr.reviews === undefined ? {} : { reviews: pr.reviews }),
   };
 }
 
