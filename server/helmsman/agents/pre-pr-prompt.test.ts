@@ -70,6 +70,18 @@ describe('pre-PR prompt workflow boundaries', () => {
     else expect(prompt).not.toContain('$review-agent');
   });
 
+  it('gives a continued review its prior limitation and permits only ignored dependency/check outputs', () => {
+    const prompt = buildPrompt(task('review', { prePr: { stage: 'review', baseSha, headSha, reportPath,
+      incompleteReview: { reportPath: '/tmp/prior.json', summary: 'Required checks could not run without dependencies.' } } }));
+    expect(prompt).toContain('explicit continuation of a COMMENT review');
+    expect(prompt).toContain('Required checks could not run without dependencies.');
+    expect(prompt).toContain('use the pinned lockfile and repository package manager to install them');
+    expect(prompt).toContain('may write only git-ignored dependency/build/cache files');
+    expect(prompt).toContain('do not change tracked files, lockfiles, source, index, refs, or the prior report');
+    expect(prompt).toContain('retain COMMENT if essential checks or required review remain incomplete');
+    expect(prompt).toContain('Apart from the git-ignored dependency/build/cache outputs allowed above');
+  });
+
   it.each(['codex', 'claude-code'] as const)('keeps %s summary correction focused without a new review or delegation', runtime => {
     const priorPath = '/tmp/helmsman reports/prior review.json';
     const prompt = buildPrompt(task('review', {

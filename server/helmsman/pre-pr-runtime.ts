@@ -1,5 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { access, mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -277,9 +278,23 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
       const scope = localReviewScope(await git(['diff', '--numstat', '--no-renames', '-z', context.baseSha, context.headSha]), context.headSha);
       const choice = selectReviewModel(scope, reviewerId);
       emit({ kind: 'phase', text: `${reviewerId} review: ${choice.effort} effort — ${choice.reason}` });
+      const savedReport = savedReportPath ? await readPrePrReport(savedReportPath) : undefined;
+      let incompleteReview: NonNullable<AgentTask['prePr']>['incompleteReview'];
+      if (savedReportPath) {
+        try {
+          const parsed = parsePrePrReview(savedReport, context);
+          if (parsed.verdict === 'COMMENT') {
+            await recordValidatedReport(input.runsDir, runId, { stage: 'review', round: context.round, reviewer: reviewerId }, savedReportPath);
+            incompleteReview = { reportPath: savedReportPath, summary: parsed.summary };
+          }
+        } catch (error) { if (!(error instanceof PrePrSummaryTooLongError)) throw error; }
+      }
+      const attempt = incompleteReview ? randomUUID() : undefined;
+      const reportStage = attempt ? `review-resume-${attempt}` : 'review';
+      const reportPath = attempt ? join(artifactDir, `review-${context.round}-${reviewerId}.resume-${attempt}.json`)
+        : savedReportPath ?? join(artifactDir, `review-${context.round}-${reviewerId}.json`);
       const root = await mkdtemp(join(tmpdir(), 'helmsman-review-'));
       const worktree = join(root, 'checkout');
-      const reportPath = savedReportPath ?? join(artifactDir, `review-${context.round}-${reviewerId}.json`);
       try {
         if (!savedReportPath) await rm(reportPath, { force: true });
         if (input.task.dockerExecution) {
@@ -288,22 +303,25 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
           await sanitizeDockerGit(worktree, input.task.repo);
         } else await git(['worktree', 'add', '--detach', worktree, context.headSha]);
         const reviewTask: AgentTask = { ...input.task, model: choice.model, effort: choice.effort,
-          prePr: { stage: 'review', ...context, reportPath } };
+          prePr: { stage: 'review', ...context, reportPath, ...(incompleteReview ? { incompleteReview } : {}) } };
         const assertReviewUnchanged = async () => {
           if ((await git(['rev-parse', 'HEAD'], worktree)) !== context.headSha
             || await git(['status', '--porcelain', '--untracked-files=all'], worktree)) throw new Error('Reviewer modified its immutable worktree');
         };
-        if (!savedReportPath) await runStage(reviewerId, reviewTask, worktree);
+        if (!savedReportPath || incompleteReview) await runStage(reviewerId, reviewTask, worktree);
+        if (savedReportPath && JSON.stringify(await readPrePrReport(savedReportPath)) !== JSON.stringify(savedReport)) {
+          throw new PrePrGateError('review continuation modified the original report; publication blocked.');
+        }
         await assertReviewUnchanged();
         const originalReport = await readPrePrReport(reportPath);
         try {
           const parsed = parsePrePrReview(originalReport, context);
-          await recordValidatedReport(input.runsDir, runId, { stage: 'review', round: context.round, reviewer: reviewerId }, reportPath);
+          await recordValidatedReport(input.runsDir, runId, { stage: reportStage, round: context.round, reviewer: reviewerId }, reportPath);
           return parsed;
         } catch (error) {
           if (!(error instanceof PrePrSummaryTooLongError)) throw error;
           emit({ kind: 'phase', text: `${reviewerId}: ${error.message} Requesting one summary-only correction.` });
-          const correctedPath = join(artifactDir, `review-${context.round}-${reviewerId}.corrected.json`);
+          const correctedPath = reportPath.replace(/\.json$/, '.corrected.json');
           if (correctedPath === reportPath) throw new PrePrGateError('saved corrected summary is still too long; publication blocked.');
           await rm(correctedPath, { force: true });
           try {
@@ -315,7 +333,7 @@ export async function runPrePrRuntime(input: { task: AgentTask; writerId: PrePrR
             }
             const corrected = parsePrePrReview(await readPrePrReport(correctedPath), context);
             assertReviewSummaryCorrection(error.report, corrected);
-            await recordValidatedReport(input.runsDir, runId, { stage: 'review', round: context.round, reviewer: reviewerId }, correctedPath);
+            await recordValidatedReport(input.runsDir, runId, { stage: reportStage, round: context.round, reviewer: reviewerId }, correctedPath);
             return corrected;
           } catch (correctionError) {
             throw new PrePrGateError(`${reviewerId} summary correction failed after one attempt; publication blocked. ${correctionError instanceof Error ? correctionError.message : String(correctionError)}`);

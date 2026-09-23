@@ -37,6 +37,7 @@ export interface AgentTask {
     reportPath: string;
     feedback?: string;
     round?: number;
+    incompleteReview?: { reportPath: string; summary: string };
     summaryCorrection?: { reportPath: string; actualLength: number };
   };
 }

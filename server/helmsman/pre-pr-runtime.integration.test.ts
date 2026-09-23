@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
-import { chmod, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { readdir, chmod, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { PrePrSettings } from '../../src/logic/prePrSettings';
 import type { AgentTask } from './agents/adapter';
 import { PRE_PR_REVIEW_SUMMARY_LIMIT, type PrePrReviewerId } from './pre-pr-workflow';
+import { createRunArtifactStore } from './artifacts';
 import { gitBin, hasShebangShims } from '../test-support/platform';
 
 const exec = promisify(execFile);
@@ -18,7 +19,7 @@ const cliPath = fileURLToPath(new URL('./pre-pr-cli.ts', import.meta.url));
 const tsx = import.meta.resolve('tsx');
 
 async function fixture(mode: 'fix' | 'unavailable' | 'auth' | 'modified' | 'remote-moved' | 'ticket-title' | 'named-remote' | 'existing'
-  | 'summary-approval' | 'summary-fix' | 'summary-still-long' | 'summary-mutated-findings' | 'summary-mutated-verdict', settings?: PrePrSettings,
+  | 'resume-approval' | 'resume-comment' | 'resume-modified' | 'summary-approval' | 'summary-fix' | 'summary-still-long' | 'summary-mutated-findings' | 'summary-mutated-verdict', settings?: PrePrSettings,
   options: { task?: Partial<AgentTask>; writerId?: PrePrReviewerId; body?: string; existingBody?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'helmsman-runtime-'));
   const cwd = join(root, 'author');
@@ -99,10 +100,10 @@ if(id === 'git') {
     const baseSha = prompt.match(/Base revision: ([a-f0-9]+)/)[1];
     const headSha = prompt.match(/Head revision: ([a-f0-9]+)/)[1];
     const round = Number(prompt.match(/Round: (\d+)/)[1]);
-    if(env.TEST_MODE === 'modified') fs.appendFileSync('code.txt','reviewer edit\n');
+    if(env.TEST_MODE === 'modified' || (env.TEST_MODE === 'resume-modified' && prompt.includes('explicit continuation of a COMMENT review'))) fs.appendFileSync('code.txt','reviewer edit\n');
     const findings = ['fix','summary-fix','summary-mutated-findings'].includes(env.TEST_MODE) && round===1 ? [{title:'Missing guard',body:'Empty input breaks the primary workflow.',path:'code.txt',line:1}] : [];
     const summary = env.TEST_MODE.startsWith('summary-') && round===1 ? 'x'.repeat(Number(env.TEST_SUMMARY_LIMIT)+1) : findings.length?'Guard required':'No material findings';
-    fs.writeFileSync(reportPath,JSON.stringify({baseSha,headSha,verdict:findings.length?'REQUEST_CHANGES':'APPROVE',summary,findings}));
+    fs.writeFileSync(reportPath,JSON.stringify({baseSha,headSha,verdict:env.TEST_MODE.startsWith('resume-') && id==='codex' && (!prompt.includes('explicit continuation of a COMMENT review') || env.TEST_MODE==='resume-comment') ? 'COMMENT' : findings.length?'REQUEST_CHANGES':'APPROVE',summary,findings}));
   } else {
     fs.appendFileSync('code.txt',fix?'fixed\n':'implemented\n');
     runGit(['add','code.txt']); runGit(['commit','-m',fix?'fix':'implement']);
@@ -187,6 +188,55 @@ describe.skipIf(!hasShebangShims)('pre-PR runtime with real git and fake CLIs', 
       if (mode === 'summary-mutated-findings') expect(original.findings[0]?.body).toBe('Empty input breaks the primary workflow.');
       expect(JSON.parse(await readFile(steps[2].reportPath, 'utf8'))).toBeTruthy();
       await expect(readFile(env.state)).rejects.toThrow();
+    } finally { await rm(env.root, { recursive: true, force: true }); }
+  }, 30_000);
+
+  it.each(['resume-approval', 'resume-comment', 'resume-modified'] as const)('retries incomplete reviews on continuation without replacing prior reports: %s', async mode => {
+    const env = await fixture(mode, { reviewerCount: 2, maxRounds: 2, stageTimeoutMinutes: 10 }, { writerId: 'claude-code' });
+    try {
+      const first = await env.run();
+      expect(first.code, first.output).toBe(1);
+      const artifacts = join(env.root, 'runs', 'author.pre-pr');
+      const reviewerReports = { codex: join(artifacts, 'review-1-codex.json'), 'claude-code': join(artifacts, 'review-1-claude-code.json') };
+      const original = await readFile(reviewerReports.codex, 'utf8');
+      const approved = await readFile(reviewerReports['claude-code'], 'utf8');
+      const report = JSON.parse(original);
+      expect(report.verdict).toBe('COMMENT');
+      const store = createRunArtifactStore(join(env.root, 'runs', '.artifacts'));
+      const identity = { runId: 'author', stage: 'review', round: 1, reviewer: 'codex' };
+      expect(Buffer.from(await store.read(identity)).toString()).toBe(original);
+      const prePrResume = { baseSha: report.baseSha, headSha: report.headSha, branch: 'voyage/test', round: 1,
+        reviewerReports, metadataPath: join(artifacts, 'implement-0.json') };
+      for (let attempt = 0; attempt < (mode === 'resume-comment' ? 2 : 1); attempt++) {
+        const result = await env.run({ prePrResume });
+        expect(result.code, result.output).toBe(mode === 'resume-approval' ? 0 : 1);
+        if (mode === 'resume-modified') expect(result.output).toContain('Reviewer modified its immutable worktree');
+        expect(await readFile(reviewerReports.codex, 'utf8')).toBe(original);
+        expect(await readFile(reviewerReports['claude-code'], 'utf8')).toBe(approved);
+        expect(Buffer.from(await store.read(identity)).toString()).toBe(original);
+      }
+      const steps = (await readFile(env.transcript, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(steps.filter(step => step.stage === 'implement')).toHaveLength(1);
+      const reviews = steps.filter(step => step.stage === 'review');
+      expect(reviews.filter(step => step.id === 'claude')).toHaveLength(1);
+      const retries = reviews.slice(2);
+      expect(retries).toHaveLength(mode === 'resume-comment' ? 2 : 1);
+      expect(new Set(retries.map(step => step.reportPath)).size).toBe(retries.length);
+      for (const retry of retries) {
+        expect(retry.head).toBe(report.headSha);
+        expect(retry.reportPath).toMatch(/review-1-codex\.resume-[a-f0-9-]+\.json$/);
+        const attempt = retry.reportPath.match(/\.resume-([a-f0-9-]+)\.json$/)?.[1];
+        if (mode !== 'resume-modified') {
+          const refreshed = Buffer.from(await store.read({ ...identity, stage: `review-resume-${attempt}` })).toString();
+          expect(refreshed).toBe(await readFile(retry.reportPath, 'utf8'));
+        }
+      }
+      if (mode !== 'resume-approval') {
+        expect(steps.some(step => step.stage === 'push' || step.stage === 'publish')).toBe(false);
+        await expect(readFile(env.state)).rejects.toThrow();
+      }
+      expect((await readdir(join(env.root, 'runs', '.artifacts', 'author'))).filter(name => name.startsWith('review-resume-') && name.endsWith('.artifact')))
+        .toHaveLength(mode === 'resume-modified' ? 0 : retries.length);
     } finally { await rm(env.root, { recursive: true, force: true }); }
   }, 30_000);
 
