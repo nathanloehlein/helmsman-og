@@ -21,6 +21,7 @@ export interface PrepareExecutionInput {
   skills?: readonly string[];
   skillsRoots?: readonly string[];
   store?: WorkflowStore;
+  allowPromptUpgrade?: boolean;
 }
 
 export interface PreparedExecution {
@@ -78,13 +79,12 @@ export async function prepareExecution(input: PrepareExecutionInput): Promise<Pr
     const found = await declarations(requestedSkills, roots);
     const verified: VerifiedSkill[] = [];
     for (const [name, root] of found.roots) verified.push(...await preflightSkills({ declarations: found.declarations.filter(item => item.name === name), trustedNames: new Set(requestedSkills), skillsRoot: root }));
-    if (existingSnapshot && (existingSnapshot.promptCodeHash !== await promptCodeHash()
-      || JSON.stringify(existingSnapshot.skills) !== JSON.stringify(found.declarations.sort((a, b) => a.name.localeCompare(b.name))))) {
+    if (existingSnapshot && JSON.stringify(existingSnapshot.skills) !== JSON.stringify(found.declarations.sort((a, b) => a.name.localeCompare(b.name)))) {
       throw new Error('Required skills do not match the saved workflow snapshot');
     }
-    const defaults = input.provider === 'codex' ? codexSettings({ model: input.model ?? input.task.model, effort: input.effort ?? input.task.effort }) : { model: input.model ?? input.task.model, effort: input.effort ?? input.task.effort };
-    const snapshot = existingSnapshot ?? store.createSnapshot({ workflowId: input.workflow, model: defaults.model ?? input.model, effort: defaults.effort ?? input.effort,
-      promptCodeHash: await promptCodeHash(), reviewSettings: input.reviewSettings as unknown as Record<string, unknown>, skills: found.declarations });
+    const currentPromptHash = await promptCodeHash();
+    const promptChanged = existingSnapshot && existingSnapshot.promptCodeHash !== currentPromptHash;
+    if (promptChanged && !input.allowPromptUpgrade) throw new Error('Prompt implementation does not match the saved workflow snapshot; explicit continuation is required to upgrade it.');
     const skillsPath = join(input.runsDir, `${input.runId}.runtime`);
     const installRoot = join(skillsPath, 'skills');
     if (await existing(installRoot)) {
@@ -92,6 +92,13 @@ export async function prepareExecution(input: PrepareExecutionInput): Promise<Pr
         if (await hashSkillDirectory(join(installRoot, skill.name)) !== skill.contentHash) throw new Error(`Provisioned skill ${skill.name} no longer matches the saved workflow snapshot`);
       }
     } else await installVerifiedSkills(verified, installRoot);
+    const defaults = input.provider === 'codex' ? codexSettings({ model: input.model ?? input.task.model, effort: input.effort ?? input.task.effort }) : { model: input.model ?? input.task.model, effort: input.effort ?? input.task.effort };
+    const snapshot = existingSnapshot
+      ? promptChanged ? store.createSnapshot({ workflowId: existingSnapshot.workflowId, version: existingSnapshot.version ?? existingSnapshot.definition.version,
+        model: existingSnapshot.model, effort: existingSnapshot.effort, promptCodeHash: currentPromptHash,
+        reviewSettings: existingSnapshot.reviewSettings, skills: existingSnapshot.skills }) : existingSnapshot
+      : store.createSnapshot({ workflowId: input.workflow, model: defaults.model ?? input.model, effort: defaults.effort ?? input.effort,
+        promptCodeHash: currentPromptHash, reviewSettings: input.reviewSettings as unknown as Record<string, unknown>, skills: found.declarations });
     const reviewSettings = (existingSnapshot?.reviewSettings ?? input.reviewSettings) as PrePrSettings;
     const model = snapshot.model;
     const effort = snapshot.effort;

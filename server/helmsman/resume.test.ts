@@ -88,6 +88,24 @@ describe('same-voyage pre-PR continuation', () => {
     expect(f.git('rev-parse', 'HEAD')).toBe(f.headSha);
   });
 
+  it('audits a prompt snapshot upgrade after launch while archiving the original task', async () => {
+    const f = fixture();
+    const previous = 'a'.repeat(64);
+    const next = 'b'.repeat(64);
+    const task = { ...f.task, workflowSnapshotId: previous };
+    const spec = { ...f.spec, args: [JSON.stringify({ task, settings: f.settings, writerId: 'codex', runsDir: f.deps.runsDir })] };
+    writeFileSync(f.row.specPath!, JSON.stringify(spec));
+    f.row.taskJson = JSON.stringify(task);
+    f.db.updateRun(f.row.id, { taskJson: f.row.taskJson });
+    const result = await resumeFailedPrePrRun(f.row, { ...f.deps, prepareTask: async saved => ({ ...saved, workflowSnapshotId: next }) });
+    expect(JSON.parse(result.taskJson ?? '{}').workflowSnapshotId).toBe(next);
+    const phase = f.db.listEvents(f.row.id).find(event => event.text.includes('upgraded prompt snapshot'));
+    expect(phase?.text).toContain(`${previous} to ${next}`);
+    expect(f.deps.host.launch).toHaveBeenCalledTimes(1);
+    const archive = readdirSync(f.deps.runsDir).find(name => name.startsWith(`${f.row.id}.attempt-1-`));
+    expect(JSON.parse(readFileSync(join(f.deps.runsDir, archive!, 'spec.json'), 'utf8'))).toEqual(spec);
+  });
+
   it.each(['dirty', 'changed-head', 'malformed-report', 'missing-report', 'invalid-settings', 'unconsumed-log', 'branch-changed', 'running', 'todo', 'host-alive', 'cancelled'])('rejects %s before launching', async reason => {
     const f = fixture();
     if (reason === 'dirty') writeFileSync(join(f.cwd, 'unrelated.txt'), 'draft');

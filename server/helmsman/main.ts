@@ -353,7 +353,7 @@ async function resumeVoyage(runId: string): Promise<void> {
       prepareTask: async task => {
         task = pinModelRouting(task, requireGoCaas());
         if (task.modelRouting === 'gocaas') await goCaasKey();
-        const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task, provider: row.adapter === 'pre-pr:codex' ? 'codex' : 'claude-code', workflow: 'coding', reviewSettings: cfg.prePr, model: task.model, effort: task.effort });
+        const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task, provider: row.adapter === 'pre-pr:codex' ? 'codex' : 'claude-code', workflow: 'coding', reviewSettings: cfg.prePr, model: task.model, effort: task.effort, allowPromptUpgrade: true });
         if (prepared.task.dockerExecution) {
           if (host.kind !== 'docker') throw new ResumeError('Select the Docker host before continuing an isolated voyage.');
           prepared.task.dockerExecution = { ...prepared.task.dockerExecution, capability: gateway.issue(runId, 86_400_000).token };

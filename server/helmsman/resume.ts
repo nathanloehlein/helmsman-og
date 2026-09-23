@@ -135,6 +135,7 @@ export async function resumeFailedPrePrRun(row: RunRow, deps: { db: Db; host: Ru
   if (!current || current.status !== 'failed' || current.attempt !== row.attempt || current.taskJson !== row.taskJson) {
     throw new ResumeError('The voyage changed while its checkpoint was being verified.');
   }
+  const previousSnapshotId = checkpoint.task.workflowSnapshotId;
   if (deps.prepareTask) checkpoint.task = await deps.prepareTask(checkpoint.task);
   const adapter = prePrAdapter(checkpoint.writerId === 'codex' ? codexAdapter : claudeCodeAdapter, resolve(deps.runsDir), checkpoint.settings);
   const command = adapter.buildCommand(checkpoint.task);
@@ -150,6 +151,9 @@ export async function resumeFailedPrePrRun(row: RunRow, deps: { db: Db; host: Ru
     ref = await deps.host.launch({ runId: row.id, ...command, cwd: checkpoint.cwd,
       logPath: checkpoint.logPath, exitPath: checkpoint.exitPath, specPath: checkpoint.specPath });
     deps.db.updateRun(row.id, { hostKind: ref.kind, hostRef: JSON.stringify(ref) });
+    if (previousSnapshotId && checkpoint.task.workflowSnapshotId && previousSnapshotId !== checkpoint.task.workflowSnapshotId) {
+      deps.db.appendEvent(row.id, 'phase', `Explicit continuation upgraded prompt snapshot ${previousSnapshotId} to ${checkpoint.task.workflowSnapshotId}; prior workflow choices, verified skills, and original attempt retained.`, deps.now());
+    }
     deps.db.appendEvent(row.id, 'phase', `Continuing preserved revision ${checkpoint.task.prePrResume?.headSha} from review round ${checkpoint.task.prePrResume?.round}; original implementation and history retained.`, deps.now());
     const resumed = deps.db.getRun(row.id);
     if (!resumed) throw new Error('The resumed voyage could not be read.');
