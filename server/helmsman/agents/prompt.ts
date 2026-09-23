@@ -70,7 +70,15 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       ``,
       `## Steps`,
       attribution,
-      `- Run the tests, commit, and push to the same branch.`,
+      `- Read the PR description, linked ticket requirements, all submitted reviews, PR comments, and inline review threads, including paginated GitHub API results. Inventory every actionable finding: blockers, requested changes, and non-blocking suggestions, including supplied findings and findings written only in review summaries. Include resolved and outdated threads; a resolved flag is not an explanatory response. Any finding without an accurate GitHub response explaining its current disposition still needs a response. Do not rely on the supplied feedback excerpt alone.`,
+      `- Evaluate each finding against the actual code and ticket requirements. Keep changes within the ticket scope unless a concrete customer impact or regression justifies expanding it. Rare edge cases and optional improvements do not automatically require code changes, but they still require a GitHub response.`,
+      `- Implement the warranted fixes, run relevant checks, then commit and push to the same branch when code changed. Do not create an empty commit for a response-only outcome.`,
+      ``,
+      `## Respond to every finding on GitHub`,
+      `- Publish a response for every inventoried finding, including blockers, requested changes, and non-blocking suggestions. For inline findings, reply in the original review thread. For findings in review summaries or PR comments, publish a PR comment linking to the original review/comment and clearly identify each finding with its own disposition. A local report or final agent message is not a substitute for GitHub responses.`,
+      `- For a fixed finding, explain what changed, link the pushed commit, and state the relevant validation result and any limitations. For an unchanged, already addressed, declined, deferred, or blocked finding, explain the specific reason with evidence; identify any remaining decision or action needed. Never claim a fix or successful validation that has not happened.`,
+      `- Do not silently skip findings or mark a thread resolved without an explanatory response. Leave disputed, deferred, and blocked threads unresolved. If an existing GitHub reply already documents the current disposition accurately, link it in your coverage summary instead of duplicating it.`,
+      `- Finish with a concise PR comment accounting for every finding and linking its response, grouping related findings only when each remains identifiable. Identify any remaining blockers and requested changes explicitly. Verify that the responses were published on the correct PR before reporting completion. If posting fails, report the publication blocker and which findings still lack a response; do not claim all feedback was addressed.`,
       `- Same branch only — do NOT open a new pull request and do NOT merge.`,
     ].join('\n');
   }
