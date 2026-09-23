@@ -2935,10 +2935,14 @@ export class DashboardView {
   private updateRunTabStatus(tab: RunTab): void {
     const element = this.runDrawerEl.querySelector<HTMLElement>(`.run-tab[data-tabid="${CSS.escape(tab.runId)}"]`);
     if (!element) return;
-    const status = runTabStatus(tab.status, tab.complete);
+    const status = runTabStatus(tab.status, tab.complete, tab.footer?.reviewOutcome);
     element.dataset.runStatus = status.kind;
     const badge = element.querySelector<HTMLElement>('.run-tab-status');
-    if (badge) badge.textContent = status.label;
+    if (badge) {
+      badge.textContent = status.label;
+      badge.dataset.reviewOutcome = status.reviewOutcome ?? '';
+      badge.title = status.reviewOutcome ? `${term('review')} recommendation: ${status.label}` : status.label;
+    }
     if (tab.runId === this.activeTabId) {
       const retrySlot = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-retry');
       if (retrySlot) retrySlot.innerHTML = tab.status === 'failed' ? renderVoyageRetry(tab.runId) : '';
@@ -3002,6 +3006,7 @@ export class DashboardView {
       label: t.label,
       complete: t.complete,
       status: t.status,
+      reviewOutcome: t.footer?.reviewOutcome,
     }));
     const drawerCollapsed: boolean = this.collapsed.has('runs:drawer') && this.runTabs.length > 0;
     this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId, drawerCollapsed);

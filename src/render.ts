@@ -580,11 +580,16 @@ export interface RunTabView {
   label: string;
   complete: boolean;
   status?: string;
+  reviewOutcome?: RunSummary['reviewOutcome'];
 }
 
-export function runTabStatus(status?: string, complete = false): { kind: string; label: string } {
+export function runTabStatus(status?: string, complete = false, reviewOutcome?: RunSummary['reviewOutcome']): { kind: string; label: string; reviewOutcome?: RunSummary['reviewOutcome'] } {
   const labels: Record<string, string> = { running: term('running'), succeeded: term('success'), failed: term('failed'), stopped: 'Stopped', queued: 'Queued', completed: 'Completed' };
   const kind = status && Object.hasOwn(labels, status) ? status : complete ? 'completed' : 'running';
+  const recommendations = { APPROVE: 'Approve', REQUEST_CHANGES: 'Request changes', COMMENT: 'Comment only' };
+  if (kind === 'succeeded' && typeof reviewOutcome === 'string' && Object.hasOwn(recommendations, reviewOutcome)) {
+    return { kind, label: recommendations[reviewOutcome], reviewOutcome };
+  }
   return { kind, label: labels[kind] ?? 'Running' };
 }
 
@@ -592,13 +597,13 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
   const strip: string = tabs
     .map(
       (t, index) => {
-        const status = runTabStatus(t.status, t.complete);
+        const status = runTabStatus(t.status, t.complete, t.reviewOutcome);
         const selected = t.id === activeId;
         return `
       <div class="run-tab${selected ? ' is-active' : ''}" data-tabid="${esc(t.id)}" data-run-status="${status.kind}" role="presentation">
         <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}" role="tab" id="run-tab-${esc(encodeURIComponent(t.id))}" aria-selected="${selected}" aria-controls="run-log-panel" tabindex="${selected || activeId === null && index === 0 ? 0 : -1}" title="${esc(t.label)}">
           <span class="run-tab-label">${esc(t.label)}</span>
-          <span class="run-tab-status">${status.label}</span>
+          <span class="run-tab-status" data-review-outcome="${status.reviewOutcome ?? ''}" title="${status.reviewOutcome ? `${term('review')} recommendation: ${status.label}` : status.label}">${status.label}</span>
         </button>
         <div class="run-tab-meta">${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}
           <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Open ${esc(t.label)} in ${term('runs')}" title="Open ${term('run').toLowerCase()}">${ICON_OPEN}</a>` : ''}

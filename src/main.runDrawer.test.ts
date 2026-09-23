@@ -89,6 +89,48 @@ async function open(id: string): Promise<void> {
 }
 
 describe('voyage drawer interactions', () => {
+  it.each([
+    ['APPROVE', 'Approve'], ['REQUEST_CHANGES', 'Request changes'], ['COMMENT', 'Comment only'],
+  ] as const)('shows the saved %s recommendation when opening a completed recent run', async (reviewOutcome, label) => {
+    await setup(`/runs?run=${FIRST}`, [{ ...run(FIRST, 'succeeded'), reviewOutcome }]);
+    expect(tab(FIRST).dataset.runStatus).toBe('succeeded');
+    const badge = tab(FIRST).querySelector<HTMLElement>('.run-tab-status');
+    expect(badge?.textContent).toBe(label);
+    expect(badge?.dataset.reviewOutcome).toBe(reviewOutcome);
+    expect(badge?.title).toContain(`recommendation: ${label}`);
+  });
+
+  it('loads a historical recommendation outside recent history from the individual run endpoint', async () => {
+    await setup(`/runs?run=${FIRST}`, [], new Map([[FIRST, { ...run(FIRST, 'succeeded'), reviewOutcome: 'REQUEST_CHANGES' }]]));
+    expect(tab(FIRST).dataset.runStatus).toBe('succeeded');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Request changes');
+    expect(tab(FIRST).querySelector<HTMLElement>('.run-tab-status')?.dataset.reviewOutcome).toBe('REQUEST_CHANGES');
+  });
+
+  it('updates an inactive review tab on completion and preserves the recommendation when selecting it again', async () => {
+    const { details } = await setup();
+    await open(SECOND);
+    details.set(FIRST, { ...run(FIRST, 'succeeded'), reviewOutcome: 'COMMENT' });
+    streams[0]!.complete('succeeded');
+    await flush();
+    expect(select(SECOND).getAttribute('aria-selected')).toBe('true');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Comment only');
+    expect(tab(FIRST).querySelector<HTMLElement>('.run-tab-status')?.dataset.reviewOutcome).toBe('COMMENT');
+    select(FIRST).click();
+    await flush();
+    expect(select(FIRST).getAttribute('aria-selected')).toBe('true');
+    expect(tab(FIRST).dataset.runStatus).toBe('succeeded');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Comment only');
+    expect(tab(FIRST).querySelector<HTMLElement>('.run-tab-status')?.dataset.reviewOutcome).toBe('COMMENT');
+  });
+
+  it('keeps a failed review tab labeled as failed despite a saved recommendation', async () => {
+    await setup(`/runs?run=${FIRST}`, [{ ...run(FIRST, 'failed'), reviewOutcome: 'APPROVE' }]);
+    expect(tab(FIRST).dataset.runStatus).toBe('failed');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Marooned');
+    expect(tab(FIRST).querySelector<HTMLElement>('.run-tab-status')?.dataset.reviewOutcome).toBeFalsy();
+  });
+
   it('copies the full UUID from an inactive tab without selecting it or changing the route', async () => {
     const { writeText } = await setup();
     await open(SECOND);

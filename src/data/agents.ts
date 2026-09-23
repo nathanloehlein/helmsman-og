@@ -60,6 +60,7 @@ export interface RunStatusSummary {
   prNumber: number | null;
   repo: string;
   ticketId?: string;
+  reviewOutcome?: RunSummary['reviewOutcome'];
 }
 
 export interface RunSummary {
@@ -101,6 +102,8 @@ export async function getRun(runId: string): Promise<RunStatusSummary | null> {
       prNumber,
       repo: run.repo,
       ...(typeof run.ticketId === 'string' ? { ticketId: run.ticketId } : {}),
+      ...(run.status === 'succeeded' && (run.reviewOutcome === 'APPROVE' || run.reviewOutcome === 'REQUEST_CHANGES' || run.reviewOutcome === 'COMMENT')
+        ? { reviewOutcome: run.reviewOutcome } : {}),
     };
   } catch {
     return null;

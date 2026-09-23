@@ -218,6 +218,19 @@ describe('openRunStream', () => {
 });
 
 describe('getRun', () => {
+  it.each(['APPROVE', 'REQUEST_CHANGES', 'COMMENT'])('preserves the saved %s recommendation for a successful run', async (reviewOutcome) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'succeeded', repo: 'owner/repo', reviewOutcome }) }));
+    expect(await getRun('old-run')).toMatchObject({ status: 'succeeded', reviewOutcome });
+  });
+
+  it.each([
+    ['succeeded', null], ['succeeded', 'constructor'], ['succeeded', '<img src=x onerror=alert(1)>'],
+    ['failed', 'APPROVE'], ['running', 'REQUEST_CHANGES'], ['stopped', 'COMMENT'],
+  ])('omits an invalid recommendation for %s: %j', async (status, reviewOutcome) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status, repo: 'owner/repo', reviewOutcome }) }));
+    expect(await getRun('old-run')).not.toHaveProperty('reviewOutcome');
+  });
+
   it('fetches an individual run independently of recent voyage history', async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', ticketId: 'TASK-2', status: 'succeeded', repo: 'owner/repo', prNumber: 42 }) });
     vi.stubGlobal('fetch', fetch);

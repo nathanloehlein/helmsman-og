@@ -634,6 +634,8 @@ select { text-transform: none; }
 .run-tab[data-run-status="failed"] .run-tab-status { color: var(--bad); }
 .run-tab[data-run-status="succeeded"] .run-tab-status { color: var(--good); }
 .run-tab[data-run-status="running"] .run-tab-status { color: var(--review); }
+.run-tab .run-tab-status[data-review-outcome="REQUEST_CHANGES"] { color: var(--bad); }
+.run-tab .run-tab-status[data-review-outcome="COMMENT"] { color: var(--review); }
 .run-tab-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
 .run-tab-actions { display: flex; align-items: center; gap: 3px; flex: none; margin-left: auto; }
 .run-tab .run-tab-open, .run-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 25px; padding: 4px; border: 1px solid transparent; border-radius: var(--radius); background: transparent; line-height: 0; color: var(--text-faint); }
