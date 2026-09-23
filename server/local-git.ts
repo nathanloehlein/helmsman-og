@@ -30,6 +30,7 @@ export type LocalGitAction =
   | { action: 'delete-untracked-branches'; expectedHead: string; branches: { branch: string; expectedCommit: string }[]; force?: boolean }
   | { action: 'delete-branch'; branch: string; expectedCommit: string; force?: boolean }
   | { action: 'delete-worktree'; path: string; expectedCommit: string }
+  | { action: 'release-worktree'; path: string; expectedCommit: string; expectedBranch: string }
   | { action: 'refresh-remotes' };
 
 async function git(path: string, args: string[], timeout = 10_000): Promise<string> {
@@ -241,12 +242,15 @@ export async function getLocalGit(
     const branches = parseBranches(branchOutput, config);
     const worktrees = parseWorktrees(treeOutput);
     for (const [index, tree] of worktrees.entries()) {
+      tree.active = active.has(resolve(tree.path));
       tree.deletionBlockedReason = tree.bare ? 'Bare repositories cannot be removed.'
         : index === 0 || resolve(tree.path) === canonicalPath ? 'The primary or configured checkout cannot be removed.'
         : tree.locked ? 'Worktree is locked.'
         : tree.prunable ? 'Worktree is missing or inaccessible.'
         : active.has(resolve(tree.path)) ? 'Worktree belongs to an active run.'
         : tree.branch && defaults.has(tree.branch) ? 'Worktree contains a protected default branch.' : null;
+      tree.releaseBlockedReason = tree.deletionBlockedReason
+        ?? (!tree.branch ? 'Worktree is already detached.' : null);
     }
     for (const branch of branches) {
       branch.deletionBlockedReason ??= defaults.has(branch.name) ? 'Default branches are protected.'
@@ -284,6 +288,11 @@ function parseAction(input: unknown): LocalGitAction | null {
   if (value.action === 'delete-branch' && typeof value.branch === 'string' && value.branch.length > 0 && !value.branch.startsWith('-')
     && (value.force === undefined || typeof value.force === 'boolean')) {
     return { action: value.action, branch: value.branch, expectedCommit: value.expectedCommit, force: value.force };
+  }
+  if (value.action === 'release-worktree' && typeof value.path === 'string' && isAbsolute(value.path) && !value.path.includes('\0')
+    && typeof value.expectedBranch === 'string' && value.expectedBranch.length > 0 && !value.expectedBranch.startsWith('-')
+    && !/[\s\0]/.test(value.expectedBranch) && value.force === undefined) {
+    return { action: value.action, path: value.path, expectedCommit: value.expectedCommit, expectedBranch: value.expectedBranch };
   }
   if (value.action === 'delete-worktree' && typeof value.path === 'string' && isAbsolute(value.path) && !value.path.includes('\0') && value.force === undefined) {
     return { action: value.action, path: value.path, expectedCommit: value.expectedCommit };
@@ -376,8 +385,11 @@ export async function mutateLocalGit(
       } else {
         const tree = state.json.worktrees.find(item => item.path === resolve(action.path)) as Worktree | undefined;
         if (!tree) return fail(404, 'Worktree is not registered with this galleon.');
-        if (tree.deletionBlockedReason) return fail(409, tree.deletionBlockedReason);
-        if (tree.commit !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before deleting.');
+        const releasing = action.action === 'release-worktree';
+        const blocked = releasing ? tree.releaseBlockedReason : tree.deletionBlockedReason;
+        if (blocked) return fail(409, blocked);
+        if (releasing && tree.branch !== action.expectedBranch) return fail(409, 'Worktree branch changed. Refresh before releasing.');
+        if (tree.commit !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before continuing.');
         const [common, treeCommon, head, canonicalTree] = await Promise.all([
           git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
           git(tree.path, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
@@ -385,18 +397,33 @@ export async function mutateLocalGit(
           realpath(tree.path),
         ]);
         if (await realpath(common.trim()) !== await realpath(treeCommon.trim()) || canonicalTree !== resolve(tree.path)) {
-          return fail(409, 'Worktree identity changed. Refresh before deleting.');
+          return fail(409, 'Worktree identity changed. Refresh before continuing.');
         }
-        if (head.trim() !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before deleting.');
+        if (head.trim() !== action.expectedCommit) return fail(409, 'Worktree changed. Refresh before continuing.');
         const latest = parseWorktrees(await git(path, ['worktree', 'list', '--porcelain', '-z'])).find(item => item.path === tree.path);
         if (!latest || latest.branch !== tree.branch || latest.commit !== action.expectedCommit || latest.locked || latest.bare || latest.prunable) {
-          return fail(409, 'Worktree changed. Refresh before deleting.');
+          return fail(409, 'Worktree changed. Refresh before continuing.');
         }
-        if ((await git(tree.path, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])).length > 0) {
+        if (!releasing && (await git(tree.path, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])).length > 0) {
           return fail(409, 'Worktree contains ignored files. Move or remove them before deleting the worktree.');
         }
         if ((await activePaths(options)).has(canonicalTree)) return fail(409, 'Worktree belongs to an active run.');
-        await git(path, ['worktree', 'remove', '--', tree.path]);
+        if (releasing) {
+          const gitDir = (await git(tree.path, ['rev-parse', '--absolute-git-dir'])).trim();
+          const operations = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'sequencer', 'BISECT_START'];
+          const inProgress = await Promise.all(operations.map(name => access(join(gitDir, name)).then(() => true, error => {
+            if (error?.code === 'ENOENT') return false;
+            throw error;
+          })));
+          if (inProgress.some(Boolean)) return fail(409, 'Finish the Git operation in this worktree before releasing its branch.');
+          if ((await git(tree.path, ['symbolic-ref', '--quiet', 'HEAD'])).trim() !== `refs/heads/${action.expectedBranch}`) {
+            return fail(409, 'Worktree branch changed. Refresh before releasing.');
+          }
+          if ((await activePaths(options)).has(canonicalTree)) return fail(409, 'Worktree belongs to an active run.');
+          await git(tree.path, ['switch', '--detach', action.expectedCommit]);
+        } else {
+          await git(path, ['worktree', 'remove', '--', tree.path]);
+        }
       }
       return await getLocalGit(agentsRoot, repo, configuredRepos, options);
     } catch (error) {

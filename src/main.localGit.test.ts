@@ -196,6 +196,37 @@ describe('local Git actions', () => {
     await vi.waitFor(() => expect(writes).toEqual([{ repo: 'org/a', action: 'delete-worktree', path: '/repos/topic', expectedCommit: 'abc123' }]));
   });
 
+  it('confirms release with the displayed branch and commit, preserving the worktree', async () => {
+    const { root, writes, click } = await setup(() => json({ ...listing(), worktrees: [
+      { ...listing().worktrees[0], branch: null, detached: true, active: false },
+    ] }));
+    click('[data-local-release="/repos/topic"]');
+    expect(root.querySelector('.local-git-confirmation')?.textContent).toContain('Release branch topic?');
+    expect(root.querySelector('.local-git-confirmation')?.textContent).toContain('directory and files are preserved');
+    expect(writes).toEqual([]);
+    click('.local-git-cancel');
+    expect(root.querySelector('.local-git-confirmation')).toBeNull();
+    expect(writes).toEqual([]);
+    click('[data-local-release="/repos/topic"]');
+    click('.local-git-confirm-release');
+    await vi.waitFor(() => expect(writes).toEqual([{
+      repo: 'org/a', action: 'release-worktree', path: '/repos/topic', expectedCommit: 'abc123', expectedBranch: 'topic',
+    }]));
+    await vi.waitFor(() => expect(root.querySelector('.local-git-panel')?.textContent).toContain('Detached HEAD'));
+    expect(root.querySelector('[data-local-worktree="/repos/topic"]')).not.toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('[data-local-release]')?.disabled).toBe(true);
+    expect(root.querySelector('[data-local-branch="topic"]')).not.toBeNull();
+  });
+
+  it('shows a refused release and requires a fresh confirmation to retry', async () => {
+    const { root, writes, click } = await setup(() => json({ ...listing(), error: 'Worktree branch changed. Refresh before releasing.' }, 409));
+    click('[data-local-release="/repos/topic"]');
+    click('.local-git-confirm-release');
+    await vi.waitFor(() => expect(root.querySelector('.local-git-error')?.textContent).toContain('branch changed'));
+    expect(root.querySelector('.local-git-confirm-release')).toBeNull();
+    expect(writes).toHaveLength(1);
+  });
+
   it('keeps ordinary refresh local and checks remotes only on demand', async () => {
     const { root, writes, reads, click } = await setup();
     const initial = reads.filter(path => path === '/api/repo/local').length;

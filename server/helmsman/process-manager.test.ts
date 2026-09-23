@@ -89,6 +89,21 @@ describe('ProcessManager', () => {
     expect(pm.stop('missing')).toBe(false);
   });
 
+  it('retains reserved and restored run IDs until cleanup removes them', () => {
+    const pm = new ProcessManager(4);
+    pm.reserve('reserved', 'o/r', () => undefined);
+    pm.restore('restored', 'o/r', () => undefined);
+    const snapshot = pm.activeRunIds();
+    snapshot.pop();
+    expect(pm.activeRunIds()).toEqual(['reserved', 'restored']);
+    pm.stop('reserved');
+    expect(pm.activeRunIds()).toContain('reserved');
+    pm.remove('reserved');
+    expect(pm.activeRunIds()).toEqual(['restored']);
+    pm.remove('restored');
+    expect(pm.activeRunIds()).toEqual([]);
+  });
+
   it('hasRun reflects whether a run id is tracked', () => {
     const pm = new ProcessManager(4);
     pm.reserve('r1', 'o/r', () => undefined);

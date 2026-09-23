@@ -65,6 +65,10 @@ export class ProcessManager {
     return this.entries.has(runId);
   }
 
+  activeRunIds(): string[] {
+    return Array.from(this.entries.keys());
+  }
+
   activeRepos(): string[] {
     return Array.from(this.entries.values()).map((e) => e.repo);
   }

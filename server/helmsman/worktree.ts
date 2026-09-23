@@ -32,8 +32,11 @@ async function removeWorktreeForBranch(repoDir: string, branch: string, isActive
   for (const line of result.stdout.split('\n')) {
     if (line.startsWith('worktree ')) currentPath = line.slice('worktree '.length).trim();
     else if (line.startsWith('branch ') && line.slice('branch '.length).trim() === target && currentPath) {
-      if (dirname(resolve(currentPath)) !== managedDirectory || isActive(currentPath)) {
-        throw new Error(`Branch ${branch} is checked out in an active or unmanaged workspace.`);
+      if (isActive(currentPath)) {
+        throw new Error(`Branch ${branch} is checked out in an active workspace at ${currentPath}. Wait for its run to finish.`);
+      }
+      if (dirname(resolve(currentPath)) !== managedDirectory) {
+        throw new Error(`Branch ${branch} is checked out in an unmanaged workspace at ${currentPath}. Use Local Git → Release branch on that worktree, then retry.`);
       }
       await removeWorktreeAt(repoDir, currentPath);
       currentPath = null;

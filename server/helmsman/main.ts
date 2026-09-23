@@ -95,6 +95,10 @@ reconcileTodoRuns(todos, db);
 const slackStore = openSlackStore(dbPath);
 const voyageNotifications = openVoyageNotifications(dbPath);
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
+function activeWorktreePaths(): string[] {
+  const runs = [...db.activeRuns(), ...pm.activeRunIds().map(id => db.getRun(id))];
+  return [...new Set(runs.flatMap(run => run?.worktreePath ? [run.worktreePath] : []))];
+}
 const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-runs');
@@ -876,14 +880,14 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         const cfg = configStore.current();
         const repos = repositoryScope(cfg, todos.list());
         return getLocalGit(AGENTS_ROOT, repo, repos, {
-          activeWorktreePaths: () => db.activeRuns().flatMap(run => run.worktreePath ? [run.worktreePath] : []),
+          activeWorktreePaths,
         });
       },
       localGitAction: (repo, body) => {
         const cfg = configStore.current();
         const repos = repositoryScope(cfg, todos.list());
         return mutateLocalGit(AGENTS_ROOT, repo, repos, body, {
-          activeWorktreePaths: () => db.activeRuns().flatMap(run => run.worktreePath ? [run.worktreePath] : []),
+          activeWorktreePaths,
         });
       },
       prStatus: (repo: string, prNumber: number): Promise<PrStatus | null> => {

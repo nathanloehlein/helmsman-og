@@ -1574,13 +1574,17 @@ export class DashboardView {
     return promise;
   }
 
-  private confirmLocalGitDeletion(button: HTMLButtonElement): void {
+  private confirmLocalGitAction(button: HTMLButtonElement): void {
     if (button.disabled || this.localGit.loading || this.localGit.pendingAction || this.localGit.repo !== this.selectedRepo) return;
     const branchName = button.dataset.localBranch;
-    const worktreePath = button.dataset.localWorktree;
+    const releasePath = button.dataset.localRelease;
+    const worktreePath = releasePath ?? button.dataset.localWorktree;
     const branch = this.localGit.branches.find(item => item?.name === branchName);
     const tree = this.localGit.worktrees.find(item => item?.path === worktreePath);
-    if (branch && !branch.current && !branch.deletionBlockedReason) {
+    if (releasePath) {
+      if (!tree?.branch || tree.active || tree.locked || tree.bare || tree.detached || tree.prunable || tree.path === this.localGit.path || tree.releaseBlockedReason) return;
+      this.localGit = { ...this.localGit, cleanup: undefined, confirmation: { action: 'release-worktree', path: tree.path, expectedCommit: tree.commit, expectedBranch: tree.branch } };
+    } else if (branch && !branch.current && !branch.deletionBlockedReason) {
       this.localGit = { ...this.localGit, cleanup: undefined, confirmation: { action: 'delete-branch', branch: branch.name, expectedCommit: branch.commit } };
     } else if (tree && !tree.locked && !tree.bare && tree.path !== this.localGit.path && !tree.deletionBlockedReason) {
       this.localGit = { ...this.localGit, cleanup: undefined, confirmation: { action: 'delete-worktree', path: tree.path, expectedCommit: tree.commit } };
@@ -1595,7 +1599,8 @@ export class DashboardView {
     const seq = ++this.localGitSeq;
     this.localGit = { ...this.localGit, confirmation: undefined, cleanup: undefined, error: null,
       pendingAction: action.action === 'refresh-remotes' ? 'Fetching remote status…'
-        : action.action === 'preview-delete-untracked-branches' ? 'Checking eligible branches…' : 'Deleting…' };
+        : action.action === 'preview-delete-untracked-branches' ? 'Checking eligible branches…'
+        : action.action === 'release-worktree' ? 'Releasing branch…' : 'Deleting…' };
     this.paintLocalGit();
     const promise = updateLocalGit(repo, action).then(result => {
       if (seq !== this.localGitSeq || repo !== this.selectedRepo) return;
@@ -2560,12 +2565,12 @@ export class DashboardView {
       else if (localGitButton.matches('.local-git-cancel')) {
         this.localGit = { ...this.localGit, confirmation: undefined };
         this.paintLocalGit();
-      } else if (localGitButton.matches('.local-git-confirm-delete')) {
+      } else if (localGitButton.matches('.local-git-confirm-delete, .local-git-confirm-release')) {
         const action = this.localGit.confirmation;
         if (action) void this.mutateLocalGit(action.action === 'delete-branch'
           ? { ...action, force: this.root.querySelector<HTMLInputElement>('.local-git-force')?.checked === true }
           : action);
-      } else if (localGitButton.matches('.local-git-delete')) this.confirmLocalGitDeletion(localGitButton);
+      } else if (localGitButton.matches('.local-git-delete, .local-git-release')) this.confirmLocalGitAction(localGitButton);
       else if (localGitButton.matches('.local-git-refresh')) void this.loadLocalGit();
       return;
     }

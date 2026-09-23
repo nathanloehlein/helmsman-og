@@ -132,8 +132,8 @@ describe('createWorktreeFromBranch', () => {
       const first: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-1', 'fix/x');
       expect(existsSync(first.path)).toBe(true);
       await writeFile(join(first.path, 'unfinished.txt'), 'work in progress');
-      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => true)).rejects.toThrow('active or unmanaged');
-      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x')).rejects.toThrow('active or unmanaged');
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => true)).rejects.toThrow('active workspace');
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x')).rejects.toThrow('active workspace');
       expect(await readFile(join(first.path, 'unfinished.txt'), 'utf8')).toBe('work in progress');
 
       const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => false);
@@ -162,7 +162,7 @@ describe('concurrent worktrees', () => {
       await writeFile(join(second.path, 'change.txt'), 'second');
       expect(await readFile(join(first.path, 'change.txt'), 'utf8')).toBe('first');
       expect(await readFile(join(second.path, 'change.txt'), 'utf8')).toBe('second');
-      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'third', 'main', () => false)).rejects.toThrow('active or unmanaged');
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'third', 'main', () => false)).rejects.toThrow('unmanaged workspace');
       expect(existsSync(join(repoDir, '.git'))).toBe(true);
     } finally { await rm(agentsRoot, { recursive: true, force: true }); }
   });

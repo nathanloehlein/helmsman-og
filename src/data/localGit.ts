@@ -16,12 +16,15 @@ export interface LocalWorktree {
   detached: boolean;
   locked: boolean;
   prunable: boolean;
+  active?: boolean;
+  releaseBlockedReason?: string | null;
   deletionBlockedReason?: string | null;
 }
 
 export type LocalGitAction =
   | { action: 'delete-branch'; branch: string; expectedCommit: string; force?: boolean }
   | { action: 'delete-worktree'; path: string; expectedCommit: string }
+  | { action: 'release-worktree'; path: string; expectedCommit: string; expectedBranch: string }
   | { action: 'preview-delete-untracked-branches'; force?: boolean }
   | { action: 'delete-untracked-branches'; expectedHead: string; branches: { branch: string; expectedCommit: string }[]; force?: boolean }
   | { action: 'refresh-remotes' };
@@ -47,7 +50,7 @@ export interface LocalGitState extends Omit<LocalGitResponse, 'repo'> {
   loading: boolean;
   pendingAction?: string;
   cleanupForce?: boolean;
-  confirmation?: Extract<LocalGitAction, { action: 'delete-branch' | 'delete-worktree' }>;
+  confirmation?: Extract<LocalGitAction, { action: 'delete-branch' | 'delete-worktree' | 'release-worktree' }>;
 }
 
 export function emptyLocalGit(repo: string | null): LocalGitState {
@@ -83,6 +86,8 @@ function normalizeLocalGit(repo: string, data: Partial<LocalGitResponse> | null)
     worktrees: data.worktrees.filter(tree => tree && typeof tree.path === 'string' && typeof tree.commit === 'string').map(tree => ({
       path: tree.path, branch: typeof tree.branch === 'string' ? tree.branch : null, commit: tree.commit,
       bare: tree.bare === true, detached: tree.detached === true, locked: tree.locked === true, prunable: tree.prunable === true,
+      ...(typeof tree.active === 'boolean' ? { active: tree.active } : {}),
+      ...(typeof tree.releaseBlockedReason === 'string' ? { releaseBlockedReason: tree.releaseBlockedReason } : {}),
       ...(typeof tree.deletionBlockedReason === 'string' ? { deletionBlockedReason: tree.deletionBlockedReason } : {}),
     })),
   };

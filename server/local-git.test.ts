@@ -132,6 +132,71 @@ describe('local Git mutations', () => {
   const sha = async () => (await git('rev-parse', 'HEAD')).trim();
   const mutate = (action: unknown, options = {}) => mutateLocalGit(root, repo, configured, action, options);
 
+  it('releases an idle linked branch while preserving tracked, untracked and ignored files', async () => {
+    await writeFile(join(checkout, 'tracked.txt'), 'original');
+    await git('add', 'tracked.txt');
+    await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-m', 'tracked');
+    const path = join(root, 'external checkout');
+    const expectedCommit = await sha();
+    await git('worktree', 'add', '-b', 'feature/release', path);
+    await writeFile(join(path, 'tracked.txt'), 'local edits');
+    await writeFile(join(path, 'untracked.txt'), 'keep');
+    await writeFile(join(checkout, '.git', 'info', 'exclude'), '.env\n');
+    await writeFile(join(path, '.env'), 'PRIVATE=keep');
+    const result = await mutate({ action: 'release-worktree', path, expectedCommit, expectedBranch: 'feature/release' });
+    expect(result.status).toBe(200);
+    expect(result.json.worktrees).toContainEqual(expect.objectContaining({ path, detached: true, branch: null, commit: expectedCommit, active: false }));
+    expect(result.json.branches).toContainEqual(expect.objectContaining({ name: 'feature/release', commit: expectedCommit, deletionBlockedReason: null }));
+    expect(await readFile(join(path, 'tracked.txt'), 'utf8')).toBe('local edits');
+    expect(await readFile(join(path, 'untracked.txt'), 'utf8')).toBe('keep');
+    expect(await readFile(join(path, '.env'), 'utf8')).toBe('PRIVATE=keep');
+    await git('worktree', 'add', join(root, 'next run'), 'feature/release');
+  });
+
+  it('blocks release of active, primary, locked and detached worktrees', async () => {
+    const active = join(root, 'active');
+    const locked = join(root, 'locked');
+    const detached = join(root, 'detached');
+    await git('worktree', 'add', '-b', 'feature/active', active);
+    await git('worktree', 'add', '-b', 'feature/locked', locked);
+    await git('worktree', 'lock', locked);
+    await git('worktree', 'add', '--detach', detached);
+    for (const [path, expectedBranch] of [[checkout, 'main'], [active, 'feature/active'], [locked, 'feature/locked'], [detached, 'feature/old']]) {
+      expect((await mutate({ action: 'release-worktree', path, expectedCommit: await sha(), expectedBranch }, { activeWorktreePaths: () => [active] })).status).toBe(409);
+    }
+    expect((await getLocalGit(root, repo, configured, { activeWorktreePaths: () => [active] })).json.worktrees)
+      .toContainEqual(expect.objectContaining({ path: active, active: true, releaseBlockedReason: 'Worktree belongs to an active run.' }));
+  });
+
+  it('rechecks ownership before releasing and refuses stale branch or commit selections', async () => {
+    const path = join(root, 'release');
+    await git('worktree', 'add', '-b', 'feature/release', path);
+    const action = { action: 'release-worktree', path, expectedCommit: await sha(), expectedBranch: 'feature/release' };
+    expect((await mutate({ ...action, expectedBranch: 'feature/old' })).status).toBe(409);
+    expect((await mutate({ ...action, expectedCommit: 'f'.repeat(40) })).status).toBe(409);
+    let calls = 0;
+    expect((await mutate(action, { activeWorktreePaths: () => ++calls >= 3 ? [path] : [] })).json.error).toMatch(/active run/);
+    expect((await run('git', ['-C', path, 'symbolic-ref', '--short', 'HEAD'])).stdout.trim()).toBe('feature/release');
+  });
+
+  it('refuses release during an in-progress Git operation', async () => {
+    const path = join(root, 'merging');
+    await git('worktree', 'add', '-b', 'feature/merge', path);
+    const gitDir = (await run('git', ['-C', path, 'rev-parse', '--absolute-git-dir'])).stdout.trim();
+    await writeFile(join(gitDir, 'MERGE_HEAD'), await sha());
+    const result = await mutate({ action: 'release-worktree', path, expectedCommit: await sha(), expectedBranch: 'feature/merge' });
+    expect(result.status).toBe(409);
+    expect(result.json.error).toMatch(/Finish the Git operation/);
+    expect((await run('git', ['-C', path, 'symbolic-ref', '--short', 'HEAD'])).stdout.trim()).toBe('feature/merge');
+  });
+
+  it('rejects malformed release requests', async () => {
+    const action = { action: 'release-worktree', path: checkout, expectedCommit: await sha(), expectedBranch: 'main' };
+    for (const patch of [{ path: '../outside' }, { expectedBranch: '' }, { expectedBranch: null }, { expectedBranch: '-x' }, { expectedCommit: 'HEAD' }, { force: true }]) {
+      expect((await mutate({ ...action, ...patch })).status).toBe(400);
+    }
+  });
+
   it('deletes a merged branch and returns the refreshed listing', async () => {
     await git('branch', 'feature/merged');
     await git('config', 'branch.feature/merged.description', 'temporary branch');

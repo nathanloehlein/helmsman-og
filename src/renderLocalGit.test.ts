@@ -113,6 +113,30 @@ describe('renderLocalGit', () => {
     expect(root.querySelector('.chip')).toBeNull();
   });
 
+  it('offers branch release for idle linked worktrees and distinguishes active runs', () => {
+    const tree = { path: '/workspace/topic', branch: 'topic', commit: 'abcdef1234', bare: false, detached: false, locked: false, prunable: false };
+    const idle = render({ worktrees: [{ ...tree, active: false }] });
+    expect(idle.querySelector<HTMLButtonElement>('[data-local-release]')?.disabled).toBe(false);
+    expect(idle.textContent).toContain('No active run');
+    const active = render({ worktrees: [{ ...tree, active: true }] });
+    expect(active.querySelector<HTMLButtonElement>('[data-local-release]')?.disabled).toBe(true);
+    expect(active.textContent).toContain('Active run');
+    for (const override of [{ locked: true }, { bare: true }, { detached: true }, { branch: null }, { prunable: true }, { path: '/workspace/repo' }, { releaseBlockedReason: 'A merge is in progress.' }]) {
+      expect(render({ worktrees: [{ ...tree, ...override }] }).querySelector<HTMLButtonElement>('[data-local-release]')?.disabled).toBe(true);
+    }
+    expect(render({ worktrees: [tree], pendingAction: 'Releasing branch…' }).querySelector<HTMLButtonElement>('[data-local-release]')?.disabled).toBe(true);
+  });
+
+  it('explains branch release without deletion and escapes confirmation targets', () => {
+    const payload = '<img src=x onerror="alert(1)">';
+    const root = render({ confirmation: { action: 'release-worktree', path: payload, expectedBranch: payload, expectedCommit: 'abc' } });
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.querySelector('[aria-label="Confirm branch release"]')?.textContent).toContain('The directory and files are preserved.');
+    expect(root.querySelector('.local-git-force')).toBeNull();
+    expect(root.querySelector('.local-git-confirm-delete')).toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('.local-git-confirm-release')?.disabled).toBe(false);
+  });
+
   it('exposes loading status and does not show premature empty lists', () => {
     const root = render({ loading: true });
     expect(root.querySelector('[role="status"]')?.textContent).toContain('Loading');

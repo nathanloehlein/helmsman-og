@@ -38,10 +38,12 @@ export function renderLocalGit(state: LocalGitState): string {
   }).join('');
   const worktreeRows = worktrees.map((worktree) => {
     const blocked = text(worktree.deletionBlockedReason) || (worktree.locked ? 'Unlock this worktree before deleting it.' : worktree.bare ? 'Bare worktrees cannot be deleted here.' : worktree.path === path ? 'The selected checkout cannot be deleted.' : '');
+    const releaseBlocked = text(worktree.releaseBlockedReason) || (worktree.active ? 'Worktree belongs to an active run.' : worktree.locked ? 'Worktree is locked.' : worktree.bare ? 'Bare worktrees cannot release a branch.' : worktree.path === path ? 'The selected checkout cannot release its branch.' : worktree.prunable ? 'Worktree is missing or inaccessible.' : !worktree.branch || worktree.detached ? 'No branch to release.' : '');
+    const activity = typeof worktree.active === 'boolean' ? `<span class="chip ${worktree.active ? 'chip-progress' : ''}">${worktree.active ? 'Active run' : 'No active run'}</span>` : '';
     return `<li class="local-git-item">
-      <div class="local-git-item-head"><span class="local-git-name mono">${esc(worktree.bare ? 'Bare' : worktree.detached ? 'Detached HEAD' : text(worktree.branch) || 'No branch')}</span>${worktree.locked ? '<span class="chip chip-progress">Locked</span>' : ''}${worktree.prunable ? '<span class="chip chip-blocked">Prunable</span>' : ''}${shortCommit(worktree.commit)}</div>
+      <div class="local-git-item-head"><span class="local-git-name mono">${esc(worktree.bare ? 'Bare' : worktree.detached ? 'Detached HEAD' : text(worktree.branch) || 'No branch')}</span>${activity}${worktree.locked ? '<span class="chip chip-progress">Locked</span>' : ''}${worktree.prunable ? '<span class="chip chip-blocked">Prunable</span>' : ''}${shortCommit(worktree.commit)}</div>
       <div class="local-git-path mono">${esc(worktree.path)}</div>
-      <div class="local-git-item-actions"><button class="local-git-delete" type="button" data-local-worktree="${esc(worktree.path)}"${busy || blocked ? ' disabled' : ''}${blocked ? ` title="${esc(blocked)}"` : ''}>Delete worktree</button>${blocked ? `<span class="local-git-blocked">${esc(blocked)}</span>` : ''}</div>
+      <div class="local-git-item-actions"><button class="local-git-release local-git-refresh" type="button" data-local-release="${esc(worktree.path)}"${busy || releaseBlocked ? ' disabled' : ''}${releaseBlocked ? ` title="${esc(releaseBlocked)}"` : ''}>Release branch</button><button class="local-git-delete" type="button" data-local-worktree="${esc(worktree.path)}"${busy || blocked ? ' disabled' : ''}${blocked ? ` title="${esc(blocked)}"` : ''}>Delete worktree</button>${blocked ? `<span class="local-git-blocked">${esc(blocked)}</span>` : ''}</div>
     </li>`;
   }).join('');
   const confirmation = state?.confirmation;
@@ -57,7 +59,12 @@ export function renderLocalGit(state: LocalGitState): string {
     ${skipped.length ? `<details class="local-git-cleanup-skipped"${candidates.length ? '' : ' open'}><summary>${skipped.length} branch${skipped.length === 1 ? '' : 'es'} skipped</summary><ul class="local-git-cleanup-list" aria-label="Branches kept">${skipped.map(item => `<li><span class="local-git-name mono">${esc(item.branch)}</span><span class="local-git-cleanup-reason">${esc(text(item.reason))}</span></li>`).join('')}</ul></details>` : ''}
     <div class="local-git-item-actions"><button class="local-git-cleanup-confirm local-git-delete" type="button"${busy || !candidates.length ? ' disabled' : ''}>Delete ${candidates.length} branch${candidates.length === 1 ? '' : 'es'}</button><button class="local-git-cleanup-cancel local-git-refresh" type="button"${busy ? ' disabled' : ''}>Cancel</button></div>
   </div>` : '';
-  const confirmationPanel = confirmation ? `<div class="local-git-confirmation" role="region" aria-label="Confirm deletion">
+  const releasing = confirmation?.action === 'release-worktree';
+  const confirmationPanel = releasing ? `<div class="local-git-confirmation" role="region" aria-label="Confirm branch release">
+    <strong>Release branch <span class="mono">${esc(confirmation.expectedBranch)}</span>?</strong>
+    <p>This detaches <span class="mono">${esc(confirmation.path)}</span> at the same commit and frees the branch for another run. The directory and files are preserved.</p>
+    <div class="local-git-item-actions"><button class="local-git-confirm-release local-git-refresh" type="button"${busy ? ' disabled' : ''}>Release branch</button><button class="local-git-cancel local-git-refresh" type="button"${busy ? ' disabled' : ''}>Cancel</button></div>
+  </div>` : confirmation ? `<div class="local-git-confirmation" role="region" aria-label="Confirm deletion">
     <strong>Delete ${confirmation.action === 'delete-branch' ? 'local branch' : 'worktree'} <span class="mono">${esc(confirmation.action === 'delete-branch' ? confirmation.branch : confirmation.path)}</span>?</strong>
     <p>${confirmation.action === 'delete-branch' ? 'This removes the local branch. The remote branch is unchanged.' : 'This removes the worktree directory. Its branch is kept. Worktrees with uncommitted changes cannot be deleted.'}</p>
     ${confirmation.action === 'delete-branch' ? '<label class="local-git-force-label"><input class="local-git-force" type="checkbox"> Also delete if unmerged (may lose local commits)</label>' : ''}

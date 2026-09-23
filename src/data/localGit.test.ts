@@ -78,6 +78,19 @@ describe('updateLocalGit', () => {
     expect(result.worktrees[0]?.deletionBlockedReason).toBe('Worktree is dirty.');
   });
 
+  it('sends pinned release targets and retains server activity and release guards', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      repo: 'org/repo', path: '/repos/repo', branches: [], error: 'Worktree belongs to an active run.',
+      worktrees: [{ path: '/repos/topic', branch: 'topic', commit: 'abc', active: true, releaseBlockedReason: 'Worktree belongs to an active run.' }],
+    }), { status: 409 }));
+    vi.stubGlobal('fetch', fetch);
+    const action = { action: 'release-worktree' as const, path: '/repos/topic', expectedCommit: 'abc', expectedBranch: 'topic' };
+    const result = await updateLocalGit('org/repo', action);
+    expect(JSON.parse(fetch.mock.calls[0]?.[1]?.body as string)).toEqual({ repo: 'org/repo', ...action });
+    expect(result.worktrees[0]).toMatchObject({ active: true, releaseBlockedReason: 'Worktree belongs to an active run.' });
+    expect(result.error).toBe('Worktree belongs to an active run.');
+  });
+
   it('does not silently accept invalid responses or retry an ambiguous write', async () => {
     const fetch = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(new Response(JSON.stringify({ repo: 'other', branches: [], worktrees: [] })));
     vi.stubGlobal('fetch', fetch);
