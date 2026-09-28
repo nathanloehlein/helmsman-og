@@ -71,7 +71,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
         <a class="app-link runs-pane-link" href="${esc(paneHref('newrun', opts.selectedRepo, state.number, state.repo))}" aria-label="Link to ${term('runPr')}">Section link</a>
       </div>
       <p class="runs-lookup-help" id="runs-lookup-help">Loading a ${term('pr')} shows its details and available actions. It does not start an agent.</p>
-      <label class="runs-lookup-label" for="runs-pr-lookup">${term('pr')} URL or owner/repo#number</label>
+      <label class="runs-lookup-label" for="runs-pr-lookup">${term('pr')} number, URL or owner/repo#number</label>
       <div class="pr-lookup-form">
         <input id="runs-pr-lookup" class="pr-lookup-input" aria-describedby="runs-lookup-help" placeholder="${term('prPlaceholder')}" value="${esc(value)}" />
         <button class="pr-lookup-go" type="button">Load ${term('pr')}</button>

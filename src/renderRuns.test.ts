@@ -29,7 +29,7 @@ describe('renderRunsView', () => {
     expect(el.querySelector('[data-pane=newrun] .panel-title')?.textContent).toBe(pirate ? 'Review or update a bounty' : 'Review or update a PR');
     expect(el.querySelector('[data-pane=recent] .panel-title')?.textContent).toBe(pirate ? 'All voyages' : 'All runs');
     expect(el.querySelector('.pr-lookup-go')?.textContent).toBe(pirate ? 'Load Bounty' : 'Load PR');
-    expect(el.querySelector('label[for="runs-pr-lookup"]')?.textContent).toBe(pirate ? 'Bounty URL or owner/repo#number' : 'PR URL or owner/repo#number');
+    expect(el.querySelector('label[for="runs-pr-lookup"]')?.textContent).toBe(pirate ? 'Bounty number, URL or owner/repo#number' : 'PR number, URL or owner/repo#number');
     expect(el.querySelector('[data-pane=recent] .empty-note')?.textContent).toBe(pirate ? 'No past voyages.' : 'No past runs.');
     expect(el.querySelector('[data-pane=newrun] .app-link')?.getAttribute('href')).toBe('/runs?pane=newrun');
   });

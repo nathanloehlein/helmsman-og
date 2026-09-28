@@ -75,8 +75,12 @@ export async function getPrDiff(repo: string, prNumber: number): Promise<PrFileD
   }
 }
 
-export function parsePrUrl(input: string): { repo: string; number: number } | null {
+export function parsePrUrl(input: string, currentRepo: string | null = null): { repo: string; number: number } | null {
   const trimmed: string = input.trim();
+  if (/^#?\d+$/.test(trimmed)) {
+    const number = Number(trimmed.replace(/^#/, ''));
+    return currentRepo && Number.isSafeInteger(number) && number > 0 ? { repo: currentRepo, number } : null;
+  }
   const urlMatch: RegExpMatchArray | null = trimmed.match(/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/i);
   if (urlMatch) return { repo: urlMatch[1], number: Number(urlMatch[2]) };
   const shortMatch: RegExpMatchArray | null = trimmed.match(/^([^/\s]+\/[^/\s]+)#(\d+)$/);

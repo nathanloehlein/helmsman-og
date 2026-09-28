@@ -95,6 +95,19 @@ describe('submitReview', () => {
 });
 
 describe('parsePrUrl', () => {
+  it.each(['10254', '#10254', '  #10254  '])('uses the current repository for %s', input => {
+    expect(parsePrUrl(input, 'o/current')).toEqual({ repo: 'o/current', number: 10254 });
+    expect(parsePrUrl(input)).toBeNull();
+  });
+
+  it.each(['0', '#0', '9007199254740993', '#9007199254740993', '-12', '#12x'])('rejects invalid bare number %s', input => {
+    expect(parsePrUrl(input, 'o/current')).toBeNull();
+  });
+
+  it.each(['https://github.com/o/other/pull/12', 'o/other#12'])('preserves explicit repository in %s', input => {
+    expect(parsePrUrl(input, 'o/current')).toEqual({ repo: 'o/other', number: 12 });
+  });
+
   it('parses a full github pull request URL', () => {
     const result: { repo: string; number: number } | null = parsePrUrl('https://github.com/o/r/pull/12');
 

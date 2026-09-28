@@ -81,12 +81,54 @@ afterEach(() => {
 
 describe('URL navigation', () => {
   it.each([
-    ['/prs', 'org/a'], ['/runs', 'org/a'], ['/prs', null], ['/runs', null],
-  ] as const)('retains header scope %s %j after a panel override and reload', async (path, selectedRepo) => {
+    ['/prs', '10254'], ['/prs', '#10254'], ['/runs', '10254'], ['/runs', '#10254'],
+  ])('loads %s lookup %s from the current header repository', async (path, input) => {
+    const { root, requests } = await setup(`${path}?repo=org/a&prRepo=org/b&pr=42`);
+    expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/b');
+    requests.length = 0;
+    root.querySelector<HTMLInputElement>('.pr-lookup-input')!.value = input;
+    root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
+
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-number')).toBe('10254'));
+    expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/a');
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('org/a');
+    for (const pathname of ['/api/pr', '/api/pr/diff']) {
+      expect(requests.filter(({ url }) => url.pathname === pathname).map(({ url }) => [url.searchParams.get('repo'), url.searchParams.get('number')])).toEqual([['org/a', '10254']]);
+    }
+    const url = new URL(window.location.href);
+    expect(url.searchParams.get('repo')).toBe('org/a');
+    expect(url.searchParams.get('prRepo')).toBe('org/a');
+    expect(url.searchParams.get('pr')).toBe('10254');
+  });
+
+  it.each([
+    ['/prs', '10254'], ['/prs', '#10254'], ['/runs', '10254'], ['/runs', '#10254'],
+  ])('warns on %s lookup %s with all repositories selected', async (path, input) => {
+    const { root, requests } = await setup(`${path}?prRepo=org/b&pr=42`);
+    requests.length = 0;
+    const previousAddress = window.location.href;
+    root.querySelector<HTMLInputElement>('.pr-lookup-input')!.value = input;
+    root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
+
+    await vi.waitFor(() => expect(root.querySelector('.pr-lookup-result [role="alert"]')).not.toBeNull());
+    const warning = root.querySelector('.pr-lookup-result [role="alert"]')?.textContent ?? '';
+    expect(warning).toMatch(/select.*(galleon|repo)/i);
+    expect(warning).toMatch(/github.*url/i);
+    expect(root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe('');
+    expect(window.location.href).toBe(previousAddress);
+    expect(requests.some(({ url }) => ['/api/pr', '/api/pr/diff'].includes(url.pathname))).toBe(false);
+  });
+
+  it.each([
+    ['/prs', 'org/a', 'org/b#42'], ['/runs', 'org/a', 'org/b#42'],
+    ['/prs', null, 'org/b#42'], ['/runs', null, 'org/b#42'],
+    ['/prs', 'org/a', 'https://github.com/org/b/pull/42'], ['/runs', 'org/a', 'https://github.com/org/b/pull/42'],
+    ['/prs', null, 'https://github.com/org/b/pull/42'], ['/runs', null, 'https://github.com/org/b/pull/42'],
+  ] as const)('retains header scope %s %j after lookup %s and reload', async (path, selectedRepo, lookup) => {
     const initial = await setup(`${path}${selectedRepo ? `?repo=${encodeURIComponent(selectedRepo)}` : ''}`);
     const input = initial.root.querySelector<HTMLInputElement>('.pr-lookup-input');
     expect(input).not.toBeNull();
-    input!.value = 'org/b#42';
+    input!.value = lookup;
     initial.root.querySelector<HTMLButtonElement>('.pr-lookup-go')?.click();
     await vi.waitFor(() => expect(initial.root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/b'));
     expect(initial.root.querySelector<HTMLSelectElement>('.repo-select')?.value).toBe(selectedRepo ?? '');

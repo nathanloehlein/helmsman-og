@@ -921,7 +921,7 @@ export function renderPrView(state: PrViewState, opts: PrViewOpts): string {
       <section class="panel pr-lookup-panel">
         <div class="panel-head"><span class="panel-title">${term('reviewPr')}</span></div>
         <div class="pr-lookup-form">
-          <label class="interface-field">${term('pr')} URL or owner/name#number<input class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" /></label>
+          <label class="interface-field">${term('pr')} number, URL or owner/name#number<input class="pr-lookup-input" placeholder="${term('prPlaceholder')}" value="${esc(value)}" /></label>
           <button class="pr-lookup-go">Load ${term('pr')}</button>
         </div>
         <div class="pr-lookup-result">${panel}</div>

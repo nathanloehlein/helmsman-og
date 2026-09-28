@@ -2746,10 +2746,11 @@ export class DashboardView {
   private async handlePrLookup(): Promise<void> {
     const input: HTMLInputElement | null = this.root.querySelector<HTMLInputElement>('.pr-lookup-input');
     if (!input) return;
-    const parsed: { repo: string; number: number } | null = parsePrUrl(input.value);
+    const parsed: { repo: string; number: number } | null = parsePrUrl(input.value, this.selectedRepo);
     const result: HTMLElement | null = this.root.querySelector<HTMLElement>('.pr-lookup-result');
     if (!parsed) {
-      if (result) result.innerHTML = `<div class="pr-panel empty-note">${term('prLookupInvalid')}</div>`;
+      const warning = !this.selectedRepo && /^#?\d+$/.test(input.value.trim());
+      if (result) result.innerHTML = `<div class="pr-panel empty-note" role="alert">${term(warning ? 'prLookupRepoRequired' : 'prLookupInvalid')}</div>`;
       return;
     }
     await this.loadPrView(parsed.repo, parsed.number);
