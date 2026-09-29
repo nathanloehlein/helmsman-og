@@ -879,6 +879,22 @@ describe('startRun', () => {
     db.close();
   });
 
+  it('reports a silent failed review process before the missing report error', async () => {
+    const db = openDb(':memory:');
+    try {
+      const reviewTask = { ...task, review: true, prNumber: 12 };
+      const postReview = vi.fn(async () => ({ ok: true as const }));
+      const id = await startRun(reviewTask, {
+        ...deps(db, jsonAdapter(), singleAttemptHost([], false), freshRunsDir()),
+        maxAttempts: 1, readReview: async () => null, postReview,
+      });
+      const errors = db.listEvents(id).filter(event => event.kind === 'error').map(event => event.text);
+      expect(errors).toEqual(['Agent process exited with code 1', 'code review failed: agent produced no .agent-review.md — nothing to post']);
+      expect(db.getRun(id)?.status).toBe('failed');
+      expect(postReview).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
   it('fails the review run (not silent success) when the agent produced no .agent-review.md', async () => {
     const db: Db = openDb(':memory:');
     const createWorktreeFromBranch = vi.fn(async (_repo: string, _runId: string, _branch: string) => ({ path: '/tmp/wt-review', branch: 'fix/x' }));
@@ -1063,6 +1079,26 @@ describe('reattachRun', () => {
       expect(d.removeWorktree).not.toHaveBeenCalled();
       expect(launch).not.toHaveBeenCalled();
       expect(db.listEvents(row.id).some(event => event.text.includes('Worktree retained'))).toBe(true);
+    } finally { db.close(); }
+  });
+
+  it.each([true, false])('reports failed review exit on reattachment with existing sentinel %s', async sentinelExists => {
+    const db = openDb(':memory:');
+    try {
+      const runsDir = freshRunsDir();
+      const row = { ...baseRow(runsDir), prNumber: 12, taskJson: JSON.stringify({ ...task, review: true, prNumber: 12 }) };
+      writeFileSync(row.logPath!, '');
+      if (sentinelExists) writeFileSync(row.exitPath!, '9');
+      db.insertRun(row);
+      const host = {
+        ...singleAttemptHost([], false),
+        isAlive: async () => { writeFileSync(row.exitPath!, '9'); return true; },
+      };
+      const postReview = vi.fn(async () => ({ ok: true as const }));
+      await reattachRun(row, { ...deps(db, jsonAdapter(), host, runsDir), readReview: async () => null, postReview });
+      expect(db.listEvents(row.id)).toContainEqual(expect.objectContaining({ kind: 'error', text: 'Agent process exited with code 9' }));
+      expect(db.getRun(row.id)?.status).toBe('failed');
+      expect(postReview).not.toHaveBeenCalled();
     } finally { db.close(); }
   });
 

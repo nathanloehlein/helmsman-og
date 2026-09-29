@@ -383,6 +383,7 @@ export async function startRun(task: AgentTask, deps: RunnerDeps): Promise<strin
       if (typeof outcome === 'number') runningHost = null;
       ok = typeof outcome === 'number' && outcome === 0;
       if (ok) break;
+      if (typeof outcome === 'number') onEvent({ kind: 'error', text: `Agent process exited with code ${outcome}` });
 
       if (outcome === 'stopped' || deps.isStopped?.()) {
         stopped = true;
@@ -453,6 +454,7 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
       const logOffset = readLogLines(logPath, row.logOffset ?? 0, consume, true);
       deps.db.updateRun(runId, { logOffset });
       const ok: boolean = existingCode === 0;
+      if (!ok) onEvent({ kind: 'error', text: `Agent process exited with code ${existingCode}` });
       prNumber = await resolvePrNumber(row.repo, branch, prNumber, ok, deps, onEvent);
       await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped: false, ok, worktreePath: worktreePath ?? '', onEvent });
       return;
@@ -469,6 +471,7 @@ export async function reattachRun(row: RunRow, deps: RunnerDeps): Promise<void> 
       });
       if (outcome === 'capped') await deps.host.stop(ref);
       const ok: boolean = typeof outcome === 'number' && outcome === 0;
+      if (typeof outcome === 'number' && !ok) onEvent({ kind: 'error', text: `Agent process exited with code ${outcome}` });
       const stopped: boolean = outcome === 'stopped' || (deps.isStopped?.() ?? false);
       prNumber = await resolvePrNumber(row.repo, branch, prNumber, ok, deps, onEvent);
       await finalizeRun({ runId, task, deps, prNumber, totalCost, stopped, ok, worktreePath: worktreePath ?? '', onEvent });
