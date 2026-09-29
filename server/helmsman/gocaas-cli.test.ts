@@ -38,6 +38,16 @@ afterEach(() => {
 });
 
 describe('GoCaaS agent failure diagnostics', () => {
+  it.each([false, true])('preserves argument values with chunked transport %s', async chunked => {
+    const args = ['exec', '漢字😀\n"quoted"\\path\n'.repeat(200)];
+    const serialized = JSON.stringify(args);
+    const transport = chunked ? Array.from(serialized) : [serialized];
+    process.argv = ['node', 'gocaas-cli.ts', 'codex', ...transport];
+    await import('./gocaas-cli');
+    expect(mocks.goCaasLaunch).toHaveBeenCalledWith('codex', args, process.env, '/fake/gocode');
+    expect(mocks.spawn).toHaveBeenCalledOnce();
+  });
+
   it.each([
     [7, null, 'exited with code 7', 7],
     [null, 'SIGTERM', 'terminated by signal SIGTERM', 1],

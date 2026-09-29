@@ -3,7 +3,7 @@ import { goCaasKey, goCaasLaunch, goCodePath } from './gocaas';
 
 try {
   const provider = process.argv[2];
-  const args: unknown = JSON.parse(process.argv[3] ?? 'null');
+  const args: unknown = JSON.parse(process.argv.slice(3).join('') || 'null');
   if (!['codex', 'claude-code'].includes(provider ?? '') || !Array.isArray(args) || !args.every(arg => typeof arg === 'string')) {
     throw new Error('Invalid GoCaaS agent invocation');
   }

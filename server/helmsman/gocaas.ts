@@ -42,8 +42,19 @@ export function pinModelRouting(task: AgentTask, required: boolean): AgentTask {
 
 export function routeAgentCommand(task: AgentTask, provider: ModelProvider, command: { cmd: string; args: string[] }): { cmd: string; args: string[] } {
   if (task.modelRouting !== 'gocaas' || task.dockerExecution) return command;
+  // Long individual script arguments can be killed before Node starts on macOS.
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const character of JSON.stringify(command.args)) {
+    if (chunk.length + character.length > 256) {
+      chunks.push(chunk);
+      chunk = '';
+    }
+    chunk += character;
+  }
+  if (chunk) chunks.push(chunk);
   return { cmd: process.execPath, args: ['--import', import.meta.resolve('tsx'),
-    fileURLToPath(new URL('./gocaas-cli.ts', import.meta.url)), provider, JSON.stringify(command.args)] };
+    fileURLToPath(new URL('./gocaas-cli.ts', import.meta.url)), provider, ...chunks] };
 }
 
 export function goCaasLaunch(provider: ModelProvider, args: string[], env: Env, helper: string): { cmd: string; args: string[]; env: Env } {

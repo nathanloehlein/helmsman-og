@@ -54,6 +54,16 @@ describe('GoDaddy routing detection', () => {
 });
 
 describe('agent command routing', () => {
+  it.each(['codex', 'claude-code'] as const)('transports long %s prompts in bounded arguments without changing Unicode or newlines', provider => {
+    const args = ['exec', 'a'.repeat(246) + '🚢', '漢字😀\n"quoted"\\path\n'.repeat(1000)];
+    const routed = routeAgentCommand(corporateTask, provider, { cmd: provider, args });
+    const chunks = routed.args.slice(4);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every(chunk => chunk.length <= 256 && Buffer.byteLength(chunk, 'utf8') <= 768)).toBe(true);
+    const transported = chunks.map(chunk => Buffer.from(chunk, 'utf8').toString('utf8')).join('');
+    expect(JSON.parse(transported)).toEqual(args);
+  });
+
   it.each(providers)('wraps author and review commands for $id while preserving flags and corporate prompts', adapter => {
     for (const extra of [{}, { review: true }, { prePr: { stage: 'review' as const, baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), reportPath: '/tmp/report.json' } }]) {
       const direct = adapter.buildCommand({ ...task, ...extra });
@@ -65,7 +75,7 @@ describe('agent command routing', () => {
       const provider = adapter.id === 'codex' ? 'codex' : undefined;
       const directPrompt = buildPrompt({ ...task, ...extra }, provider);
       const corporatePrompt = buildPrompt({ ...corporateTask, ...extra }, provider);
-      expect(JSON.parse(routed.args[4] ?? 'null')).toEqual(direct.args.map(arg => arg === directPrompt ? corporatePrompt : arg));
+      expect(JSON.parse(routed.args.slice(4).join(''))).toEqual(direct.args.map(arg => arg === directPrompt ? corporatePrompt : arg));
     }
   });
 
