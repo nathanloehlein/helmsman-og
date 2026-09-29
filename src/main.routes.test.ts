@@ -86,8 +86,10 @@ describe('URL navigation', () => {
     const { root, requests } = await setup(`${path}?repo=org/a&prRepo=org/b&pr=42`);
     expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/b');
     requests.length = 0;
-    root.querySelector<HTMLInputElement>('.pr-lookup-input')!.value = input;
-    root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
+    const lookup = root.querySelector<HTMLInputElement>('.pr-lookup-input')!;
+    lookup.value = input;
+    if (input.startsWith('#')) lookup.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    else root.querySelector<HTMLButtonElement>('.pr-lookup-go')!.click();
 
     await vi.waitFor(() => expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-number')).toBe('10254'));
     expect(root.querySelector('.pr-lookup-result .pr-panel')?.getAttribute('data-pr-repo')).toBe('org/a');

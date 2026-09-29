@@ -3,7 +3,7 @@ import type { RunSummary } from './data/agents';
 import { escapeHtml as esc } from './logic/html';
 import { routeHref } from './logic/routes';
 import { term } from './logic/terminology';
-import { renderAppShell, renderPrPanel, renderVoyage, type PrViewState } from './render';
+import { renderAppShell, renderPrPanel, renderVoyage, surfaceCollapseBtn, type PrViewState } from './render';
 import './runs.css';
 
 interface RunsViewOpts {
@@ -12,6 +12,7 @@ interface RunsViewOpts {
   themeId: string;
   runs: RunSummary[];
   history?: RunHistoryState;
+  collapsed?: Set<string>;
 }
 
 export interface RunHistoryState {
@@ -26,7 +27,7 @@ function paneHref(pane: string, repo: string | null, pr?: number | null, prRepo?
   return routeHref({ view: 'runs', pane, repo, pr, prRepo });
 }
 
-export function renderRunHistory(runs: RunSummary[], selectedRepo: string | null, history: RunHistoryState): string {
+export function renderRunHistory(runs: RunSummary[], selectedRepo: string | null, history: RunHistoryState, collapsed: boolean = false): string {
   const visible = (Array.isArray(runs) ? runs : []).filter(run => run && typeof run.id === 'string' && run.id
     && typeof run.repo === 'string' && (!selectedRepo || run.repo === selectedRepo))
     .sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
@@ -36,11 +37,12 @@ export function renderRunHistory(runs: RunSummary[], selectedRepo: string | null
     ? `<li class="empty-note runs-history-error" role="alert">${esc(history.error)} <button type="button" data-runs-retry${history.loading ? ' disabled' : ''}>Try again</button></li>`
     : visible.length ? visible.map(run => renderVoyage(run, undefined, selectedRepo)).join('')
       : `<li class="empty-note">${history.loading ? `Loading ${term('runs').toLowerCase()}…` : term('noRuns')}</li>`;
-  return `<section class="panel runs-recent-panel" data-pane="recent" aria-busy="${history.loading}">
+  return `<section class="panel runs-recent-panel${collapsed ? ' is-collapsed' : ''}" data-pane="recent" aria-busy="${history.loading}">
       <div class="panel-head">
         <span class="panel-title">${term('allRuns')}</span>
         <span class="panel-count mono">${history.total}</span>
         <a class="app-link runs-pane-link" href="${esc(paneHref('recent', selectedRepo))}" aria-label="Link to ${term('allRuns')}">Section link</a>
+        ${surfaceCollapseBtn('runs:recent', term('allRuns'), collapsed)}
       </div>
       <ul class="recent-runs-list lane-list">${content}</ul>
       <nav class="runs-pagination" aria-label="${term('runs')} pages" tabindex="-1">
@@ -78,7 +80,7 @@ export function renderRunsView(state: PrViewState, opts: RunsViewOpts): string {
       </div>
       <div class="pr-lookup-result">${panel}</div>
     </section>
-    ${renderRunHistory(runs, opts.selectedRepo, opts.history ?? { total: runs.length, offset: 0, limit: 25, loading: false, error: null })}
+    ${renderRunHistory(runs, opts.selectedRepo, opts.history ?? { total: runs.length, offset: 0, limit: 25, loading: false, error: null }, opts.collapsed?.has('runs:recent') ?? false)}
     <div class="runs-drawer-slot" data-pane="tasks"></div>
 `);
 }

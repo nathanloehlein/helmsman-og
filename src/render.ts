@@ -108,7 +108,7 @@ const ICON_COLLAPSE: string =
 const ICON_EXPAND: string =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>'
 
-function surfaceCollapseBtn(id: string, label: string, collapsed: boolean): string {
+export function surfaceCollapseBtn(id: string, label: string, collapsed: boolean): string {
   return `<button class="surface-collapse" type="button" data-collapse-id="${esc(id)}" aria-expanded="${collapsed ? 'false' : 'true'}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${esc(label)}">${collapsed ? ICON_EXPAND : ICON_COLLAPSE}</button>`;
 }
 

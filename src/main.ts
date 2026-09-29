@@ -277,6 +277,11 @@ export class DashboardView {
         return;
       }
       const tab = event.target;
+      if (tab instanceof HTMLInputElement && tab.matches('.pr-lookup-input') && event.key === 'Enter' && !event.isComposing && !event.repeat) {
+        event.preventDefault();
+        this.root.querySelector<HTMLButtonElement>('.pr-lookup-go')?.click();
+        return;
+      }
       if (tab instanceof HTMLButtonElement && tab.matches('.rack-handle')) {
         this.handleRackKeyboardMove(tab, event);
         return;
@@ -887,13 +892,14 @@ export class DashboardView {
     const focusInside = focused instanceof HTMLElement && panel.contains(focused);
     const direction = focusInside ? focused.dataset.runsPage : undefined;
     const retry = focusInside && focused.hasAttribute('data-runs-retry');
+    const collapse = focusInside && focused.dataset.collapseId === 'runs:recent';
     const template = document.createElement('template');
-    template.innerHTML = renderRunHistory(this.historyRuns, this.selectedRepo, this.runHistory);
+    template.innerHTML = renderRunHistory(this.historyRuns, this.selectedRepo, this.runHistory, this.collapsed.has('runs:recent'));
     const next = template.content.firstElementChild;
     if (next) panel.replaceWith(next);
     this.paintRunRetries();
     if (focusInside) {
-      const selector = direction === 'previous' || direction === 'next' ? `[data-runs-page="${direction}"]:not(:disabled)` : retry ? '[data-runs-retry]:not(:disabled)' : '.runs-pagination';
+      const selector = collapse ? '[data-collapse-id="runs:recent"]' : direction === 'previous' || direction === 'next' ? `[data-runs-page="${direction}"]:not(:disabled)` : retry ? '[data-runs-retry]:not(:disabled)' : '.runs-pagination';
       (next?.querySelector<HTMLElement>(selector) ?? next?.querySelector<HTMLElement>('.runs-pagination'))?.focus({ preventScroll: true });
     }
   }
@@ -1031,7 +1037,7 @@ export class DashboardView {
       return;
     }
     if (this.view === 'runs') {
-      this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.historyRuns, history: this.runHistory }));
+      this.mountPage(renderRunsView(this.prView, { repos: this.repos, selectedRepo: this.selectedRepo, themeId: this.themeId, runs: this.historyRuns, history: this.runHistory, collapsed: this.collapsed }));
       this.bindHeadControls();
       this.rehomeRunDrawer();
       return;
@@ -2476,6 +2482,7 @@ export class DashboardView {
         else this.collapsed.add(id);
         saveCollapsed(this.collapsed);
         if (id === 'runs:drawer') this.renderRunDrawer();
+        else if (id === 'runs:recent') this.paintRunHistory();
         else this.paint();
       }
       return;
