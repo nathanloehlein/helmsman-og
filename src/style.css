@@ -613,6 +613,13 @@ select { text-transform: none; }
   display: flex; flex-direction: column; min-width: 0;
 }
 .run-drawer[hidden] { display: none; }
+@media (height > 1500px) {
+  .runs-drawer-slot {
+    position: sticky; bottom: 0; z-index: 2; margin-top: auto;
+    max-height: 45vh; overflow: auto; background: var(--face);
+  }
+  .runs-drawer-slot .run-tabs { position: sticky; top: 0; z-index: 1; }
+}
 .run-tabs {
   display: flex; align-items: stretch; gap: 8px; overflow-x: auto; padding: 8px;
   border-bottom: 1px solid var(--line-faint); background: var(--panel); scrollbar-width: thin;
