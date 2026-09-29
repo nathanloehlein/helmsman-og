@@ -55,4 +55,16 @@ describe('run-wrapper', () => {
     expect(existsSync(exitPath)).toBe(true);
     expect(readFileSync(exitPath, 'utf8').trim()).toBe('127');
   });
+
+  it('still records the exit sentinel when the diagnostic log cannot be appended', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wrap-'));
+    const specPath = join(dir, 'spec.json');
+    const logPath = join(dir, 'run.log');
+    const exitPath = join(dir, 'run.exit');
+    const script = 'const fs = require("node:fs"); fs.unlinkSync(process.argv[1]); fs.mkdirSync(process.argv[1]); process.exit(9)';
+    writeFileSync(specPath, JSON.stringify({ cmd: process.execPath, args: ['-e', script, logPath], cwd: dir, logPath, exitPath }));
+    const result = spawnSync(process.execPath, [WRAPPER, specPath], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(readFileSync(exitPath, 'utf8').trim()).toBe('9');
+  });
 });
