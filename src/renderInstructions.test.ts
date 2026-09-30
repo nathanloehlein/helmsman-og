@@ -72,6 +72,27 @@ describe('live instructions', () => {
     expect(root.querySelector('[role="status"]')?.textContent).toContain('Received by agent');
   });
 
+  it('refreshes the final receipt when the voyage completes before POST returns', async () => {
+    let resolve!: (value: RunInstruction) => void;
+    sendInstruction.mockImplementation(() => new Promise<RunInstruction>(done => { resolve = done; }));
+    controller.mount(root, 'run-one', false);
+    await flush();
+    type('Check the retry path'); submit();
+    controller.mount(root, 'run-one', true);
+    await flush();
+    expect(root.querySelector('form')).toBeNull();
+    const sent = sendInstruction.mock.calls[0]?.[1];
+    fetchInstructions.mockResolvedValue(state({ available: false, targets: [], instructions: [delivered(sent)] }));
+    resolve(delivered({ ...sent, status: 'sending' }));
+    await flush();
+    expect(fetchInstructions).toHaveBeenCalledTimes(2);
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('Received by agent');
+    expect(root.textContent).not.toContain('Waiting for the agent');
+    expect(root.querySelector('[data-instruction-status="sending"]')).toBeNull();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(fetchInstructions).toHaveBeenCalledTimes(2);
+  });
+
   it('preserves drafts across redraws and tab switches and ignores old poll responses', async () => {
     controller.mount(root, 'run-one', false);
     await flush();

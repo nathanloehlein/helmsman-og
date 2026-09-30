@@ -67,7 +67,9 @@ export function createRunInstructions(): { mount(container: HTMLElement, runId: 
   function schedule(token: number): void {
     if (destroyed || token !== generation) return;
     clearTimeout(timer);
-    if (currentId && !complete) timer = setTimeout(() => { void refresh(token); }, 2_000);
+    if (currentId && (!complete || current()?.state?.instructions.some(item => item.status === 'sending'))) {
+      timer = setTimeout(() => { void refresh(token); }, 2_000);
+    }
   }
 
   async function refresh(token: number): Promise<void> {
@@ -137,7 +139,11 @@ export function createRunInstructions(): { mount(container: HTMLElement, runId: 
         draft.error = `${error instanceof Error ? error.message : 'Could not send instruction.'} Delivery is unconfirmed. Retrying the same instruction will not send it twice.`;
       } finally {
         draft.sending = false;
-        if (!destroyed && currentId === runId) { paint(); schedule(generation); }
+        if (!destroyed && currentId === runId) {
+          paint();
+          if (complete) void refresh(generation);
+          else schedule(generation);
+        }
       }
     })();
   });
