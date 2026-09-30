@@ -28,6 +28,7 @@ import { fetchOutcomes, saveOutcomeAssessment, OUTCOME_WINDOWS, type OutcomeWind
 import { renderOutcomesView, type OutcomesViewState } from './renderOutcomes';
 import { mountCampaigns } from './renderCampaigns';
 import { mountClarifications } from './renderClarifications';
+import { createRunInstructions } from './renderInstructions';
 import type { OutcomeSummary } from './data/outcomes';
 import './outcomes.css';
 import { loadDashboard, POLL_MS, LOCAL_POLL_MS, type DashboardResponse } from './data/live';
@@ -264,6 +265,7 @@ export class DashboardView {
   private outcomesEditing = false;
   private campaigns: ReturnType<typeof mountCampaigns> | null = null;
   private clarifications: ReturnType<typeof mountClarifications> | null = null;
+  private runInstructions = createRunInstructions();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -541,6 +543,7 @@ export class DashboardView {
     this.campaigns = null;
     this.clarifications?.destroy();
     this.clarifications = null;
+    this.runInstructions.destroy();
     this.cmuxEventSource?.close();
     this.runTabs.forEach(tab => tab.unsub?.());
   }
@@ -2960,6 +2963,7 @@ export class DashboardView {
       const retrySlot = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-retry');
       if (retrySlot) retrySlot.innerHTML = tab.status === 'failed' ? renderVoyageRetry(tab.runId) : '';
       this.paintRunRetries();
+      this.mountRunInstructions();
     }
   }
 
@@ -3024,6 +3028,7 @@ export class DashboardView {
     const drawerCollapsed: boolean = this.collapsed.has('runs:drawer') && this.runTabs.length > 0;
     this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId, drawerCollapsed);
     this.runDrawerEl.classList.toggle('is-collapsed', drawerCollapsed);
+    this.mountRunInstructions();
     this.paintRunRetries();
     const active: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === this.activeTabId);
     if (!active) return;
@@ -3043,6 +3048,12 @@ export class DashboardView {
         this.paintSlackReviewRequests();
       }
     }
+  }
+
+  private mountRunInstructions(): void {
+    const slot = this.runDrawerEl.querySelector<HTMLElement>('.run-instructions-slot');
+    const tab = this.runTabs.find(item => item.runId === this.activeTabId);
+    if (slot) this.runInstructions.mount(slot, tab && !tab.runId.startsWith('err-') ? tab.runId : null, tab?.complete ?? true);
   }
 
   private lineEl(event: RunEvent): HTMLDivElement {

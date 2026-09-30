@@ -1,0 +1,20 @@
+.run-instructions:empty { display: none; }
+.run-instructions { border-top: 1px solid var(--line); padding: 10px 14px; font-size: 12px; flex-shrink: 0; }
+.instruction-heading { font-weight: 700; margin-bottom: 6px; }
+.instruction-form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.instruction-form label { display: flex; flex-direction: column; gap: 4px; }
+.instruction-input { flex: 1 1 240px; }
+.instruction-form textarea, .instruction-form select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; font: inherit; }
+.instruction-form textarea { width: 100%; resize: vertical; max-height: 160px; }
+.instruction-form select { max-width: 280px; }
+.instruction-help { color: var(--text-dim); margin: 6px 0 0; }
+.instruction-error { color: var(--bad); margin: 6px 0; }
+.instruction-history { margin-top: 8px; }
+.instruction-history summary { cursor: pointer; }
+.instruction-history ol { list-style: none; padding: 0; margin: 6px 0 0; max-height: 200px; overflow: auto; }
+.instruction-history li { border-top: 1px solid var(--line-faint); padding: 8px 0; }
+.instruction-history li p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+.instruction-meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--text-dim); }
+[data-instruction-status="delivered"] { color: var(--good); }
+[data-instruction-status="failed"], [data-instruction-status="unknown"] { color: var(--bad); }
+.run-drawer.is-collapsed .run-instructions-slot { display: none; }

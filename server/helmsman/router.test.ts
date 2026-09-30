@@ -5,6 +5,7 @@ import { handleApi, type RouterDeps } from './router';
 import { openTodoStore, type TodoStore } from './todos';
 import { SlackReviewError } from './slack/review-request';
 import { ResumeError } from './resume';
+import { InstructionError } from './instruction-channel';
 import type { PrStatus } from '../github';
 import type { BugsResponse } from '../../src/types';
 import { openDb, type RunRow } from './db';
@@ -60,6 +61,19 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('routes instruction reads and sends to the requested voyage and reports unavailable targets', async () => {
+    const run = { id: 'run-1', status: 'running' } as RunRow;
+    const state = { available: false, reason: 'Waiting for agent.', targets: [], instructions: [] };
+    const instructions = { get: vi.fn(async () => state), send: vi.fn(async () => { throw new InstructionError('This agent has finished.'); }) };
+    const local = { ...deps, instructions, db: { ...deps.db, getRun: (id: string) => id === run.id ? run : null } };
+    expect(await handleApi('GET', '/api/agents/run-1/instructions', new URLSearchParams(), null, local)).toEqual({ status: 200, json: state });
+    expect(instructions.get).toHaveBeenCalledExactlyOnceWith(run);
+    const input = { id: 'message', targetId: 'stage', text: 'Keep scope narrow.' };
+    expect(await handleApi('POST', '/api/agents/run-1/instructions', new URLSearchParams(), input, local)).toEqual({ status: 409, json: { error: 'This agent has finished.' } });
+    expect(instructions.send).toHaveBeenCalledExactlyOnceWith(run, input);
+    expect((await handleApi('POST', '/api/agents/missing/instructions', new URLSearchParams(), input, local))?.status).toBe(404);
+    expect((await handleApi('GET', '/api/agents/../instructions', new URLSearchParams(), null, local))?.status).toBe(400);
+  });
   it('exposes bridge status separately from explicit startup, without trusting command input', async () => {
     const status = { status: 'stopped' as const, bridgeRunning: false, firefoxReady: true, canStart: true, message: 'Bridge stopped.' };
     const firefoxBridge = { status: vi.fn(async () => status), start: vi.fn(async () => status) };

@@ -34,6 +34,7 @@ import { RunBus } from './event-bus';
 import { handleRunLog } from './run-log';
 import { startRun, reattachRun, type RunnerDeps } from './runner';
 import { resumeFailedPrePrRun, ResumeError } from './resume';
+import { createInstructionService } from './instruction-service';
 import { hasCmux, hasWezTerm, pickHost, detachedHost, type HostRef, type RunHost } from './run-host';
 import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
@@ -838,6 +839,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       canStart: (repo: string) => pm.canStart(repo),
       launch,
       resumeRun: resumeVoyage,
+      instructions: createInstructionService(RUNS_DIR),
       stop: (id: string) => pm.stop(id),
       setAutoClaim: (repo: string, enabled: boolean) => scheduler.setEnabled(repo, enabled),
       autoClaimRepos: () => scheduler.enabledRepos(),

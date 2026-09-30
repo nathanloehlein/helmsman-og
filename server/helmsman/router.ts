@@ -14,6 +14,8 @@ import type { SlackState } from '../../src/data/slack';
 import type { GithubProfile } from '../../src/data/profile';
 import { retryIntent, RetryError, type LaunchIntent } from './retry';
 import { ResumeError } from './resume';
+import { InstructionError } from './instruction-channel';
+import type { createInstructionService } from './instruction-service';
 import { RunConflictError } from './process-manager';
 import type { OutcomeService } from './outcome-service';
 import { OutcomeValidationError } from './outcomes';
@@ -59,6 +61,7 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
 }
 
 export interface RouterDeps {
+  instructions?: ReturnType<typeof createInstructionService>;
   clarificationGate?: (runId: string) => boolean;
   outcomes?: OutcomeService;
   campaigns?: CampaignService;
@@ -288,6 +291,19 @@ async function routeApi(
     }
     const page = deps.db.runPage(limit, offset, repo);
     return { status: 200, json: { runs: page.runs.map((row) => toRunSummary(row, deps.db)), total: page.total, limit, offset } };
+  }
+  const instructionMatch = path.match(/^\/api\/agents\/([^/]+)\/instructions$/);
+  if (instructionMatch && (method === 'GET' || method === 'POST')) {
+    const runId = instructionMatch[1];
+    if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'Invalid run ID.' } };
+    const run = deps.db.getRun(runId);
+    if (!run) return { status: 404, json: { error: 'Voyage not found.' } };
+    if (!deps.instructions) return { status: 503, json: { error: 'Live instructions are unavailable.' } };
+    try { return { status: 200, json: method === 'GET' ? await deps.instructions.get(run) : await deps.instructions.send(run, _body) }; }
+    catch (error) {
+      if (error instanceof InstructionError) return { status: error.status, json: { error: error.message } };
+      throw error;
+    }
   }
   const runMatch = path.match(/^\/api\/agents\/([^/]+)$/);
   if (runMatch && method === 'GET') {

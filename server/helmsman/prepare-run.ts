@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import type { PrePrSettings } from '../../src/logic/prePrSettings';
 import type { AgentTask } from './agents/adapter';
 import { codexSettings } from './agent-attribution';
+import { instructionDirectory } from './instruction-channel';
 import { hashSkillDirectory, installVerifiedSkills, preflightSkills, type VerifiedSkill } from './skills-preflight';
 import { openWorkflowStore, type FixedWorkflowId, type SkillDeclaration, type WorkflowStore } from './workflow-snapshots';
 
@@ -45,6 +46,9 @@ export function defaultSkillsRoots(cwd = process.cwd()): string[] {
 async function promptCodeHash(): Promise<string> {
   const hash = createHash('sha256');
   for (const path of ['server/helmsman/agent-attribution.ts', 'server/helmsman/gocaas.ts', 'server/helmsman/gocaas-cli.ts', 'server/helmsman/agents/prompt.ts', 'server/helmsman/agents/review-calibration.ts', 'server/helmsman/agents/clarification-prompt.ts', 'server/helmsman/agents/pre-pr-prompt.ts', 'server/helmsman/agents/pre-pr.ts', 'server/helmsman/pre-pr-workflow.ts', 'server/helmsman/pre-pr-runtime.ts', 'server/helmsman/docker-stage.ts', 'server/helmsman/docker-review-cli.ts', 'server/helmsman/docker-gateway-relay.mjs', 'server/helmsman/agents/docker-review.ts']) {
+    hash.update(path).update('\0').update(await readFile(resolve(process.cwd(), path))).update('\0');
+  }
+  for (const path of ['server/helmsman/interactive-agent.ts', 'server/helmsman/interactive-agent-cli.ts', 'server/helmsman/instruction-channel.ts']) {
     hash.update(path).update('\0').update(await readFile(resolve(process.cwd(), path))).update('\0');
   }
   return hash.digest('hex');
@@ -103,6 +107,7 @@ export async function prepareExecution(input: PrepareExecutionInput): Promise<Pr
     const model = snapshot.model;
     const effort = snapshot.effort;
     return { snapshotId: snapshot.id, skills: verified, reviewSettings, model, effort,
-      task: { ...input.task, model, effort, workflowSnapshotId: snapshot.id, skillsPath, promptRevision: snapshot.definition.promptRevision } };
+      task: { ...input.task, model, effort, workflowSnapshotId: snapshot.id, skillsPath,
+        instructionsDir: input.task.dockerExecution ? undefined : instructionDirectory(input.runsDir, input.runId), promptRevision: snapshot.definition.promptRevision } };
   } finally { if (ownsStore) store.close(); }
 }

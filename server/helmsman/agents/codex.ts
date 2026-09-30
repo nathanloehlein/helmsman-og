@@ -4,6 +4,7 @@ import { parsePrNumber } from './claude-stream';
 import { parseCodexStreamLine } from './codex-stream';
 import { codexSettings } from '../agent-attribution';
 import { routeAgentCommand } from '../gocaas';
+import { interactiveAgentCommand } from '../interactive-agent';
 export { validCodexEffort } from '../agent-attribution';
 
 export function codexArgs(task: AgentTask): string[] {
@@ -22,6 +23,7 @@ export function codexArgs(task: AgentTask): string[] {
 export const codexAdapter: AgentAdapter = {
   id: 'codex',
   buildCommand(task: AgentTask): { cmd: string; args: string[] } {
+    if (task.instructionsDir && !task.dockerExecution) return interactiveAgentCommand(task, 'codex');
     return routeAgentCommand(task, 'codex', { cmd: 'codex', args: codexArgs(task) });
   },
   parseLine(line: string): AgentEvent | null {

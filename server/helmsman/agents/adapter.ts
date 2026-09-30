@@ -19,6 +19,7 @@ export interface AgentTask {
   clarification?: { questionsPath: string; answersPath: string; gateUrl?: string; gateToken?: string };
   workflowSnapshotId?: string;
   skillsPath?: string;
+  instructionsDir?: string;
   promptRevision?: string;
   modelRouting?: 'gocaas';
   dockerExecution?: { image: string; gatewayUrl: string; capability: string; runId: string; runtimeRoot?: string };
