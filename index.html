@@ -8,13 +8,14 @@
     <meta name="theme-color" content="#081721" />
     <title>Helmsman</title>
     <style>
-      html { background: #081721; }
+      html { background: var(--bg, #08090c); }
       body { margin: 0; }
       #boot {
         position: fixed;
         inset: 0;
         z-index: 100;
-        background: radial-gradient(120% 90% at 50% 42%, #153d4d 0%, #081721 60%, #061019 100%);
+        background: radial-gradient(120% 90% at 50% 42%, var(--panel-hi, #23262f) 0%, var(--bg, #08090c) 60%, var(--gutter, #050506) 100%);
+        color: var(--accent, #f5a623);
         display: flex;
         align-items: center;
         justify-content: center;

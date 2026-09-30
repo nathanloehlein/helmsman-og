@@ -835,20 +835,13 @@ select { text-transform: none; }
 
 /* ---------- departure sequence ---------- */
 #boot {
-  --accent: #dfb778;
-  --accent-bright: #e9c993;
-  --accent-dim: rgba(223, 183, 120, 0.45);
-  --text: #f3ecdc;
-  --text-faint: #b7b6a5;
-  --line-faint: rgba(223, 183, 120, 0.16);
-  --live: #92cdb2;
-  --review: #8ecae6;
-  --lamp-idle: #2d4146;
-  --helm-wood: #a87448;
-  --helm-wood-rim: #bc8854;
-  --helm-brass: #dfb778;
-  --helm-hub: #2d241e;
-  --helm-needle: #f3ecdc;
+  --live: var(--good);
+  --lamp-idle: var(--panel-hi);
+  --helm-wood: var(--accent);
+  --helm-wood-rim: var(--accent-bright);
+  --helm-brass: var(--accent);
+  --helm-hub: var(--panel-2);
+  --helm-needle: var(--text);
   color: var(--accent);
   overflow: hidden;
 }

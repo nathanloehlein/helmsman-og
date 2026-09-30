@@ -9,7 +9,8 @@ export interface Theme {
 
 export const DEFAULT_THEME_ID = 'quarterdeck';
 
-const STORAGE_KEY = 'cmux.theme';
+export const THEME_STORAGE_KEY = 'cmux.theme';
+export const AMBER_BACKGROUND = '#08090c';
 
 export const REQUIRED_VAR_KEYS: readonly string[] = [
   '--bg',
@@ -215,30 +216,28 @@ export function getTheme(id: string): Theme | undefined {
   return THEMES.find((theme) => theme.id === id);
 }
 
-export function applyTheme(id: string): void {
-  if (typeof document === 'undefined') return;
+export function applyThemeToDocument(theme: Theme, keys: readonly string[], fallbackBackground: string): void {
   const root: HTMLElement = document.documentElement;
-  const theme: Theme = getTheme(id) ?? getTheme(DEFAULT_THEME_ID)!;
-
-  if (theme.id === 'amber') {
-    for (const key of REQUIRED_VAR_KEYS) root.style.removeProperty(key);
-    root.dataset.theme = theme.id;
-    root.style.colorScheme = 'dark';
-    return;
-  }
-
-  for (const key of REQUIRED_VAR_KEYS) {
+  for (const key of keys) {
     const value: string | undefined = theme.vars[key];
     if (value) root.style.setProperty(key, value);
+    else root.style.removeProperty(key);
   }
   root.dataset.theme = theme.id;
   root.style.colorScheme = theme.mode;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.vars['--bg'] ?? fallbackBackground);
+}
+
+export function applyTheme(id: string): void {
+  if (typeof document === 'undefined') return;
+  const theme: Theme = getTheme(id) ?? getTheme(DEFAULT_THEME_ID)!;
+  applyThemeToDocument(theme, REQUIRED_VAR_KEYS, AMBER_BACKGROUND);
 }
 
 export function loadThemeId(): string {
   try {
     if (typeof localStorage === 'undefined') return DEFAULT_THEME_ID;
-    const stored: string | null = localStorage.getItem(STORAGE_KEY);
+    const stored: string | null = localStorage.getItem(THEME_STORAGE_KEY);
     if (stored && getTheme(stored)) return stored;
     return DEFAULT_THEME_ID;
   } catch {
@@ -249,7 +248,7 @@ export function loadThemeId(): string {
 export function saveThemeId(id: string): void {
   try {
     if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(STORAGE_KEY, id);
+    localStorage.setItem(THEME_STORAGE_KEY, id);
   } catch {
     return;
   }
