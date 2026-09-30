@@ -258,6 +258,7 @@ describe('URL navigation', () => {
   it('keeps the readable verdict directly above success when the drawer repaints', async () => {
     const run: RunSummary = { id: 'review-run', ticketId: 'review', repo: 'org/a', status: 'running', attempt: 1, prNumber: 11, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
     const { root } = await setup('/runs?run=review-run', () => null, [run]);
+    expect(root.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toBe('Inspection #11');
     for (const [id, kind, text] of [
       [1, 'review-verdict', 'Verdict: Request changes — Guard <nullable> outcomes.'],
       [2, 'run-complete', 'succeeded'],

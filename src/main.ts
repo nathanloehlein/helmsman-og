@@ -666,7 +666,10 @@ export class DashboardView {
       const summary = this.runs.find(run => run?.id === route.run) ?? await getRun(route.run);
       if (seq !== this.routeSeq) return;
       if (summary) {
-        this.openRunTab(route.run, summary.ticketId || (summary.prNumber ? `${term('pr')} #${summary.prNumber}` : route.run), false);
+        const label = summary.ticketId === 'review' && summary.prNumber
+          ? `${term('review')} #${summary.prNumber}`
+          : summary.ticketId || (summary.prNumber ? `${term('pr')} #${summary.prNumber}` : route.run);
+        this.openRunTab(route.run, label, false);
         const tab = this.runTabs.find(item => item.runId === route.run);
         if (tab) {
           tab.footer = summary;
