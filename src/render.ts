@@ -177,7 +177,7 @@ function jiraHref(baseUrl: string, id: string): string {
 
 function ticketLabel(id: string, baseUrl: string | null): string {
   if (baseUrl && TICKET_RE.test(id)) {
-    return `<a class="ticket-link" href="${jiraHref(baseUrl, id)}" target="_blank" rel="noopener">${esc(id)}</a>`;
+    return `<a class="ticket-link" href="${jiraHref(baseUrl, id)}" target="_blank" rel="noopener noreferrer">${esc(id)}</a>`;
   }
   return esc(id);
 }
@@ -186,7 +186,7 @@ function linkifyTickets(html: string, baseUrl: string | null): string {
   if (!baseUrl) return html;
   return html.replace(
     TICKET_RE_G,
-    (id) => `<a class="ticket-link" href="${jiraHref(baseUrl, id)}" target="_blank" rel="noopener">${id}</a>`,
+    (id) => `<a class="ticket-link" href="${jiraHref(baseUrl, id)}" target="_blank" rel="noopener noreferrer">${id}</a>`,
   );
 }
 
@@ -606,7 +606,7 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
           <span class="run-tab-status" data-review-outcome="${status.reviewOutcome ?? ''}" title="${status.reviewOutcome ? `${term('review')} recommendation: ${status.label}` : status.label}">${status.label}</span>
         </button>
         <div class="run-tab-meta">${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}
-          <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" aria-label="Open ${esc(t.label)} in ${term('runs')}" title="Open ${term('run').toLowerCase()}">${ICON_OPEN}</a>` : ''}
+          <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(t.label)} in a new browser tab" title="Open ${term('run').toLowerCase()} in a new browser tab">${ICON_OPEN}</a>` : ''}
           <button class="run-tab-close" type="button" data-tabid="${esc(t.id)}" aria-label="Close ${esc(t.label)}" title="Close ${term('run').toLowerCase()}">${ICON_CLOSE}</button></div>
         </div>
       </div>`;
@@ -1130,7 +1130,7 @@ function bugCardHtml(card: BugCard): string {
         </tr>`).join('')
     : '<tr><td colspan="5" class="empty-note">No open bugs.</td></tr>';
   const jiraSearch: string = card.jiraBaseUrl
-    ? `<a class="bug-jira-link" href="${esc(card.jiraBaseUrl)}/issues/?jql=${encodeURIComponent(`project = "${card.project}" AND issuetype = Bug AND statusCategory != Done`)}" target="_blank" rel="noopener">View all in Jira ↗</a>`
+    ? `<a class="bug-jira-link" href="${esc(card.jiraBaseUrl)}/issues/?jql=${encodeURIComponent(`project = "${card.project}" AND issuetype = Bug AND statusCategory != Done`)}" target="_blank" rel="noopener noreferrer">View all in Jira ↗</a>`
     : '';
   return `
     <section class="panel bug-card">

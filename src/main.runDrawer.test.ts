@@ -204,6 +204,19 @@ describe('voyage drawer interactions', () => {
     expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe(label);
   });
 
+  it('leaves voyage popouts and log downloads to the browser', async () => {
+    await setup();
+    const address = window.location.href;
+    for (const selector of ['.run-tab-open', '.run-log-download']) {
+      const link = document.querySelector<HTMLAnchorElement>(selector)!;
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      link.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(window.location.href).toBe(address);
+    }
+    expect(select(FIRST).getAttribute('aria-selected')).toBe('true');
+  });
+
   it('supports ArrowLeft/Right, Home, and End with selection, route, and focus kept together', async () => {
     await setup();
     await open(SECOND);

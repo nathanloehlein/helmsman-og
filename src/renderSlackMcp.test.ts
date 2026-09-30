@@ -33,6 +33,14 @@ describe('Slack connection configuration', () => {
     expect(root.querySelector('[role="alert"]')?.textContent).toBe('<try again>');
   });
 
+  it('opens the configured connection URL in a new browser tab', () => {
+    const root = render(renderSlackMcp({ status: connected }));
+    const link = root.querySelector<HTMLAnchorElement>('a');
+    expect(link?.href).toBe('https://example.com/config');
+    expect(link?.target).toBe('_blank');
+    expect(link?.rel).toBe('noopener noreferrer');
+  });
+
   it('allows disconnecting saved credentials even when connection verification failed', () => {
     const root = render(renderSlackMcp({ status: { ...connected, status: 'error', connected: false } }));
     expect(root.querySelector<HTMLButtonElement>('[data-slack-mcp-action="disconnect"]')?.disabled).toBe(false);

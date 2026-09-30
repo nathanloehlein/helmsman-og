@@ -2465,9 +2465,12 @@ export class DashboardView {
 
     const link = target.closest<HTMLAnchorElement>('a.view-toggle, a.app-link');
     if (link) {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+        || link.hasAttribute('download') || (link.target && link.target.toLowerCase() !== '_self')) return;
+      const destination = new URL(link.href);
+      if (destination.origin !== window.location.origin) return;
       event.preventDefault();
-      void this.navigate(parseRoute(new URL(link.href)));
+      void this.navigate(parseRoute(destination));
       return;
     }
 

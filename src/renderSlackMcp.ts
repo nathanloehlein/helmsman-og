@@ -22,7 +22,7 @@ export function renderSlackMcp(view: SlackMcpView = { status: null }): string {
     <p role="status">${escapeHtml(message)}</p>
     ${view.error ? `<p role="alert">${escapeHtml(view.error)}</p>` : ''}
     ${status?.status === 'setup-required' ? '<p>Configure an approved Slack OAuth app with its client ID, client secret, and registered HTTPS callback URL, then connect your Slack account.</p>' : ''}
-    ${connectionUrl ? `<p>Connect from <a href="${escapeHtml(connectionUrl)}">${escapeHtml(connectionUrl)}</a> so Slack can return to this Helmsman instance.</p>` : ''}
+    ${connectionUrl ? `<p>Connect from <a href="${escapeHtml(connectionUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(connectionUrl)}</a> so Slack can return to this Helmsman instance.</p>` : ''}
     ${status?.connected ? `<p>Workspace: ${escapeHtml(status.teamId ?? 'Unknown')} · User: ${escapeHtml(status.userId ?? 'Unknown')}</p>` : ''}
     <div class="slack-mcp-actions"><button type="button" data-slack-mcp-action="connect"${pending || !status?.configured ? ' disabled' : ''}>${status?.connected ? 'Reconnect Slack' : 'Connect Slack'}</button>
     <button type="button" data-slack-mcp-action="check"${pending ? ' disabled' : ''}>Check connection</button>

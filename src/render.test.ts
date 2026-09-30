@@ -1031,7 +1031,10 @@ describe('renderRunsDrawer', () => {
     expect(card.querySelector('.run-tab-select [data-copy-run-id]')).toBeNull();
     expect(card.querySelector('[data-copy-run-id]')?.getAttribute('aria-label')).toBe('Copy full voyage ID run-1');
     expect(card.querySelector('[data-copy-run-id] .voyage-copy-feedback')?.getAttribute('role')).toBe('status');
-    expect(card.querySelector('.run-tab-open')?.getAttribute('aria-label')).toContain('Open');
+    const open = card.querySelector<HTMLAnchorElement>('.run-tab-open');
+    expect(open?.getAttribute('aria-label')).toContain('in a new browser tab');
+    expect(open?.target).toBe('_blank');
+    expect(open?.rel).toBe('noopener noreferrer');
     expect(card.querySelector('.run-tab-close')?.getAttribute('aria-label')).toContain('Close');
   });
 

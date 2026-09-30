@@ -81,6 +81,30 @@ afterEach(() => {
 
 describe('URL navigation', () => {
   it.each([
+    ['a new-tab link', '/prs', '_blank', false, {}],
+    ['a named-tab link', '/prs', 'review', false, {}],
+    ['a download', '/api/agents/run-1/log/download', '', true, {}],
+    ['an external link', 'https://github.com/org/a/pull/42', '', false, {}],
+    ['a command-click', '/prs', '', false, { metaKey: true }],
+    ['a control-click', '/prs', '', false, { ctrlKey: true }],
+    ['a shift-click', '/prs', '', false, { shiftKey: true }],
+    ['a middle-click', '/prs', '', false, { button: 1 }],
+  ])('leaves %s to the browser', async (_label, href, target, download, init) => {
+    const { root } = await setup('/helm?repo=org/a');
+    const address = window.location.href;
+    const link = document.createElement('a');
+    link.className = 'app-link';
+    link.href = href;
+    link.target = target;
+    if (download) link.download = '';
+    root.append(link);
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...init });
+    link.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(window.location.href).toBe(address);
+  });
+
+  it.each([
     ['/prs', '10254'], ['/prs', '#10254'], ['/runs', '10254'], ['/runs', '#10254'],
   ])('loads %s lookup %s from the current header repository', async (path, input) => {
     const { root, requests } = await setup(`${path}?repo=org/a&prRepo=org/b&pr=42`);
