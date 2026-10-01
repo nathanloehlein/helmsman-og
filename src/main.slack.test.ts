@@ -8,6 +8,7 @@ let view: DashboardView | undefined;
 let state: SlackState;
 let unavailable: boolean;
 let readFails: boolean;
+let clearHandler: (input: { repo: string | null; clearToken: string }) => Promise<Response>;
 
 beforeEach(async () => {
   document.body.innerHTML = '<div id="app"></div>';
@@ -16,12 +17,19 @@ beforeEach(async () => {
   unavailable = false;
   readFails = false;
   state = {
+    clearToken: `1:${'a'.repeat(64)}`,
     health: { enabled: true, status: 'healthy', channelName: 'airo-editing', intervalMs: 300_000, lastSuccessAt: null, error: null },
     notifications: [{ id: 'message-one', repo: 'org/repo', prNumber: 42, prUrl: 'https://github.com/org/repo/pull/42', sourceUrl: 'https://company.slack.com/archives/C123/p123456789', author: 'Alex', channelName: 'airo-editing', status: 'launched', runId: 'run-42', createdAt: '2026-09-17T12:00:00Z', updatedAt: '2026-09-17T12:00:00Z', readAt: null, error: null }],
+  };
+  clearHandler = async input => {
+    const previous = state.notifications.length;
+    state.notifications = state.notifications.filter(item => input.repo !== null && item.repo.toLowerCase() !== input.repo.toLowerCase());
+    return json({ ok: true, ...input, cleared: previous - state.notifications.length });
   };
   const snapshot = await loadDashboard();
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input), 'http://localhost');
+    if (url.pathname === '/api/notifications/clear') { expect(init?.method).toBe('POST'); return clearHandler(JSON.parse(String(init?.body))); }
     if (url.pathname === '/api/slack') return unavailable ? new Response('', { status: 503 }) : json(state);
     const read = /^\/api\/slack\/notifications\/([a-z\d_-]+)\/read$/i.exec(url.pathname);
     if (read?.[1]) {
@@ -141,5 +149,57 @@ describe('persistent Slack notifications', () => {
     await view.refresh();
     expect(document.querySelectorAll('.slack-notification')).toHaveLength(1);
     expect(document.querySelector('.slack-health')?.textContent).toContain('Automatic checks unavailable');
+  });
+});
+
+describe('clear notification history', () => {
+  it('dismisses read and unread notifications only in the header scope and persists the result after reopening', async () => {
+    state.notifications.push({ ...state.notifications[0]!, id: 'other', repo: 'org/other', prUrl: 'https://github.com/org/other/pull/42' });
+    state.notifications[0]!.readAt = state.notifications[0]!.createdAt;
+    view = new DashboardView(document.querySelector<HTMLElement>('#app')!); await view.start();
+    const select = document.querySelector<HTMLSelectElement>('.repo-select')!; select.value = 'org/repo'; select.dispatchEvent(new Event('change', { bubbles: true }));
+    click('[data-slack-toggle]');
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 0 unread');
+    expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(false);
+    click('[data-notifications-clear]');
+    await vi.waitFor(() => expect(document.querySelector('.slack-notification')).toBeNull());
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === '/api/notifications/clear')[0]?.[1]?.body).toBe(JSON.stringify({ repo: 'org/repo', clearToken: `1:${'a'.repeat(64)}` }));
+    expect(state.notifications.map(item => item.id)).toEqual(['other']);
+    view.destroy(); view = new DashboardView(document.querySelector<HTMLElement>('#app')!); await view.start(); click('[data-slack-toggle]');
+    expect(document.querySelector('.slack-notification')).toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(true);
+  });
+  it('keeps history visible while clearing and blocks duplicate clicks', async () => {
+    let release!: () => void; const waiting = new Promise<void>(resolve => { release = resolve; });
+    const clear = clearHandler; clearHandler = async input => { await waiting; return clear(input); };
+    view = new DashboardView(document.querySelector<HTMLElement>('#app')!); await view.start(); click('[data-slack-toggle]');
+    click('[data-notifications-clear]'); click('[data-notifications-clear]');
+    expect(document.querySelector('.slack-notification')).not.toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(true);
+    expect(document.querySelector('[data-notifications-clear]')?.textContent).toBe('Clearing…');
+    expect(document.querySelector('#slack-notifications')?.getAttribute('aria-busy')).toBe('true');
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === '/api/notifications/clear')).toHaveLength(1);
+    release(); await vi.waitFor(() => expect(document.querySelector('.slack-empty')).not.toBeNull());
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 0 unread');
+  });
+  it('retries the same captured cutoff after failure and keeps later arrivals', async () => {
+    const requests: Array<{ repo: string | null; clearToken: string }> = [];
+    clearHandler = async input => {
+      requests.push(input);
+      if (requests.length === 1) return new Response('', { status: 503 });
+      state.notifications = state.notifications.filter(item => item.id !== 'message-one');
+      return json({ ok: true, ...input, cleared: 1 });
+    };
+    view = new DashboardView(document.querySelector<HTMLElement>('#app')!); await view.start(); click('[data-slack-toggle]'); click('[data-notifications-clear]');
+    await vi.waitFor(() => expect(document.querySelector('.slack-action-error')?.textContent).toContain('Could not clear'));
+    expect(document.querySelectorAll('.slack-notification')).toHaveLength(1);
+    expect(document.querySelector('[data-notifications-clear]')?.textContent).toBe('Retry clear');
+    state.notifications.push({ ...state.notifications[0]!, id: 'later', createdAt: '2020-01-01T00:00:00Z' });
+    state.clearToken = `2:${'b'.repeat(64)}`; await view.refresh(); click('[data-notifications-clear]');
+    await vi.waitFor(() => expect(document.querySelector('[data-notifications-clear]')?.textContent).toBe('Clear all notifications'));
+    expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
+    expect(document.querySelectorAll('.slack-notification')).toHaveLength(1);
+    expect(document.querySelector('.slack-notification')?.getAttribute('data-notification-id')).toBe('later');
+    expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 1 unread');
   });
 });

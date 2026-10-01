@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchSlack, markSlackNotificationRead, safePrUrl, safeSlackUrl } from './slack';
+import { fetchSlack, clearNotifications, markSlackNotificationRead, safePrUrl, safeSlackUrl } from './slack';
 
 const item = {
   id: 'C123:123:org/repo#42', repo: 'org/repo', prNumber: 42, prUrl: 'https://github.com/org/repo/pull/42',
@@ -90,4 +90,19 @@ describe('Slack notifications API', () => {
     expect(safePrUrl(item.prUrl, 'other/repo', 42)).toBeNull();
     expect(safePrUrl('https://github.com.evil.test/org/repo/pull/42', item.repo, 42)).toBeNull();
   });
+});
+
+it('requires an exact clear receipt before removing notifications', async () => {
+  const clearToken = `3:${'a'.repeat(64)}`;
+  const receipt = { ok: true, repo: 'org/repo', clearToken, cleared: 3 };
+  respond(receipt); expect(await clearNotifications('org/repo', clearToken)).toBe(true);
+  expect(fetch).toHaveBeenCalledWith('/api/notifications/clear', expect.objectContaining({ method: 'POST', body: JSON.stringify({ repo: 'org/repo', clearToken }) }));
+  for (const result of [{ ...receipt, repo: null }, { ...receipt, clearToken: 'different' }, { ...receipt, cleared: -1 }, { ...receipt, cleared: 1.5 }, { ok: true }, null]) {
+    respond(result); expect(await clearNotifications('org/repo', clearToken)).toBe(false);
+  }
+});
+it('preserves a valid clear token and disables clearing for a malformed optional token', async () => {
+  const clearToken = `3:${'a'.repeat(64)}`;
+  respond({ health, notifications: [item], clearToken }); expect((await fetchSlack())?.clearToken).toBe(clearToken);
+  respond({ health, notifications: [item], clearToken: '<invalid>' }); expect(await fetchSlack()).toEqual({ health, notifications: [item] });
 });

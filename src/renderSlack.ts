@@ -59,15 +59,16 @@ function renderHealth(health: SlackHealth, source: string, now: Date): string {
   return `<div class="slack-health" role="status"><strong>${esc(source)}</strong><span>${esc(status)}</span>${health.lastSuccessAt ? `<span>Last scanned ${esc(formatRelativeTime(health.lastSuccessAt, now))}</span>` : ''}${health.error ? `<span class="slack-error">${esc(health.error)}</span>` : ''}</div>`;
 }
 
-export function renderSlack(state: SlackState, open: boolean, error: string | null = null, now = new Date(), selectedRepo: string | null = null): string {
+export function renderSlack(state: SlackState, open: boolean, error: string | null = null, now = new Date(), selectedRepo: string | null = null, clearing = false, retryClear = false): string {
   const notifications = state.notifications.filter(item => item && (!selectedRepo || item.repo?.toLowerCase() === selectedRepo.toLowerCase()));
   const unread = notifications.filter(item => !item.readAt).length;
   const channelName = state.health.channelName?.replace(/^#/, '').trim() ?? '';
   return `<button type="button" class="slack-toggle${unread ? ' has-unread' : ''}" data-slack-toggle aria-expanded="${open}" aria-controls="slack-notifications" aria-label="Notifications, ${unread} unread">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8a5 5 0 0 1 10 0v4l2 3H3l2-3zM8 17h4"/></svg>${unread ? `<span class="slack-count" aria-hidden="true">${unread}</span>` : ''}
   </button>
-  <section id="slack-notifications" class="slack-popover" aria-label="Notifications"${open ? '' : ' hidden'}>
+  <section id="slack-notifications" class="slack-popover" aria-label="Notifications" aria-busy="${clearing}"${open ? '' : ' hidden'}>
     <div class="slack-popover-head"><h2>Notifications</h2><button type="button" data-slack-close aria-label="Close notifications">×</button></div>
+    <div class="slack-clear-actions"><button type="button" data-notifications-clear${clearing || !retryClear && (!state.clearToken || !notifications.length) ? ' disabled' : ''}>${clearing ? 'Clearing…' : retryClear ? 'Retry clear' : 'Clear all notifications'}</button></div>
     ${renderHealth(state.health, channelName ? `Slack #${channelName}` : 'Slack', now)}
     ${state.githubHealth ? renderHealth(state.githubHealth, `GitHub requested ${term('reviews').toLowerCase()}`, now) : ''}
     ${error ? `<p class="slack-action-error" role="alert">${esc(error)}</p>` : ''}

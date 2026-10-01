@@ -1,3 +1,4 @@
+import { initializeNotificationHistory, type NotificationIdentity } from './notification-history';
 import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { VoyageNotification } from '../../src/data/slack';
@@ -44,17 +45,19 @@ function notification(value: unknown): VoyageNotification | null {
 
 export function openVoyageNotifications(path: string): {
   listNotifications(limit?: number): VoyageNotification[];
+  notificationIdentities(): Iterable<NotificationIdentity>;
   markRead(id: string, now: string): boolean;
   close(): void;
 } {
   const sql = new Database(path);
   sql.pragma('journal_mode = WAL');
+  initializeNotificationHistory(sql);
   sql.exec('CREATE TABLE IF NOT EXISTS voyage_notification_reads (id TEXT PRIMARY KEY, readAt TEXT NOT NULL)');
   sql.function('voyage_notification_id', { deterministic: true }, notificationId);
   const select = `SELECT runs.*, reads.readAt FROM runs
     LEFT JOIN voyage_notification_reads AS reads ON reads.id = voyage_notification_id(runs.id, runs.attempt, runs.endedAt)
     WHERE runs.status IN ('succeeded', 'failed', 'stopped') AND runs.endedAt IS NOT NULL`;
-  const list = sql.prepare(`${select} ORDER BY julianday(runs.endedAt) DESC, runs.endedAt DESC, runs.id DESC`);
+  const list = sql.prepare(`${select} AND NOT EXISTS (SELECT 1 FROM notification_history history WHERE history.kind='voyage' AND history.id=voyage_notification_id(runs.id,runs.attempt,runs.endedAt) AND history.dismissed=1) ORDER BY julianday(runs.endedAt) DESC, runs.endedAt DESC, runs.id DESC`);
   const find = sql.prepare(`${select} AND voyage_notification_id(runs.id, runs.attempt, runs.endedAt) = ? LIMIT 1`);
   const insertRead = sql.prepare('INSERT OR IGNORE INTO voyage_notification_reads (id, readAt) VALUES (?, ?)');
   const markRead = sql.transaction((id: string, now: string): boolean => {
@@ -63,6 +66,12 @@ export function openVoyageNotifications(path: string): {
     return true;
   });
   return {
+    *notificationIdentities() {
+      for (const row of sql.prepare(select).iterate()) {
+        const item = notification(row);
+        if (item) yield { kind: 'voyage' as const, id: item.id, repo: item.repo };
+      }
+    },
     listNotifications(limit = 100) {
       const count = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 100;
       const notifications: VoyageNotification[] = [];

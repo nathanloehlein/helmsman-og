@@ -198,3 +198,17 @@ describe('Slack notification center', () => {
     expect(toggle?.querySelector('.slack-count')).toBeNull();
   });
 });
+
+it('disables clear for empty history or missing cutoff and exposes busy and retry states', () => {
+  const state = { ...unavailableSlack(), clearToken: `1:${'a'.repeat(64)}`, notifications: [item] };
+  document.body.innerHTML = renderSlack(state, true, null, undefined, 'org/other');
+  expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(true);
+  document.body.innerHTML = renderSlack({ ...state, clearToken: undefined }, true);
+  expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(true);
+  document.body.innerHTML = renderSlack(state, true, null, undefined, null, true);
+  expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(true);
+  expect(document.querySelector('#slack-notifications')?.getAttribute('aria-busy')).toBe('true');
+  document.body.innerHTML = renderSlack({ ...state, notifications: [] }, true, 'Could not clear. Try again.', undefined, null, false, true);
+  expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(false);
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('Could not clear');
+});

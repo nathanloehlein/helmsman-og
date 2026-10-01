@@ -42,6 +42,7 @@ export interface SlackState {
   health: SlackHealth;
   githubHealth?: SlackHealth;
   notifications: Notification[];
+  clearToken?: string;
 }
 
 export const unavailableSlack = (): SlackState => ({
@@ -133,6 +134,7 @@ export async function fetchSlack(): Promise<SlackState | null> {
       health: notifications.length === data.notifications.length ? health : { ...health, status: 'partial', error: 'Some notifications could not be loaded.' },
       ...(data.githubHealth ? { githubHealth: data.githubHealth } : {}),
       notifications,
+      ...(typeof data.clearToken === 'string' && /^(0|[1-9]\d{0,15}):[a-f\d]{64}$/.test(data.clearToken) ? { clearToken: data.clearToken } : {}),
     };
   } catch { return null; }
 }
@@ -144,5 +146,17 @@ export async function markSlackNotificationRead(id: string): Promise<boolean> {
     if (!response.ok) return false;
     const result: unknown = await response.json();
     return Boolean(result && typeof result === 'object' && 'ok' in result && result.ok === true);
+  } catch { return false; }
+}
+
+export async function clearNotifications(repo: string | null, clearToken: string): Promise<boolean> {
+  try {
+    const response = await fetch('/api/notifications/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo, clearToken }), signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) return false;
+    const raw: unknown = await response.json();
+    const result = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+    return result?.ok === true && result.repo === repo && result.clearToken === clearToken
+      && typeof result.cleared === 'number' && Number.isSafeInteger(result.cleared) && result.cleared >= 0;
   } catch { return false; }
 }

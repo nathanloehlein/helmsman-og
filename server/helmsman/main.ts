@@ -1,3 +1,4 @@
+import { openNotificationHistory } from './notification-history';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join, normalize, sep } from 'node:path';
@@ -96,6 +97,10 @@ const todos = openTodoStore(dbPath);
 reconcileTodoRuns(todos, db);
 const slackStore = openSlackStore(dbPath);
 const voyageNotifications = openVoyageNotifications(dbPath);
+const notificationHistory = openNotificationHistory(dbPath, function* () {
+  yield* slackStore.notificationIdentities();
+  yield* voyageNotifications.notificationIdentities();
+});
 const pm: ProcessManager = new ProcessManager(Number(process.env.AGENT_MAX_CONCURRENCY ?? '3'));
 function activeWorktreePaths(): string[] {
   const runs = [...db.activeRuns(), ...pm.activeRunIds().map(id => db.getRun(id))];
@@ -657,7 +662,7 @@ function configuredSlackWatcher(): SlackWatcher | null {
 function slackSnapshot(): SlackState {
   const settings = slackSettings(configStore.effectiveEnv());
   const watcher = configuredSlackWatcher();
-  return {
+  const snapshot = notificationHistory.capture(() => ({
     health: watcher?.health() ?? {
       enabled: settings.enabled, status: settings.enabled ? 'unavailable' : 'disabled',
       channelName: settings.channelName, intervalMs: SLACK_INTERVAL_MS,
@@ -674,7 +679,8 @@ function slackSnapshot(): SlackState {
       return { ...notification, runId: run?.id ?? null,
         model: task?.model ?? null, effort: task?.effort ?? null, complexity: task?.reviewComplexity ?? null };
     }), ...voyageNotifications.listNotifications()].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || b.id.localeCompare(a.id)),
-  };
+  }));
+  return { ...snapshot.value, clearToken: snapshot.clearToken };
 }
 
 function pollSlack(): Promise<void> {
@@ -826,7 +832,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
           jiraBaseUrl: cfg.jira?.baseUrl ?? null,
         };
       },
-      slack: { snapshot: slackSnapshot, markRead: (id) => {
+      slack: { snapshot: slackSnapshot, clear: input => notificationHistory.clear(input), markRead: (id) => {
         const now = new Date().toISOString();
         return id.startsWith('voyage-') ? voyageNotifications.markRead(id, now) : slackStore.markRead(id, now);
       } },

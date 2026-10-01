@@ -1,3 +1,4 @@
+import { NotificationHistoryError, type ClearNotificationsInput } from './notification-history';
 import { TodoConflictError, TodoValidationError, type TodoStore } from './todos';
 import { FeedbackError } from './feedback';
 import type { FirefoxBridgeStatus } from '../../src/data/firefoxBridge';
@@ -79,7 +80,7 @@ export interface RouterDeps {
   jiraEnabled?: () => boolean;
   outboundUsage?: () => unknown;
   context?: () => { repos: string[]; jiraBaseUrl: string | null; jiraEnabled?: boolean };
-  slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean };
+  slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean; clear?: (input: ClearNotificationsInput) => ClearNotificationsInput & { cleared: number } };
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   assignTicket?: (ticketId: string) => Promise<void>;
   submitFeedback?: (input: unknown) => Promise<{ url: string }>;
@@ -252,6 +253,18 @@ async function routeApi(
       health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null },
       notifications: [],
     } };
+  }
+  if (path === '/api/notifications/clear') {
+    if (method !== 'POST') return { status: 405, json: { error: 'POST required' } };
+    const body = _body && typeof _body === 'object' && !Array.isArray(_body) ? _body as Record<string, unknown> : null;
+    if (query.size || !body || Object.keys(body).length !== 2 || !Object.hasOwn(body, 'repo') || !Object.hasOwn(body, 'clearToken')
+      || body.repo !== null && (typeof body.repo !== 'string' || !isGithubRepo(body.repo))
+      || typeof body.clearToken !== 'string' || !/^(0|[1-9]\d{0,15}):[a-f\d]{64}$/.test(body.clearToken)) return { status: 400, json: { error: 'Invalid notification clear request' } };
+    if (!deps.slack?.clear) return { status: 503, json: { error: 'Notification clearing is unavailable' } };
+    try { return { status: 200, json: { ok: true, ...deps.slack.clear({ repo: body.repo as string | null, clearToken: body.clearToken }) } }; }
+    catch (error) {
+      return { status: error instanceof NotificationHistoryError ? 409 : 503, json: { error: error instanceof NotificationHistoryError ? error.message : 'Could not clear notifications. Try again.' } };
+    }
   }
   const slackRead = path.match(/^\/api\/slack\/notifications\/([a-z\d_-]{1,128})\/read$/i);
   if (slackRead && method === 'POST') {

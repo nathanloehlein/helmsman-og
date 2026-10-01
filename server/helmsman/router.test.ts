@@ -1,3 +1,4 @@
+import { NotificationHistoryError } from './notification-history';
 import { FeedbackError } from './feedback';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RunConflictError } from './process-manager';
@@ -946,5 +947,34 @@ describe('feedback route', () => {
     const request = () => handleApi('POST', '/api/feedback', new URLSearchParams(), {}, { ...deps, submitFeedback });
     expect(await request()).toEqual({ status: 400, json: { error: 'Title required' } });
     expect(await request()).toEqual({ status: 502, json: { error: 'Could not confirm submission. Check GitHub before trying again.' } });
+  });
+});
+
+describe('clear notification history route', () => {
+  const clearToken = `2:${'a'.repeat(64)}`;
+  const input = { repo: 'o/r', clearToken };
+  const makeDeps = (clear = vi.fn(value => ({ ...value, cleared: 2 }))) => ({ ...deps, slack: { snapshot: () => ({ health: { enabled: false, status: 'disabled' as const, channelName: '', intervalMs: 300000, lastSuccessAt: null, error: null }, notifications: [] }), markRead: () => false, clear } });
+  it('passes the captured scope and cutoff to persistent dismissal', async () => {
+    const fixture = makeDeps();
+    expect(await handleApi('POST', '/api/notifications/clear', new URLSearchParams(), input, fixture)).toEqual({ status: 200, json: { ok: true, ...input, cleared: 2 } });
+    expect(fixture.slack.clear).toHaveBeenCalledWith(input);
+  });
+  it.each([null, {}, { clearToken }, { ...input, repo: '../r' }, { ...input, clearToken: 'invalid' }, { ...input, ids: [] }])('rejects malformed input %j', async body => {
+    const fixture = makeDeps();
+    expect((await handleApi('POST', '/api/notifications/clear', new URLSearchParams(), body, fixture))?.status).toBe(400);
+    expect(fixture.slack.clear).not.toHaveBeenCalled();
+  });
+  it('rejects scope overrides and unsupported methods without clearing anything', async () => {
+    const fixture = makeDeps();
+    expect((await handleApi('POST', '/api/notifications/clear', new URLSearchParams('repo=other/repo'), input, fixture))?.status).toBe(400);
+    expect((await handleApi('GET', '/api/notifications/clear', new URLSearchParams(), input, fixture))?.status).toBe(405);
+    expect(fixture.slack.clear).not.toHaveBeenCalled();
+  });
+  it('keeps invalid cutoffs and persistence failures retryable', async () => {
+    const fixture = makeDeps();
+    fixture.slack.clear.mockImplementation(() => { throw new NotificationHistoryError('Refresh notifications'); });
+    expect((await handleApi('POST', '/api/notifications/clear', new URLSearchParams(), input, fixture))?.status).toBe(409);
+    fixture.slack.clear.mockImplementation(() => { throw new Error('database unavailable'); });
+    expect((await handleApi('POST', '/api/notifications/clear', new URLSearchParams(), input, fixture))?.status).toBe(503);
   });
 });

@@ -17,7 +17,7 @@ import { renderTodosView, renderTodoList, readTodoForm, type TodosViewState } fr
 import { TODO_STATES } from './data/todos';
 import { emptyLocalGit, fetchLocalGit, updateLocalGit, type LocalGitAction, type LocalGitState } from './data/localGit';
 import { renderLocalGit } from './renderLocalGit';
-import { fetchSlack, markSlackNotificationRead, unavailableSlack, type SlackState } from './data/slack';
+import { fetchSlack, clearNotifications, markSlackNotificationRead, unavailableSlack, type SlackState } from './data/slack';
 import { renderSlack } from './renderSlack';
 import { fetchSlackReviewRequests, requestSlackReview, SlackReviewRequestError, type SlackReviewResult, type SlackReviewRequestState } from './data/slackReview';
 import { formatRelativeTime } from './logic/time';
@@ -255,6 +255,9 @@ export class DashboardView {
   private slackError: string | null = null;
   private slackSeq: number = 0;
   private slackReads = new Set<string>();
+  private clearingNotifications = false;
+  private notificationClearError: string | null = null;
+  private notificationClearRequest: { repo: string | null; clearToken: string; ids: Set<string> } | null = null;
   private slackReviewRequests = new Map<string, SlackReviewUiState>();
   private slackReviewHistory = new Map<string, SlackReviewRequestState>();
   private slackReviewHistoryUnavailable = false;
@@ -1281,10 +1284,11 @@ export class DashboardView {
     }
     const focused = document.activeElement;
     const focusReadId = focused instanceof HTMLElement && center.contains(focused) ? focused.dataset.slackRead : undefined;
+    const focusClear = focused instanceof HTMLElement && center.contains(focused) && focused.hasAttribute('data-notifications-clear');
     const focusToggle = focused instanceof HTMLElement && center.contains(focused) && focused.hasAttribute('data-slack-toggle');
     const scrollTop = center.querySelector('.slack-popover')?.scrollTop ?? 0;
     const template = document.createElement('template');
-    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.slackError, undefined, this.selectedRepo);
+    template.innerHTML = renderSlack(this.slack, this.slackOpen, this.notificationClearRequest?.repo === this.selectedRepo ? this.notificationClearError ?? this.slackError : this.slackError, undefined, this.selectedRepo, this.clearingNotifications, this.notificationClearRequest !== null && this.notificationClearRequest.repo === this.selectedRepo);
     const nextToggle = template.content.querySelector<HTMLButtonElement>('[data-slack-toggle]');
     const nextPopover = template.content.querySelector<HTMLElement>('.slack-popover');
     const toggle = center.querySelector<HTMLButtonElement>('[data-slack-toggle]');
@@ -1296,6 +1300,7 @@ export class DashboardView {
       toggle.setAttribute('aria-label', nextToggle.getAttribute('aria-label') ?? 'Notifications');
       if (toggle.innerHTML !== nextToggle.innerHTML) toggle.innerHTML = nextToggle.innerHTML;
       currentPopover.hidden = nextPopover.hidden;
+      currentPopover.setAttribute('aria-busy', nextPopover.getAttribute('aria-busy') ?? 'false');
       if (currentPopover.innerHTML !== nextPopover.innerHTML) currentPopover.innerHTML = nextPopover.innerHTML;
     }
     const popover = center.querySelector('.slack-popover');
@@ -1306,7 +1311,8 @@ export class DashboardView {
     if (focusReadId !== undefined) {
       const button = Array.from(center.querySelectorAll<HTMLButtonElement>('[data-slack-read]')).find(item => item.dataset.slackRead === focusReadId);
       (button ?? center.querySelector<HTMLButtonElement>('[data-slack-toggle]'))?.focus({ preventScroll: true });
-    } else if (focusToggle) center.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus({ preventScroll: true });
+    } else if (focusClear) center.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.focus({ preventScroll: true });
+    else if (focusToggle) center.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus({ preventScroll: true });
   }
 
   private paintSlackReviewRequests(): void {
@@ -1382,6 +1388,30 @@ export class DashboardView {
       state.pending = false;
       if (!this.destroyed) this.paintSlackReviewRequests();
     }
+  }
+
+  private async clearNotificationHistory(): Promise<void> {
+    if (this.clearingNotifications) return;
+    const repo = this.selectedRepo;
+    const request = this.notificationClearRequest?.repo === repo ? this.notificationClearRequest : this.slack.clearToken ? {
+      repo, clearToken: this.slack.clearToken,
+      ids: new Set(this.slack.notifications.filter(item => !repo || item.repo.toLowerCase() === repo.toLowerCase()).map(item => item.id)),
+    } : null;
+    if (!request || !request.ids.size) return;
+    this.notificationClearRequest = request; this.clearingNotifications = true; this.notificationClearError = null;
+    ++this.slackSeq; this.paintSlack();
+    const ok = await clearNotifications(request.repo, request.clearToken);
+    if (this.destroyed) return;
+    if (ok) {
+      ++this.slackSeq;
+      this.slack = { ...this.slack, clearToken: undefined, notifications: this.slack.notifications.filter(item => !request.ids.has(item.id)) };
+      this.notificationClearRequest = null;
+      const sequence = this.slackSeq;
+      const refreshed = await fetchSlack();
+      if (this.destroyed) return;
+      if (refreshed && sequence === this.slackSeq) this.slack = refreshed;
+    } else this.notificationClearError = 'Could not clear notifications. Retry clear to try the same request again.';
+    this.clearingNotifications = false; this.paintSlack();
   }
 
   private async readSlackNotification(id: string): Promise<void> {
@@ -2453,6 +2483,9 @@ export class DashboardView {
       this.paintSlack();
       this.root.querySelector<HTMLButtonElement>('[data-slack-toggle]')?.focus({ preventScroll: true });
       return;
+    }
+    if (target.closest('[data-notifications-clear]')) {
+      void this.clearNotificationHistory(); return;
     }
     const slackRead = target.closest<HTMLButtonElement>('[data-slack-read]');
     if (slackRead?.dataset.slackRead) {

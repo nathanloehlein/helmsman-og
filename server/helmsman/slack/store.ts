@@ -1,3 +1,4 @@
+import { initializeNotificationHistory, type NotificationIdentity } from '../notification-history';
 import Database from 'better-sqlite3';
 
 export interface SlackNotification {
@@ -42,6 +43,7 @@ export interface SlackStore {
   setNotificationRunId(id: string, runId: string): void;
   getNotification(id: string): SlackNotification | null;
   listNotifications(limit?: number): SlackNotification[];
+  notificationIdentities(): Iterable<NotificationIdentity>;
   markRead(id: string, now: string): boolean;
   claimDispatch(id: string, token: string, now: string): boolean;
   dispatchClaims(sourceKey: string): Array<{ notificationId: string; token: string; claimedAt: string }>;
@@ -55,6 +57,7 @@ const NOTIFICATION_COLUMNS = 'id, repo, prNumber, prUrl, sourceUrl, author, chan
 export function openSlackStore(path: string): SlackStore {
   const sql = new Database(path);
   sql.pragma('journal_mode = WAL');
+  initializeNotificationHistory(sql);
   sql.exec(`
     CREATE TABLE IF NOT EXISTS slack_sources (
       key TEXT PRIMARY KEY, activatedAt TEXT NOT NULL, cursor TEXT, health TEXT NOT NULL
@@ -104,9 +107,12 @@ export function openSlackStore(path: string): SlackStore {
     getNotification(id) {
       return (sql.prepare(`SELECT ${NOTIFICATION_COLUMNS} FROM slack_notifications WHERE id = ?`).get(id) as SlackNotification | undefined) ?? null;
     },
+    *notificationIdentities() {
+      for (const row of sql.prepare('SELECT id,repo FROM slack_notifications').iterate() as Iterable<{ id: string; repo: string }>) yield { ...row, kind: 'review' as const };
+    },
     listNotifications(limit = 100) {
       const count = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 100;
-      return sql.prepare(`SELECT ${NOTIFICATION_COLUMNS} FROM slack_notifications ORDER BY updatedAt DESC, id DESC LIMIT ?`)
+      return sql.prepare(`SELECT ${NOTIFICATION_COLUMNS} FROM slack_notifications WHERE NOT EXISTS (SELECT 1 FROM notification_history history WHERE history.kind='review' AND history.id=slack_notifications.id AND history.dismissed=1) ORDER BY updatedAt DESC, id DESC LIMIT ?`)
         .all(count) as SlackNotification[];
     },
     markRead(id, now) {
