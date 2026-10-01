@@ -488,6 +488,14 @@ also depends on the agent following its instructions. Their independent completi
 audit routes required decisions to local clarifications and verifies applied answers
 and published responses before success. Optional contacts suggest
 respondents, including Jira assignees/reporters; Helmsman does not message them.
+While another app tab is open, Agent Questions pulses and displays the unanswered
+count for the header galleon, checked every five seconds. Answered, cancelled, and
+expired questions are excluded. Reduced-motion settings use a static highlight.
+After a keyboard or pointer interaction enables browser audio, each newly observed
+batch plays one gentle chime; repeated polls do not replay it. Visiting Agent
+Questions stops the alert and acknowledges those questions for sound, while leaving
+the page restores the highlight for any still unanswered. Audio can continue in a
+background browser tab when the browser permits it.
 
 **Costs & Outcomes** filters by the header repository and a 7/30/90/365-day window.
 It shows reported spend and coverage, tokens, duration, PR outcomes, and recorded

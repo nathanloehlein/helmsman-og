@@ -5,7 +5,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 async function request(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(path, { ...init, signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(path, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) });
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new Error(typeof record(body)?.error === 'string' ? record(body)!.error as string : `Request failed (${response.status}).`);
   const result = record(body);
@@ -13,10 +13,10 @@ async function request(path: string, init?: RequestInit): Promise<Record<string,
   return result;
 }
 
-export async function fetchClarifications(repo: string | null): Promise<Clarification[]> {
+export async function fetchClarifications(repo: string | null, signal?: AbortSignal): Promise<Clarification[]> {
   const query = new URLSearchParams();
   if (repo) query.set('repo', repo);
-  const body = await request(`/api/clarifications${query.size ? `?${query}` : ''}`);
+  const body = await request(`/api/clarifications${query.size ? `?${query}` : ''}`, { signal });
   return Array.isArray(body.clarifications) ? body.clarifications as Clarification[] : [];
 }
 

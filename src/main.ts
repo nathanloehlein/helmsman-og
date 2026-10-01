@@ -1,3 +1,5 @@
+import { QuestionAlerts } from './questionAlerts';
+import { fetchClarifications } from './data/clarificationClient';
 import { fetchFirefoxBridge } from './data/firefoxBridge';
 import { fetchSlackMcp, startSlackOAuth } from './data/slackMcp';
 import { renderSlackMcp, type SlackMcpView } from './renderSlackMcp';
@@ -203,6 +205,7 @@ export class DashboardView {
     else this.scheduleRunLogFlush();
     if (!document.hidden) {
       void this.refresh(false);
+      void this.questionAlerts.refresh();
       if (this.view === 'cmux') void this.handleCmuxTabsChanged();
     }
   };
@@ -272,10 +275,15 @@ export class DashboardView {
   private outcomesEditing = false;
   private campaigns: ReturnType<typeof mountCampaigns> | null = null;
   private clarifications: ReturnType<typeof mountClarifications> | null = null;
+  private readonly questionAlerts: QuestionAlerts;
+  private readonly unlockQuestionAudio = (event: Event): void => {
+    if (event.isTrusted && !(event instanceof KeyboardEvent && event.repeat)) void this.questionAlerts.unlockAudio();
+  };
   private runInstructions = createRunInstructions();
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.questionAlerts = new QuestionAlerts({ read: fetchClarifications, changed: () => this.paintQuestionAlerts() });
     applyTheme(this.themeId);
     this.root.addEventListener('click', (event: MouseEvent): void => this.handleClick(event), { signal: this.rootEvents.signal });
     this.root.addEventListener('keydown', (event: KeyboardEvent): void => {
@@ -436,9 +444,12 @@ export class DashboardView {
     window.addEventListener('popstate', this.onPopState);
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
+    document.addEventListener('pointerdown', this.unlockQuestionAudio, { signal: this.rootEvents.signal });
+    document.addEventListener('keydown', this.unlockQuestionAudio, { signal: this.rootEvents.signal });
     const route = parseRoute(new URL(window.location.href));
     this.selectedRepo = route.repo;
     this.view = route.view;
+    this.questionAlerts.update(this.selectedRepo, this.view === 'clarifications');
     if (route.view !== 'dashboard' && route.view !== 'prs') {
       const context = await getContext();
       if (context) {
@@ -526,6 +537,7 @@ export class DashboardView {
 
   destroy(): void {
     this.destroyed = true;
+    this.questionAlerts.dispose();
     this.copyTimers.forEach(timer => clearTimeout(timer));
     this.copyTimers.clear();
     this.cancelRunLogFlush();
@@ -625,6 +637,7 @@ export class DashboardView {
     this.selectedRepo = scope;
     saveRepoScope(scope);
     this.view = route.view;
+    this.questionAlerts.update(this.selectedRepo, this.view === 'clarifications');
     if (route.view === 'cmux') {
       this.cmuxPanelState = { selectedSurface: null };
       this.cmuxScreen = '';
@@ -1221,6 +1234,7 @@ export class DashboardView {
   }
 
   private syncShell(): void {
+    this.questionAlerts.update(this.selectedRepo, this.view === 'clarifications');
     const shell = this.root.querySelector<HTMLElement>('.helm');
     if (!shell) return;
     const opts = this.shellOptions();
@@ -1272,6 +1286,21 @@ export class DashboardView {
     const greeting = shell.querySelector('[data-greeting]');
     if (nextGreeting && greeting) greeting.replaceWith(nextGreeting);
     else if (nextGreeting) shell.querySelector('.nameplate-scope')?.append(nextGreeting);
+    this.paintQuestionAlerts();
+  }
+
+  private paintQuestionAlerts(): void {
+    const tab = this.root.querySelector<HTMLElement>('#page-tab-clarifications');
+    if (!tab || this.destroyed) return;
+    const count = this.questionAlerts.count;
+    tab.classList.toggle('has-pending-questions', count > 0);
+    const pendingLabel = `${count} ${term(count === 1 ? 'unansweredQuestion' : 'unansweredQuestions')}`;
+    tab.setAttribute('aria-label', count ? `${term('clarifications')}, ${pendingLabel}` : term('clarifications'));
+    tab.title = count ? pendingLabel : term('clarifications');
+    let badge = tab.querySelector<HTMLElement>('.question-alert-count');
+    if (!count) { badge?.remove(); return; }
+    if (!badge) { badge = document.createElement('span'); badge.className = 'question-alert-count'; badge.setAttribute('aria-hidden', 'true'); tab.append(badge); }
+    badge.textContent = String(count);
   }
 
   private bindHeadControls(): void {

@@ -44,6 +44,8 @@ export const TERMINOLOGY = {
   dashboard: { plain: 'Dashboard', pirate: 'Helm' },
   costsOutcomes: { plain: 'Costs & Outcomes', pirate: 'Costs & Outcomes' },
   campaigns: { plain: 'Campaigns', pirate: 'Fleet Campaigns' },
+  unansweredQuestion: { plain: 'unanswered question', pirate: 'unanswered question' },
+  unansweredQuestions: { plain: 'unanswered questions', pirate: 'unanswered questions' },
   clarifications: { plain: 'Agent Questions', pirate: 'Agent Questions' },
   systemStatus: { plain: 'System status', pirate: 'Fleet status' },
   mineRunning: { plain: 'Mine · running', pirate: 'Mine · underway' },
