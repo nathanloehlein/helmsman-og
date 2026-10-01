@@ -88,3 +88,17 @@ describe('persistent notification dismissal', () => {
     expect(sql.prepare('SELECT COUNT(*) AS count FROM notification_history').get()).toEqual({ count: 0 });
   });
 });
+
+it('lists a quiet galleon before caps and clears it without dismissing a busy galleon', () => {
+  const f = fixture(); f.reviews.insertNotification('source', notification('quiet')); f.db.insertRun(run('quiet'));
+  for (let i = 0; i < 120; i++) {
+    f.reviews.insertNotification('source', { ...notification(`busy-${i}`, 'org/other'), updatedAt: '2026-10-02T00:00:00Z' });
+    f.db.insertRun({ ...run(`busy-${i}`, 'org/other'), endedAt: '2026-10-02T00:00:00Z' });
+  }
+  expect(f.snapshot().value.every(item => item.repo === 'org/other')).toBe(true);
+  const selected = f.history.capture(() => [...f.reviews.listNotifications(100, 'ORG/REPO'), ...f.voyages.listNotifications(100, 'ORG/REPO')]);
+  expect(selected.value).toHaveLength(2); expect(selected.value.every(item => item.repo === 'org/repo')).toBe(true);
+  expect(f.history.clear({ repo: 'org/repo', clearToken: selected.clearToken }).cleared).toBe(2);
+  expect(f.reviews.listNotifications(100, 'org/repo')).toEqual([]); expect(f.voyages.listNotifications(100, 'org/repo')).toEqual([]);
+  expect(f.snapshot().value).toHaveLength(200); expect(f.reviews.queuedNotifications('source')).toHaveLength(121);
+});

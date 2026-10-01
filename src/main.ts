@@ -254,6 +254,7 @@ export class DashboardView {
   private slackOpen: boolean = false;
   private slackError: string | null = null;
   private slackSeq: number = 0;
+  private slackRepo: string | null | undefined = undefined;
   private slackReads = new Set<string>();
   private clearingNotifications = false;
   private notificationClearError: string | null = null;
@@ -742,6 +743,8 @@ export class DashboardView {
   private async performRefresh(force: boolean): Promise<void> {
     const now = Date.now();
     const localDue = force || now - this.lastLocalRefresh >= LOCAL_POLL_MS;
+    const notificationsDue = localDue || this.slackRepo !== this.selectedRepo;
+    if (notificationsDue) this.slackRepo = this.selectedRepo;
     const dashboardDue = (!this.hasContext && this.dashboardRepo === undefined) || ((this.view === 'dashboard' || this.view === 'prs')
       && (force || this.dashboardRepo !== this.selectedRepo || now - this.lastDashboardRefresh >= (this.jiraEnabled ? POLL_MS : LOCAL_POLL_MS)));
     if (localDue) this.lastLocalRefresh = now;
@@ -756,7 +759,7 @@ export class DashboardView {
       dashboardDue ? loadDashboard(repo).catch((): DashboardResponse | null => null) : null,
       localDue ? fetchAgents() : null,
       force ? this.loadUiConfig(false) : null,
-      localDue ? fetchSlack() : undefined,
+      notificationsDue ? fetchSlack(repo) : undefined,
       localDue ? getContext() : null,
       localDue && (this.view === 'dashboard' || this.view === 'prs' || this.view === 'runs' || this.route.run)
         ? fetchSlackReviewRequests() : undefined,
@@ -822,7 +825,7 @@ export class DashboardView {
       await this.navigate({ ...this.route, view: this.jiraEnabled ? 'config' : 'todos', pane: null }, 'replace');
       return;
     }
-    if (localDue && slackSeq === this.slackSeq) {
+    if (notificationsDue && slackSeq === this.slackSeq) {
       this.slack = slack ?? {
         ...this.slack,
         health: { ...this.slack.health, status: 'unavailable', error: 'Notifications unavailable. Showing saved notifications.' },
@@ -1407,9 +1410,10 @@ export class DashboardView {
       this.slack = { ...this.slack, clearToken: undefined, notifications: this.slack.notifications.filter(item => !request.ids.has(item.id)) };
       this.notificationClearRequest = null;
       const sequence = this.slackSeq;
-      const refreshed = await fetchSlack();
+      const scope = this.selectedRepo;
+      const refreshed = await fetchSlack(scope);
       if (this.destroyed) return;
-      if (refreshed && sequence === this.slackSeq) this.slack = refreshed;
+      if (refreshed && sequence === this.slackSeq && scope === this.selectedRepo) { this.slack = refreshed; this.slackRepo = scope; }
     } else this.notificationClearError = 'Could not clear notifications. Retry clear to try the same request again.';
     this.clearingNotifications = false; this.paintSlack();
   }

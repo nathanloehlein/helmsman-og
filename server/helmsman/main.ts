@@ -659,7 +659,7 @@ function configuredSlackWatcher(): SlackWatcher | null {
   return slackWatcher;
 }
 
-function slackSnapshot(): SlackState {
+function slackSnapshot(repo: string | null = null): SlackState {
   const settings = slackSettings(configStore.effectiveEnv());
   const watcher = configuredSlackWatcher();
   const snapshot = notificationHistory.capture(() => ({
@@ -669,7 +669,7 @@ function slackSnapshot(): SlackState {
       lastSuccessAt: null, error: settings.error,
     },
     githubHealth: githubReviewWatcher.health(),
-    notifications: [...slackStore.listNotifications().map((notification) => {
+    notifications: [...slackStore.listNotifications(100, repo).map((notification) => {
       const run = notification.runId ? db.getRun(notification.runId) : null;
       let task: Partial<AgentTask> | null = null;
       try {
@@ -678,7 +678,7 @@ function slackSnapshot(): SlackState {
       } catch { task = null; }
       return { ...notification, runId: run?.id ?? null,
         model: task?.model ?? null, effort: task?.effort ?? null, complexity: task?.reviewComplexity ?? null };
-    }), ...voyageNotifications.listNotifications()].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || b.id.localeCompare(a.id)),
+    }), ...voyageNotifications.listNotifications(100, repo)].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || b.id.localeCompare(a.id)),
   }));
   return { ...snapshot.value, clearToken: snapshot.clearToken };
 }

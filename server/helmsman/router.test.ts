@@ -978,3 +978,12 @@ describe('clear notification history route', () => {
     expect((await handleApi('POST', '/api/notifications/clear', new URLSearchParams(), input, fixture))?.status).toBe(503);
   });
 });
+
+it('scopes notification history before retrieval and rejects ambiguous scopes', async () => {
+  const snapshot = vi.fn(() => ({ health: { enabled: false, status: 'disabled' as const, channelName: '', intervalMs: 300000, lastSuccessAt: null, error: null }, notifications: [] }));
+  const fixture = { ...deps, slack: { snapshot, markRead: () => false } };
+  expect((await handleApi('GET', '/api/slack', new URLSearchParams({ repo: 'o/r' }), null, fixture))?.status).toBe(200);
+  expect(snapshot).toHaveBeenCalledWith('o/r');
+  for (const query of ['repo=../r', 'repo=o/r&repo=other/r', 'scopeRepo=o/r']) expect((await handleApi('GET', '/api/slack', new URLSearchParams(query), null, fixture))?.status).toBe(400);
+  expect(snapshot).toHaveBeenCalledTimes(1);
+});

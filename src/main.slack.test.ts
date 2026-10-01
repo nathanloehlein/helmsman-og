@@ -30,7 +30,10 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input), 'http://localhost');
     if (url.pathname === '/api/notifications/clear') { expect(init?.method).toBe('POST'); return clearHandler(JSON.parse(String(init?.body))); }
-    if (url.pathname === '/api/slack') return unavailable ? new Response('', { status: 503 }) : json(state);
+    if (url.pathname === '/api/slack') {
+      const repo = url.searchParams.get('repo');
+      return unavailable ? new Response('', { status: 503 }) : json({ ...state, notifications: state.notifications.filter(item => !repo || item.repo.toLowerCase() === repo.toLowerCase()) });
+    }
     const read = /^\/api\/slack\/notifications\/([a-z\d_-]+)\/read$/i.exec(url.pathname);
     if (read?.[1]) {
       expect(init?.method).toBe('POST');
@@ -88,7 +91,7 @@ describe('persistent Slack notifications', () => {
     click('[data-slack-toggle]');
     expect(root.querySelectorAll('.slack-notification')).toHaveLength(2);
     expect(root.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 2 unread');
-    const slackRequests = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === '/api/slack').length;
+    const slackRequests = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith('/api/slack')).length;
     const before = slackRequests();
     for (const [repo, notification, runId] of [['org/other', 'message-two', 'run-88'], ['org/repo', 'message-one', 'run-42']] as const) {
       const select = root.querySelector<HTMLSelectElement>('.repo-select')!;
@@ -101,7 +104,7 @@ describe('persistent Slack notifications', () => {
       expect(target.searchParams.get('repo')).toBe(repo);
       expect(target.searchParams.get('run')).toBe(runId);
       expect(root.querySelector<HTMLElement>('#slack-notifications')?.hidden).toBe(false);
-      expect(slackRequests()).toBe(before);
+      expect(slackRequests()).toBeGreaterThan(before);
     }
     const select = root.querySelector<HTMLSelectElement>('.repo-select')!;
     select.value = '';
@@ -111,7 +114,7 @@ describe('persistent Slack notifications', () => {
     for (const link of root.querySelectorAll<HTMLAnchorElement>('.slack-notification .app-link')) {
       expect(new URL(link.href).searchParams.has('repo')).toBe(false);
     }
-    expect(slackRequests()).toBe(before);
+    expect(slackRequests()).toBeGreaterThan(before);
   });
 
   it('persists reads across page refreshes and keeps the center accessible across views', async () => {
@@ -202,4 +205,19 @@ describe('clear notification history', () => {
     expect(document.querySelector('.slack-notification')?.getAttribute('data-notification-id')).toBe('later');
     expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 1 unread');
   });
+});
+
+it('loads scoped history when the selected galleon was absent from the globally capped snapshot', async () => {
+  const quiet = { ...state.notifications[0]!, id: 'quiet' };
+  const busy = { ...quiet, id: 'busy', repo: 'org/other', prUrl: 'https://github.com/org/other/pull/42' };
+  const original = fetch;
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost');
+    return url.pathname === '/api/slack' ? json({ ...state, notifications: url.searchParams.get('repo') === 'org/repo' ? [quiet] : [busy] }) : original(input, init);
+  }));
+  view = new DashboardView(document.querySelector<HTMLElement>('#app')!); await view.start(); click('[data-slack-toggle]');
+  const select = document.querySelector<HTMLSelectElement>('.repo-select')!; select.value = 'org/repo'; select.dispatchEvent(new Event('change', { bubbles: true }));
+  await vi.waitFor(() => expect(document.querySelector('[data-notification-id="quiet"]')).not.toBeNull());
+  expect(document.querySelector<HTMLButtonElement>('[data-notifications-clear]')?.disabled).toBe(false);
+  expect(document.querySelector('[data-slack-toggle]')?.getAttribute('aria-label')).toBe('Notifications, 1 unread');
 });

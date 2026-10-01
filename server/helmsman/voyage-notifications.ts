@@ -44,7 +44,7 @@ function notification(value: unknown): VoyageNotification | null {
 }
 
 export function openVoyageNotifications(path: string): {
-  listNotifications(limit?: number): VoyageNotification[];
+  listNotifications(limit?: number, repo?: string | null): VoyageNotification[];
   notificationIdentities(): Iterable<NotificationIdentity>;
   markRead(id: string, now: string): boolean;
   close(): void;
@@ -57,7 +57,7 @@ export function openVoyageNotifications(path: string): {
   const select = `SELECT runs.*, reads.readAt FROM runs
     LEFT JOIN voyage_notification_reads AS reads ON reads.id = voyage_notification_id(runs.id, runs.attempt, runs.endedAt)
     WHERE runs.status IN ('succeeded', 'failed', 'stopped') AND runs.endedAt IS NOT NULL`;
-  const list = sql.prepare(`${select} AND NOT EXISTS (SELECT 1 FROM notification_history history WHERE history.kind='voyage' AND history.id=voyage_notification_id(runs.id,runs.attempt,runs.endedAt) AND history.dismissed=1) ORDER BY julianday(runs.endedAt) DESC, runs.endedAt DESC, runs.id DESC`);
+  const list = sql.prepare(`${select} AND (? IS NULL OR runs.repo=? COLLATE NOCASE) AND NOT EXISTS (SELECT 1 FROM notification_history history WHERE history.kind='voyage' AND history.id=voyage_notification_id(runs.id,runs.attempt,runs.endedAt) AND history.dismissed=1) ORDER BY julianday(runs.endedAt) DESC, runs.endedAt DESC, runs.id DESC`);
   const find = sql.prepare(`${select} AND voyage_notification_id(runs.id, runs.attempt, runs.endedAt) = ? LIMIT 1`);
   const insertRead = sql.prepare('INSERT OR IGNORE INTO voyage_notification_reads (id, readAt) VALUES (?, ?)');
   const markRead = sql.transaction((id: string, now: string): boolean => {
@@ -72,10 +72,10 @@ export function openVoyageNotifications(path: string): {
         if (item) yield { kind: 'voyage' as const, id: item.id, repo: item.repo };
       }
     },
-    listNotifications(limit = 100) {
+    listNotifications(limit = 100, repo: string | null = null) {
       const count = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 100;
       const notifications: VoyageNotification[] = [];
-      for (const row of list.iterate()) {
+      for (const row of list.iterate(repo, repo)) {
         const item = notification(row);
         if (item) notifications.push(item);
         if (notifications.length >= count) break;

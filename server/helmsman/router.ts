@@ -80,7 +80,7 @@ export interface RouterDeps {
   jiraEnabled?: () => boolean;
   outboundUsage?: () => unknown;
   context?: () => { repos: string[]; jiraBaseUrl: string | null; jiraEnabled?: boolean };
-  slack?: { snapshot: () => SlackState; markRead: (id: string) => boolean; clear?: (input: ClearNotificationsInput) => ClearNotificationsInput & { cleared: number } };
+  slack?: { snapshot: (repo?: string | null) => SlackState; markRead: (id: string) => boolean; clear?: (input: ClearNotificationsInput) => ClearNotificationsInput & { cleared: number } };
   dashboard: (repo: string | null) => Promise<{ snapshot: unknown; degraded: string[]; repos: string[]; selectedRepo: string | null }>;
   assignTicket?: (ticketId: string) => Promise<void>;
   submitFeedback?: (input: unknown) => Promise<{ url: string }>;
@@ -249,7 +249,10 @@ async function routeApi(
     return { status: 200, json: deps.outboundUsage?.() ?? null };
   }
   if (path === '/api/slack' && method === 'GET') {
-    return { status: 200, json: deps.slack?.snapshot() ?? {
+    const repo = query.get('repo');
+    if ([...query.keys()].some(key => key !== 'repo') || query.getAll('repo').length > 1 || repo !== null && !isGithubRepo(repo))
+      return { status: 400, json: { error: 'Invalid notification scope' } };
+    return { status: 200, json: deps.slack?.snapshot(repo) ?? {
       health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null },
       notifications: [],
     } };

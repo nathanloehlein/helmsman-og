@@ -106,3 +106,8 @@ it('preserves a valid clear token and disables clearing for a malformed optional
   respond({ health, notifications: [item], clearToken }); expect((await fetchSlack())?.clearToken).toBe(clearToken);
   respond({ health, notifications: [item], clearToken: '<invalid>' }); expect(await fetchSlack()).toEqual({ health, notifications: [item] });
 });
+
+it('requests notification history in the selected galleon', async () => {
+  respond({ health, notifications: [] }); await fetchSlack('Org/Repo');
+  expect(fetch).toHaveBeenCalledWith('/api/slack?repo=Org%2FRepo', expect.anything());
+});

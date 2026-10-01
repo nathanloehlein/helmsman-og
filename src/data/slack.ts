@@ -119,9 +119,9 @@ function notification(value: unknown): Notification | null {
   return item as SlackNotification;
 }
 
-export async function fetchSlack(): Promise<SlackState | null> {
+export async function fetchSlack(repo: string | null = null): Promise<SlackState | null> {
   try {
-    const response = await fetch('/api/slack', { signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(`/api/slack${repo ? `?${new URLSearchParams({ repo })}` : ''}`, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) return null;
     const payload: unknown = await response.json();
     if (!payload || typeof payload !== 'object') return null;
