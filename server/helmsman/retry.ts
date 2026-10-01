@@ -45,7 +45,7 @@ export function retryIntent(row: RunRow): LaunchIntent {
   }
   const source = saved ?? task;
   if (source?.repo !== undefined && source.repo !== row.repo) throw new RetryError('The saved galleon does not match this voyage. Start a new voyage.');
-  const adapter = row.adapter.replace(/^pre-pr:/, '');
+  const adapter = row.adapter.replace(/^(?:pre-pr|feedback):/, '');
   if (adapter !== 'codex' && adapter !== 'claude-code' && adapter !== 'command') throw new RetryError('The original agent provider is unavailable. Start a new voyage with a configured provider.');
   const model = validModel(typeof task?.model === 'string' ? task.model : typeof source?.model === 'string' ? source.model : null);
   const rawEffort = typeof task?.effort === 'string' ? task.effort : typeof source?.effort === 'string' ? source.effort : null;

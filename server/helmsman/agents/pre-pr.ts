@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { normalizePrePrSettings, type PrePrSettings } from '../../../src/logic/prePrSettings';
 import type { AgentAdapter, AgentEvent, AgentEventKind } from './adapter';
 
-const KINDS = new Set<AgentEventKind>(['phase', 'tool', 'log', 'result', 'usage', 'error', 'review-verdict', 'run-complete']);
+const KINDS = new Set<AgentEventKind>(['phase', 'tool', 'log', 'result', 'usage', 'error', 'review-verdict', 'feedback-outcome', 'run-complete']);
 const PREFIX = 'pre-pr:';
 
 export function isPrePrAdapter(id: string): boolean {

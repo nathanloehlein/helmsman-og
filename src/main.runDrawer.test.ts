@@ -16,8 +16,12 @@ class RunStream {
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   close = vi.fn();
   constructor(url: string) { this.url = url; streams.push(this); }
-  complete(status: string): void {
-    this.onmessage?.({ data: JSON.stringify({ id: 1, runId: this.url.split('/').at(-2), ts: '2026-09-18T00:00:00Z', kind: 'run-complete', text: status }) } as MessageEvent<string>);
+  feedback(state: string, id = 1): void {
+    this.onmessage?.({ data: JSON.stringify({ id, runId: this.url.split('/').at(-2), ts: '2026-09-18T00:00:00Z', kind: 'feedback-outcome',
+      text: JSON.stringify({ state, headSha: 'a'.repeat(40), summary: 'A required decision remains.' }) }) } as MessageEvent<string>);
+  }
+  complete(status: string, id = 1): void {
+    this.onmessage?.({ data: JSON.stringify({ id, runId: this.url.split('/').at(-2), ts: '2026-09-18T00:00:00Z', kind: 'run-complete', text: status }) } as MessageEvent<string>);
   }
 }
 
@@ -89,6 +93,45 @@ async function open(id: string): Promise<void> {
 }
 
 describe('voyage drawer interactions', () => {
+  it.each([
+    ['succeeded', 'completed', 'Feedback completed'],
+    ['failed', 'changes_remaining', 'Feedback remaining'],
+    ['running', 'awaiting_decision', 'Awaiting decision'],
+  ] as const)('restores %s feedback %s in both tab and footer', async (status, state, label) => {
+    const feedbackOutcome = { state, headSha: 'a'.repeat(40), summary: 'Disposition.' };
+    await setup(`/runs?run=${FIRST}`, [], new Map([[FIRST, { ...run(FIRST, status), feedbackOutcome }]]));
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe(label);
+    expect(document.querySelector('.run-drawer-footer-status')?.textContent).toBe(label);
+  });
+
+  it('updates an active decision immediately and clears waiting when the run ends', async () => {
+    const { details } = await setup();
+    streams[0]!.feedback('awaiting_decision');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Awaiting decision');
+    expect(document.querySelector('.run-drawer-footer-status')?.textContent).toBe('Awaiting decision');
+    details.set(FIRST, { ...run(FIRST, 'failed'), feedbackOutcome: { state: 'awaiting_decision', headSha: 'a'.repeat(40), summary: 'Unanswered.' } });
+    streams[0]!.complete('failed', 2);
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Feedback remaining');
+    await flush();
+    expect(document.querySelector('.run-drawer-footer-status')?.textContent).toBe('Feedback remaining');
+  });
+
+  it('keeps an inactive tab feedback outcome when switching tabs without changing selection', async () => {
+    await setup();
+    await open(SECOND);
+    streams[0]!.feedback('changes_remaining');
+    expect(select(SECOND).getAttribute('aria-selected')).toBe('true');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Feedback remaining');
+    select(FIRST).click();
+    await flush();
+    expect(document.querySelector('.run-drawer-footer-status')?.textContent).toBe('Feedback remaining');
+  });
+
+  it('ignores malformed live feedback metadata', async () => {
+    await setup();
+    streams[0]!.feedback('constructor');
+    expect(tab(FIRST).querySelector('.run-tab-status')?.textContent).toBe('Underway');
+  });
   it.each([
     ['APPROVE', 'Approve'], ['REQUEST_CHANGES', 'Request changes'], ['COMMENT', 'Comment only'],
   ] as const)('shows the saved %s recommendation when opening a completed recent run', async (reviewOutcome, label) => {

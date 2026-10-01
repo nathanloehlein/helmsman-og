@@ -40,6 +40,7 @@ import { claudeCodeAdapter } from './agents/claude-code';
 import { commandAdapter } from './agents/command';
 import { codexAdapter } from './agents/codex';
 import { isPrePrAdapter, prePrAdapter } from './agents/pre-pr';
+import { feedbackUpdateAdapter, isFeedbackUpdateAdapter } from './agents/feedback-update';
 import { dockerReviewAdapter } from './agents/docker-review';
 import { restoreRunAdapter } from './agents/restore';
 import { readReviewArtifact } from './review-artifacts';
@@ -252,7 +253,11 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
     onRunComplete: run => { runTelemetry.complete(run); clarificationRuntime.complete(run.id); gateway.revokeRun(run.id); if (host.kind === 'docker') void stopDockerStages(run.id); },
     createWorktree: (repo: string, id: string) => standaloneWorkspace(repo, id, 'fresh', () => createWorktree(AGENTS_ROOT, repo, id)),
     createWorktreeFromBranch: (repo: string, id: string, branch: string) => standaloneWorkspace(repo, id, 'branch', () => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch,
-      path => pm.hasRun(basename(path)) || db.activeRuns().some(run => run.worktreePath === path))),
+      path => pm.hasRun(basename(path)) || db.activeRuns().some(run => run.worktreePath === path),
+      path => {
+        const retained = db.getRun(basename(path));
+        return Boolean(retained && isFeedbackUpdateAdapter(retained.adapter) && retained.status !== 'succeeded');
+      })),
     createReviewWorktree: (repo, id, number, headSha) => standaloneWorkspace(repo, id, 'review', () => createReviewWorktree(AGENTS_ROOT, repo, id, number, headSha), headSha),
     removeWorktree: (repo: string, path: string) => path.startsWith(`${DOCKER_WORKSPACES}/`) ? removeDockerWorkspace(DOCKER_WORKSPACES, path) : removeWorktree(AGENTS_ROOT, repo, path),
     now: () => new Date().toISOString(),
@@ -322,7 +327,7 @@ function dispatchReattach(row: RunRow, control: { stopped: boolean; stop: (() =>
   const deps: RunnerDeps = {
     ...baseRunnerDeps(cfg, jira),
     adapter,
-    preserveWorktreeOnFailure: isPrePrAdapter(row.adapter),
+    preserveWorktreeOnFailure: isPrePrAdapter(row.adapter) || isFeedbackUpdateAdapter(row.adapter),
     genId: () => row.id,
     onLaunch: (_runId: string, stop: () => Promise<void>) => {
       control.stop = stop;
@@ -386,7 +391,7 @@ try {
       isActiveRunId: (id: string) => {
         if (pm.hasRun(id) || reattachIds.includes(id)) return true;
         const row = db.getRun(id);
-        return Boolean(row && isPrePrAdapter(row.adapter) && row.status !== 'succeeded');
+        return Boolean(row && (isPrePrAdapter(row.adapter) || isFeedbackUpdateAdapter(row.adapter)) && row.status !== 'succeeded');
       },
       repoDirs,
     });
@@ -413,7 +418,7 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
   if (db.getRun(runId) || pm.hasRun(runId)) return runId;
   const cfg: AppConfig = configStore.current();
   const priorRun = body.retryOf ? db.getRun(body.retryOf) : null;
-  const adapterId = priorRun?.adapter.replace(/^pre-pr:/, '') ?? body.adapter ?? cfg.agentAdapter;
+  const adapterId = priorRun?.adapter.replace(/^(?:pre-pr|feedback):/, '') ?? body.adapter ?? cfg.agentAdapter;
   const priorTask = priorRun?.taskJson ? JSON.parse(priorRun.taskJson) as AgentTask | null : null;
   if ((requireGoCaas() || priorTask?.modelRouting === 'gocaas') && adapterId === 'command') {
     throw new Error('Custom command agents cannot enforce GoCaaS routing. Select Codex or Claude Code.');
@@ -538,17 +543,21 @@ function launch(body: LaunchIntent & { runId?: string; headSha?: string; retryOf
         const capability = gateway.issue(runId, 86_400_000);
         taskObj.dockerExecution = { image, gatewayUrl, capability: capability.token, runId };
       }
+      if (!taskObj.review && taskObj.prBranch) taskObj.feedbackWorkflow = true;
       taskObj.clarification = { ...clarificationPaths(RUNS_DIR, runId), gateUrl: `http://127.0.0.1:${PORT}/api/runs/${runId}/clarification-gate` };
       const prepared = await prepareExecution({ runId, runsDir: RUNS_DIR, workflowDbPath: dbPath, task: taskObj,
         provider: adapter.id === 'codex' ? 'codex' : adapter.id === 'claude-code' ? 'claude-code' : undefined, workflow: taskObj.review ? 'review' : 'coding', reviewSettings: cfg.prePr, model: taskObj.model, effort: taskObj.effort,
-        skills: adapter.id === 'codex' && taskObj.review || !taskObj.review && !taskObj.prBranch && (adapter.id === 'codex' || cfg.prePr.reviewerCount > 1) ? ['review-agent'] : [] });
+        skills: adapter.id === 'codex' && taskObj.review || !taskObj.review && (adapter.id === 'codex' || cfg.prePr.reviewerCount > 1) ? ['review-agent'] : [] });
       taskObj = prepared.task;
-      const runAdapter = !taskObj.review && !taskObj.prBranch ? prePrAdapter(adapter, RUNS_DIR, prepared.reviewSettings) : taskObj.review && taskObj.dockerExecution ? dockerReviewAdapter(adapter) : adapter;
+      const runAdapter = taskObj.review
+        ? taskObj.dockerExecution ? dockerReviewAdapter(adapter) : adapter
+        : taskObj.prBranch ? feedbackUpdateAdapter(adapter, RUNS_DIR, prepared.reviewSettings)
+          : prePrAdapter(adapter, RUNS_DIR, prepared.reviewSettings);
       await startRun(taskObj, {
         ...baseRunnerDeps(cfg, jira),
         launchJson,
         adapter: runAdapter,
-        ...(isPrePrAdapter(runAdapter.id) ? { maxAttempts: 1, preserveWorktreeOnFailure: true } : {}),
+        ...(isPrePrAdapter(runAdapter.id) || isFeedbackUpdateAdapter(runAdapter.id) ? { maxAttempts: 1, preserveWorktreeOnFailure: true } : {}),
         genId: () => runId,
         onLaunch: (_runId: string, stop: () => Promise<void>) => {
           control.stop = stop;

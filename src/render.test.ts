@@ -985,6 +985,26 @@ describe('renderRunsDrawer', () => {
     ...over,
   });
 
+  it.each([
+    ['running', 'awaiting_decision', 'Awaiting decision'],
+    ['failed', 'changes_remaining', 'Feedback remaining'],
+    ['stopped', 'awaiting_decision', 'Feedback remaining'],
+    ['succeeded', 'completed', 'Feedback completed'],
+  ] as const)('shows %s feedback %s as %s', (status, state, label) => {
+    const feedbackOutcome = { state, headSha: 'a'.repeat(40), summary: 'Disposition.' };
+    const el = document.createElement('div');
+    el.innerHTML = renderRunsDrawer([tab({ status, complete: status !== 'running', feedbackOutcome })], 'run-1');
+    const badge = el.querySelector<HTMLElement>('.run-tab-status');
+    expect(badge?.textContent).toBe(label);
+    expect(badge?.dataset.feedbackOutcome).toBe(status === 'stopped' ? 'changes_remaining' : state);
+    expect(runTabStatus(status, status !== 'running', undefined, feedbackOutcome).label).toBe(label);
+  });
+
+  it('does not invent completion from malformed feedback or a still-running completed event', () => {
+    expect(runTabStatus('succeeded', true, undefined, { state: 'completed' } as RunTabView['feedbackOutcome']).label).toBe(term('success'));
+    expect(runTabStatus('running', false, undefined, { state: 'completed', headSha: 'a'.repeat(40), summary: 'Verification complete.' }).label).toBe(term('running'));
+  });
+
   it('renders a tab per run with select and close controls', () => {
     const html: string = renderRunsDrawer([tab({ id: 'a', label: 'A' }), tab({ id: 'b', label: 'B' })], 'a');
     expect(html).toContain('data-tabid="a"');

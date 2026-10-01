@@ -1,3 +1,4 @@
+import { feedbackUpdateAdapter, isFeedbackUpdateAdapter } from './feedback-update';
 import type { RunRow } from '../db';
 import type { AgentAdapter, AgentTask } from './adapter';
 import { claudeCodeAdapter } from './claude-code';
@@ -7,6 +8,7 @@ import { dockerReviewAdapter } from './docker-review';
 import { isPrePrAdapter, prePrAdapter } from './pre-pr';
 
 export function restoreRunAdapter(row: Pick<RunRow, 'adapter' | 'taskJson'>, options: { runsDir: string; agentCmd?: string | null }): AgentAdapter {
+  if (isFeedbackUpdateAdapter(row.adapter)) return feedbackUpdateAdapter(row.adapter === 'feedback:claude-code' ? claudeCodeAdapter : codexAdapter, options.runsDir);
   if (isPrePrAdapter(row.adapter)) return prePrAdapter(row.adapter === 'pre-pr:claude-code' ? claudeCodeAdapter : codexAdapter, options.runsDir);
   if (row.adapter === 'command') return commandAdapter(options.agentCmd ?? '');
   const provider = row.adapter === 'claude-code' ? claudeCodeAdapter : codexAdapter;

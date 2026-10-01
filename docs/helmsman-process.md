@@ -22,7 +22,7 @@ flowchart TD
     Docker --> Workflow
     Workflow -->|New coding task| Coding[Implementation and exact-revision review loop below]
     Workflow -->|Existing PR review| Review[Pin PR head and run standalone review<br/>Host verifies result and required answers before posting]
-    Workflow -->|Existing PR feedback rerun| Rerun[Trusted local execution only<br/>Agent updates, tests, commits and pushes same branch<br/>Bypasses the new-code pre-PR review gate]
+    Workflow -->|Existing PR feedback rerun| Rerun[Trusted local execution only<br/>Author pushes same branch and publishes responses<br/>Independent completion audit below]
     Snapshot -.->|Missing skills / drift / unavailable Docker| Block[Fail preflight; no unisolated fallback]
 ```
 
@@ -67,13 +67,29 @@ flowchart TD
 ## Existing-PR feedback reruns
 
 ```mermaid
-flowchart LR
+flowchart TD
     Feedback[Operator submits feedback<br/>for an existing PR] --> Prepare[Resolve PR branch<br/>Freeze settings; prepare branch worktree<br/>Trusted local execution only]
-    Prepare --> Agent[Agent addresses feedback<br/>Runs tests, commits and pushes<br/>to the same branch]
-    Agent --> Finish[Host checks required answers<br/>and records completion]
+    Prepare --> Capture[Capture every discussion page<br/>Include edited summary comments]
+    Capture --> Agent[Author fixes and tests<br/>Pushes same branch and publishes responses]
+    Agent --> Audit[Snapshot published head and discussion<br/>Detached independent reviewers audit<br/>Every source and published response]
+    Audit --> Fresh{Latest snapshot still matches?}
+    Fresh -->|No; repair budget remains| Capture
+    Fresh -->|Yes| Result{Independent audit outcome}
+    Result -->|No required work remains| Finish[completed]
+    Result -->|Fixes or response evidence missing| Repair{Repair budget remains?}
+    Repair -->|Yes| Agent
+    Repair -->|No| Stop[changes_remaining<br/>Preserve worktree and evidence]
+    Result -->|Required owner decision| Decision[awaiting_decision<br/>Local clarification; run stays active<br/>Capacity retained]
+    Decision -->|Answered within decision budget| Capture
+    Decision -->|Unanswered or budget exhausted| Stop
+    Fresh -->|No; repair budget exhausted| Stop
 ```
 
-Feedback reruns use the agent's normal update prompt, not the new-code pre-PR adapter. The agent publishes branch updates directly; the host does not apply the exact-revision review gate or recheck required answers immediately before that push. The prompt requires the agent to wait for required answers before dependent work, and unanswered required questions block successful completion. No new PR is created, and this path does not enqueue the post-creation Helmsman review, transition Jira, or request Copilot. Docker feedback reruns fail preflight; select trusted local execution.
+The author publishes branch updates and responses before the independent completion audit. The host requires a clean committed checkout matching the published head, unchanged review evidence, complete source coverage, and published response evidence. It fetches the latest snapshot before accepting completion, so edited summaries and new feedback invalidate stale audits. Optional suggestions may be deferred with evidence and a published response; required findings and decisions block completion.
+
+Shared **Config → Pre-PR review** settings apply when feedback voyages launch. `PRE_PR_MAX_ROUNDS` separately bounds repairs and decision handoffs, allowing an answered decision an application and verification pass. Local clarification waits retain run capacity; answers remain available to later author and reviewer passes. Missing, cancelled, or expired required answers never count as approval. Failed or stopped feedback worktrees are retained. `AGENT_MAX_ATTEMPTS` does not restart or multiply this workflow.
+
+The new coding prepublication gate is unchanged. Feedback authors push directly; the host does not recheck required answers immediately before that push, so the prompt requires waiting before dependent work. No new PR is created, and this path does not enqueue the post-creation Helmsman review, transition Jira, or request Copilot. Docker feedback reruns fail preflight; select trusted local execution.
 
 ## Services throughout a voyage
 
@@ -95,14 +111,14 @@ flowchart LR
 
 ## Defaults and boundaries
 
-- **Defaults:** 2 desired reviewer CLIs, 3 review rounds, 45 minutes per agent session. Configuration allows 1–2 reviewers, 1–5 rounds, and 5–180 minutes. These are defaults, not a statement of current live settings.
+- **Defaults:** 2 desired reviewer CLIs, 3 review rounds, 45 minutes per agent session. Configuration allows 1–2 reviewers, 1–5 rounds, and 5–180 minutes. Shared settings apply to newly launched coding and feedback voyages; running voyages keep their captured settings. Feedback decision handoffs have the separate bound described above. These are defaults, not a statement of current live settings.
 - The writer CLI is required in the selected execution environment. An unavailable alternate CLI permits a single reviewer, even when 2 are configured. The writer's review is a fresh session, using a detached worktree locally or an isolated review workspace in Docker.
 - Reviewer leads run sequentially. Their prompts request concurrent, bounded sub-agents; the runtime does not verify that delegation happened.
-- Each reviewer examines the same complete committed diff. After a fix commit, every selected reviewer reviews the new revision. A `COMMENT` verdict blocks; it does not enter the fix loop.
-- Summary correction applies only to an otherwise valid report. It gets one additional session per report, with its own timeout, and does not consume another review round. The 2,000-character limit uses JavaScript string length, including whitespace and any byline.
-- Preflight, agent, report, revision, and publication failures stop the flow. Pre-PR voyages have one outer attempt; the runtime does not automatically restart the entire voyage. Work is retained on failure. A push may already have occurred if a later publication check fails.
-- A valid saved checkpoint skips implementation and reuses the original reports for its saved review round. It must match the current branch, base, head, and complete selected reviewer set. Oversized saved summaries can use the same correction step.
-- After publication, Helmsman queues its own PR review and requests Copilot. Jira transitions apply to eligible Jira tasks, not local todos or freeform tasks. Queue and Copilot request failures do not change the successful creation voyage to failed.
+- Each reviewer examines the same complete committed diff. After a fix commit, every selected reviewer reviews the new revision. In the new coding gate, a `COMMENT` verdict blocks; it does not enter the fix loop.
+- New coding summary correction applies only to an otherwise valid report. It gets one additional session per report, with its own timeout, and does not consume another review round. The 2,000-character limit uses JavaScript string length, including whitespace and any byline.
+- Preflight, agent, report, revision, and publication failures stop the flow. New coding and feedback voyages have one outer attempt; the runtime does not automatically restart the entire voyage. Work is retained on failure or stop. Feedback branch pushes precede completion audits; a new coding push may already have occurred if a later publication check fails.
+- A valid saved new coding checkpoint skips implementation and reuses the original reports for its saved review round. It must match the current branch, base, head, and complete selected reviewer set. Oversized saved summaries can use the same correction step.
+- After new PR publication, Helmsman queues its own PR review and requests Copilot. Jira transitions apply to eligible Jira tasks, not local todos or freeform tasks. Queue and Copilot request failures do not change the successful creation voyage to failed.
 - The queued Helmsman review waits for the parent to finish, available capacity, and GitHub configuration. Closed, merged, or draft PRs are blocked. A matching running or successful review for the current head can be reused. The flow does not auto-merge the PR.
 
 ## Setup and current limits

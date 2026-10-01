@@ -9,6 +9,7 @@ import { term, setPirateMode, isPirateMode } from './logic/terminology';
 import { loadProfile } from './data/profile';
 import { copyText } from './logic/clipboard';
 import { RUN_LOG_PREVIEW_LIMIT } from './logic/runLog';
+import { parseFeedbackOutcome, type FeedbackOutcome } from './logic/feedbackOutcome';
 import { appendHighlightedLog } from './logic/logHighlight';
 import { getContext } from './data/context';
 import { fetchTodos, createTodo, updateTodo, deleteTodo } from './data/todoClient';
@@ -107,6 +108,7 @@ interface RunTab {
   streamState?: RunStreamState;
   lastEventId?: number;
   footer: RunStatusSummary | null;
+  feedbackOutcome?: FeedbackOutcome;
   pr: { repo: string; number: number } | null;
   unsub: (() => void) | null;
   complete: boolean;
@@ -673,6 +675,7 @@ export class DashboardView {
         const tab = this.runTabs.find(item => item.runId === route.run);
         if (tab) {
           tab.footer = summary;
+          tab.feedbackOutcome = summary.feedbackOutcome;
           tab.status = summary.status;
           tab.complete = this.isTerminalRunStatus(summary.status);
           if (summary.prNumber) tab.pr = { repo: summary.repo, number: summary.prNumber };
@@ -2829,6 +2832,7 @@ export class DashboardView {
       label,
       lines: [],
       footer: run ?? null,
+      feedbackOutcome: run?.feedbackOutcome,
       pr: run && run.prNumber != null ? { repo: run.repo, number: run.prNumber } : null,
       unsub: null,
       complete: this.isTerminalRunStatus(run?.status),
@@ -2940,12 +2944,22 @@ export class DashboardView {
     }
     tab.lines.push(event);
     if (tab.lines.length > RUN_LOG_PREVIEW_LIMIT) tab.lines.splice(0, tab.lines.length - RUN_LOG_PREVIEW_LIMIT);
+    if (event.kind === 'feedback-outcome') {
+      const feedbackOutcome = parseFeedbackOutcome(event.text);
+      if (feedbackOutcome) {
+        tab.feedbackOutcome = feedbackOutcome;
+        if (tab.footer) tab.footer = { ...tab.footer, feedbackOutcome };
+        this.updateRunTabStatus(tab);
+        if (runId === this.activeTabId) this.renderFooterDom(tab);
+      }
+    }
     if (event.kind === 'run-complete') {
       tab.complete = true;
       tab.status = this.isTerminalRunStatus(event.text) ? event.text : 'completed';
       tab.unsub?.();
       tab.unsub = null;
       this.updateRunTabStatus(tab);
+      if (runId === this.activeTabId) this.renderFooterDom(tab);
       void this.finalizeTab(runId);
     }
     if (runId === this.activeTabId) {
@@ -2957,12 +2971,13 @@ export class DashboardView {
   private updateRunTabStatus(tab: RunTab): void {
     const element = this.runDrawerEl.querySelector<HTMLElement>(`.run-tab[data-tabid="${CSS.escape(tab.runId)}"]`);
     if (!element) return;
-    const status = runTabStatus(tab.status, tab.complete, tab.footer?.reviewOutcome);
+    const status = runTabStatus(tab.status, tab.complete, tab.footer?.reviewOutcome, tab.feedbackOutcome ?? tab.footer?.feedbackOutcome);
     element.dataset.runStatus = status.kind;
     const badge = element.querySelector<HTMLElement>('.run-tab-status');
     if (badge) {
       badge.textContent = status.label;
       badge.dataset.reviewOutcome = status.reviewOutcome ?? '';
+      badge.dataset.feedbackOutcome = status.feedbackOutcome ?? '';
       badge.title = status.reviewOutcome ? `${term('review')} recommendation: ${status.label}` : status.label;
     }
     if (tab.runId === this.activeTabId) {
@@ -2979,6 +2994,7 @@ export class DashboardView {
     if (!tab || this.destroyed) return;
     tab.footer = summary;
     if (summary) {
+      tab.feedbackOutcome = summary.feedbackOutcome ?? tab.feedbackOutcome;
       tab.status = summary.status;
       this.updateRunTabStatus(tab);
     }
@@ -3030,6 +3046,7 @@ export class DashboardView {
       complete: t.complete,
       status: t.status,
       reviewOutcome: t.footer?.reviewOutcome,
+      feedbackOutcome: t.feedbackOutcome ?? t.footer?.feedbackOutcome,
     }));
     const drawerCollapsed: boolean = this.collapsed.has('runs:drawer') && this.runTabs.length > 0;
     this.runDrawerEl.innerHTML = renderRunsDrawer(tabsView, this.activeTabId, drawerCollapsed);
@@ -3117,14 +3134,16 @@ export class DashboardView {
     if (!footer) return;
     footer.textContent = '';
     const summary: RunStatusSummary | null = tab.footer;
-    if (!summary) return;
+    if (!summary && !tab.feedbackOutcome) return;
+    const feedbackStatus = runTabStatus(tab.status, tab.complete, summary?.reviewOutcome, tab.feedbackOutcome ?? summary?.feedbackOutcome);
 
     const statusLine: HTMLDivElement = document.createElement('div');
     statusLine.className = 'run-drawer-footer-status';
-    statusLine.textContent = `${term('ticketStatus')}: ${deriveTicketStatus(summary)}`;
+    statusLine.textContent = feedbackStatus.feedbackOutcome ? feedbackStatus.label
+      : summary ? `${term('ticketStatus')}: ${deriveTicketStatus(summary)}` : feedbackStatus.label;
     footer.appendChild(statusLine);
 
-    if (summary.prNumber == null) return;
+    if (!summary || summary.prNumber == null) return;
     const prLine: HTMLDivElement = document.createElement('div');
     prLine.className = 'run-drawer-footer-pr';
     const repoParts: string[] = summary.repo.split('/');

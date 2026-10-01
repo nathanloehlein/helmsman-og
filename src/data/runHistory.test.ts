@@ -8,6 +8,13 @@ const page = { runs: [run], total: 26, limit: 25, offset: 25 };
 afterEach(() => vi.unstubAllGlobals());
 
 describe('fetchRunHistory', () => {
+  it('normalizes feedback metadata using the same contract as run details', async () => {
+    const feedbackOutcome = { state: 'awaiting_decision', headSha: 'a'.repeat(40), summary: 'Approve?' };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...page, runs: [{ ...run, status: 'failed', feedbackOutcome }] }))));
+    expect((await fetchRunHistory('org/alpha', 25)).runs[0]?.feedbackOutcome?.state).toBe('changes_remaining');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...page, runs: [{ ...run, feedbackOutcome: { state: 'completed' } }] }))));
+    expect((await fetchRunHistory('org/alpha', 25)).runs[0]).not.toHaveProperty('feedbackOutcome');
+  });
   it('requests a scoped page and preserves history metadata', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(page)));
     vi.stubGlobal('fetch', fetch);

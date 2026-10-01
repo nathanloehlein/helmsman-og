@@ -29,8 +29,8 @@ export function codexSettings(task: AgentSettings): { model: string; effort: str
 }
 
 export function agentAttribution(adapterId: string, task: AgentSettings, role: AgentAttribution['role']): AgentAttribution {
-  if (adapterId === 'codex' || adapterId === 'pre-pr:codex') return { role, ...codexSettings(task) };
-  if (adapterId === 'claude-code' || adapterId === 'pre-pr:claude-code') {
+  if (adapterId === 'codex' || adapterId === 'pre-pr:codex' || adapterId === 'feedback:codex') return { role, ...codexSettings(task) };
+  if (adapterId === 'claude-code' || adapterId === 'pre-pr:claude-code' || adapterId === 'feedback:claude-code') {
     return {
       role,
       model: validModel(typeof task?.model === 'string' ? task.model : null) ?? PROVIDER_DEFAULT,

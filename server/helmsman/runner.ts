@@ -204,6 +204,11 @@ interface FinalizeParams {
 
 async function finalizeRun(p: FinalizeParams): Promise<void> {
   const { runId, task, deps, prNumber, totalCost, ok, worktreePath, onEvent } = p;
+  deps.pollClarifications?.(runId);
+  if (ok && task.feedbackWorkflow && !task.review && deps.db.latestFeedbackOutcome(runId)?.state !== 'completed') {
+    onEvent({ kind: 'error', text: 'Feedback completion was not independently verified; unresolved findings or decisions remain', stage: 'feedback-review' });
+    p.ok = false;
+  }
   if (ok && deps.hasRequiredUnanswered?.(runId)) {
     onEvent({ kind: 'error', text: 'Required clarification has no answer; task cannot complete', stage: 'clarification' });
     p.ok = false;

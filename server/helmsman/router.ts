@@ -22,6 +22,7 @@ import { OutcomeValidationError } from './outcomes';
 import type { CampaignService } from './campaign-service';
 import { ClarificationValidationError, type ClarificationStore } from './clarifications';
 import { SECRET_KEYS } from './config-store';
+import { normalizeFeedbackOutcomeForStatus, type FeedbackOutcome } from '../../src/logic/feedbackOutcome';
 
 export interface ApiResult {
   status: number;
@@ -39,9 +40,11 @@ export interface RunSummary {
   costUsd: number | null;
   reviewOutcome?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   reviewVerdict?: string;
+  feedbackOutcome?: FeedbackOutcome;
 }
 
 function toRunSummary(row: RunRow, db: Db): RunSummary {
+  const feedbackOutcome = normalizeFeedbackOutcomeForStatus(db.latestFeedbackOutcome(row.id), row.status);
   const reviewVerdict = row.status === 'succeeded' ? db.latestReviewVerdict(row.id) : null;
   const verdictLabel = reviewVerdict?.match(/^Verdict: (Approve|Request changes|Comment only) — \S/)?.[1];
   const reviewOutcome = verdictLabel === 'Approve' ? 'APPROVE'
@@ -57,6 +60,7 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
     startedAt: row.startedAt,
     costUsd: row.costUsd,
     ...(reviewOutcome && reviewVerdict ? { reviewOutcome, reviewVerdict } : {}),
+    ...(feedbackOutcome ? { feedbackOutcome } : {}),
   };
 }
 
@@ -129,8 +133,12 @@ async function routeApi(
 ): Promise<ApiResult | null> {
   const clarificationGate = path.match(/^\/api\/runs\/([a-z\d_-]{1,128})\/clarification-gate$/i);
   if (clarificationGate && method === 'GET') {
-    try { return { status: 200, json: { ready: deps.clarificationGate?.(clarificationGate[1]!) === true } }; }
-    catch { return { status: 200, json: { ready: false } }; }
+    const runId = clarificationGate[1]!;
+    try {
+      const ready = deps.clarificationGate?.(runId) === true;
+      const clarifications = deps.clarifications?.listForRun(runId) ?? [];
+      return { status: 200, json: { ready, clarifications } };
+    } catch { return { status: 200, json: { ready: false, clarifications: [] } }; }
   }
   if (path.startsWith('/api/campaigns') && deps.campaigns) return deps.campaigns.handle(path, method, query, _body);
   if (path.startsWith('/api/clarifications') || path === '/api/trusted-contacts') {

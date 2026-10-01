@@ -23,6 +23,27 @@ beforeEach(() => setPirateMode(true));
 afterEach(() => localStorage.removeItem('helmsman.pirateMode'));
 
 describe('renderRunsView', () => {
+  it.each([
+    ['completed', 'succeeded', 'Feedback completed'],
+    ['changes_remaining', 'failed', 'Feedback remaining'],
+    ['awaiting_decision', 'running', 'Awaiting decision'],
+    ['awaiting_decision', 'failed', 'Feedback remaining'],
+    ['awaiting_decision', 'stopped', 'Feedback remaining'],
+  ] as const)('shows feedback %s on a %s run as %s', (feedbackState, status, label) => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status, feedbackOutcome: {
+      state: feedbackState, headSha: 'a'.repeat(40), summary: '<img src=x onerror=alert(1)>',
+    } })] }));
+    expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe(label);
+    expect(el.querySelector('.voyage-result')?.getAttribute('title')).toContain('<img src=x onerror=alert(1)>');
+    expect(el.querySelector('img')).toBeNull();
+  });
+
+  it('does not show completed feedback before execution succeeds', () => {
+    const el = mount(renderRunsView(state, { ...opts, runs: [run({ status: 'running', feedbackOutcome: {
+      state: 'completed', headSha: 'a'.repeat(40), summary: 'Not finalized.',
+    } })] }));
+    expect(el.querySelector('.voyage-result')?.getAttribute('aria-label')).toBe('Voyage underway');
+  });
   it.each([true, false])('uses the selected terminology for the run page controls (%s)', pirate => {
     setPirateMode(pirate);
     const el = mount(renderRunsView(state, opts));
