@@ -63,6 +63,15 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 </ul>
 <p class="toolbar">Defaults shown; live configuration may differ. <a href="helmsman-process.md">Mermaid source and full notes</a> · Works offline · Print or save as PDF from your browser.</p>
 </header>
+<section aria-labelledby="notification-clear-heading">
+<h2 class="section-heading" id="notification-clear-heading">Clear notification history</h2>
+<div class="intake-sources">
+<article class="flow-step"><h3>Capture</h3><p>Read the selected galleon and capture a server-issued cutoff before display limits. All selects the available notification scope.</p></article>
+<article class="flow-step"><h3>Dismiss</h3><p>Clear all notifications validates the scope and original cutoff, then persists history dismissal. A failed request keeps its cutoff for explicit retry.</p></article>
+<article class="flow-step"><h3>Refresh</h3><p>Refresh the list and unread count. Later arrivals remain visible. Queued reviews, deduplication, task claims and run history are preserved.</p></article>
+</div>
+<p class="section-intro">Available in both versions. Dismissals survive reload and restart; later run attempts produce new notifications.</p>
+</section>
 <section aria-labelledby="intake-heading">
 <h2 class="section-heading" id="intake-heading">Intake and execution preparation</h2>
 <p class="section-intro">Each source resolves a task, galleon, and workflow before execution. New coding tasks use the exact-revision PR review gate; existing-PR reviews and feedback reruns follow separate paths.</p>

@@ -4,6 +4,22 @@ Open [helmsman-process.html](helmsman-process.html) for the standalone diagrams.
 
 This describes Helmsman **0.3.0**: manual and automated intake, frozen execution settings, isolated agent stages, Agent Questions, durable evidence and recovery, and Costs & Outcomes. New coding tasks use the exact-revision PR review gate. Existing-PR reviews and feedback reruns follow separate paths.
 
+## Clear notification history
+
+```mermaid
+flowchart TD
+    Read[Read scoped notification history] --> Snapshot[Capture server-issued cutoff before display limits]
+    Snapshot --> Click[Clear all notifications<br/>Header galleon scope]
+    Click --> Guard[Validate scope and original cutoff]
+    Guard --> Dismiss[Persist dismissal for captured history]
+    Dismiss --> Refresh[Refresh list and unread count]
+    Guard -->|Request fails| Retry[Retain cutoff for explicit retry]
+    Retry --> Guard
+    Later[Notifications arriving after the cutoff] --> Refresh
+```
+
+Clearing notification history preserves queued reviews, deduplication, task claims and run history. With All selected, it clears history across the available notification scope. Dismissals survive reload/restart; a later run attempt produces a new notification. The feature is available in both pre-rewrite and post-rewrite Helmsman.
+
 ## Intake and execution preparation
 
 ```mermaid
