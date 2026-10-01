@@ -37,6 +37,7 @@ const deps: RouterDeps = {
   db: {
     listRuns: () => [{ id: 'r1', ticketId: 'T-1', repo: 'o/r', adapter: 'claude-code', status: 'running', attempt: 1, prNumber: null, startedAt: 'x', endedAt: null, costUsd: null, worktreePath: null }],
     latestReviewVerdict: () => null,
+    latestFeedbackOutcome: () => null,
   } as unknown as RouterDeps['db'],
   canStart: (_repo: string) => ({ ok: true }),
   launch: (_body: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-0',
@@ -335,6 +336,38 @@ describe('handleApi', () => {
     const r = await handleApi('GET', '/api/agents', new URLSearchParams(), null, deps);
     expect(r?.status).toBe(200);
     expect((r?.json as { runs: unknown[] }).runs).toHaveLength(1);
+  });
+
+  it.each(['completed', 'changes_remaining', 'awaiting_decision'] as const)('exposes persisted %s feedback on all summary APIs', async state => {
+    const db = openDb(':memory:');
+    try {
+      db.insertRun({ ...deps.db.listRuns(1)[0]!, status: state === 'awaiting_decision' ? 'running' : 'succeeded' });
+      const feedbackOutcome = { state, headSha: 'a'.repeat(40), summary: 'Finding disposition.' };
+      db.appendEvent('r1', 'feedback-outcome', JSON.stringify(feedbackOutcome), 'now');
+      const local = { ...deps, db };
+      const list = await handleApi('GET', '/api/agents', new URLSearchParams(), null, local);
+      const detail = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null, local);
+      const history = await handleApi('GET', '/api/runs', new URLSearchParams('repo=o/r'), null, local);
+      expect((list?.json as { runs: unknown[] }).runs[0]).toMatchObject({ feedbackOutcome });
+      expect(detail?.json).toMatchObject({ feedbackOutcome });
+      expect((history?.json as { runs: unknown[] }).runs[0]).toMatchObject({ feedbackOutcome });
+    } finally { db.close(); }
+  });
+
+  it.each(['failed', 'stopped'] as const)('reports an unanswered decision as remaining feedback after %s', async status => {
+    const row = { ...deps.db.listRuns(1)[0]!, status };
+    const outcome = { state: 'awaiting_decision' as const, headSha: 'a'.repeat(40), summary: 'Owner approval needed.' };
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null,
+      { ...deps, db: { ...deps.db, getRun: () => row, latestFeedbackOutcome: () => outcome } });
+    expect(result?.json).toMatchObject({ status, feedbackOutcome: { state: 'changes_remaining', summary: expect.stringContaining('not answered') } });
+  });
+
+  it.each(['failed', 'stopped'] as const)('does not expose a completed event as final feedback after %s', async status => {
+    const row = { ...deps.db.listRuns(1)[0]!, status };
+    const outcome = { state: 'completed' as const, headSha: 'a'.repeat(40), summary: 'Audit passed.' };
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null,
+      { ...deps, db: { ...deps.db, getRun: () => row, latestFeedbackOutcome: () => outcome } });
+    expect(result?.json).toMatchObject({ status, feedbackOutcome: { state: 'changes_remaining', summary: expect.stringContaining(`Run ${status}`) } });
   });
 
   it.each([

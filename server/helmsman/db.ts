@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { parseFeedbackOutcome, type FeedbackOutcome } from '../../src/logic/feedbackOutcome';
 
 export type RunStatus = 'running' | 'succeeded' | 'failed' | 'stopped';
 
@@ -49,6 +50,7 @@ export interface Db {
   appendEvent(runId: string, kind: string, text: string, ts: string): RunEventRow;
   listEvents(runId: string): RunEventRow[];
   latestReviewVerdict(runId: string): string | null;
+  latestFeedbackOutcome(runId: string): FeedbackOutcome | null;
   recentEvents(runId: string, limit: number, textLimit: number): RunEventRow[];
   eventPage(runId: string, afterId: number, throughId: number, limit: number): RunEventRow[];
   getConfigOverrides(): Record<string, string>;
@@ -71,6 +73,7 @@ export function openDb(path: string): Db {
     );
     CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(runId, id);
     CREATE INDEX IF NOT EXISTS idx_events_review_verdict ON run_events(runId, id) WHERE kind = 'review-verdict';
+    CREATE INDEX IF NOT EXISTS idx_events_feedback_outcome ON run_events(runId, id) WHERE kind = 'feedback-outcome';
     CREATE INDEX IF NOT EXISTS idx_runs_history ON runs(startedAt DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_repo_history ON runs(repo COLLATE NOCASE, startedAt DESC, id DESC);
     CREATE TABLE IF NOT EXISTS config_overrides (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL);
@@ -85,6 +88,7 @@ export function openDb(path: string): Db {
     if (!existing.has(name)) sql.exec(`ALTER TABLE runs ADD COLUMN ${name} ${type}`);
   }
   const latestReviewVerdict = sql.prepare("SELECT substr(text, 1, 512) AS text FROM run_events WHERE runId = ? AND kind = 'review-verdict' ORDER BY id DESC LIMIT 1");
+  const latestFeedbackOutcome = sql.prepare("SELECT substr(text, 1, 16385) AS text FROM run_events WHERE runId = ? AND kind = 'feedback-outcome' ORDER BY id DESC LIMIT 1");
 
   return {
     insertRun(r: RunRow): void {
@@ -136,6 +140,9 @@ export function openDb(path: string): Db {
     },
     latestReviewVerdict(runId: string): string | null {
       return (latestReviewVerdict.get(runId) as { text: string | null } | undefined)?.text ?? null;
+    },
+    latestFeedbackOutcome(runId: string): FeedbackOutcome | null {
+      return parseFeedbackOutcome((latestFeedbackOutcome.get(runId) as { text: string } | undefined)?.text);
     },
     recentEvents(runId: string, limit: number, textLimit: number): RunEventRow[] {
       return (sql.prepare('SELECT id, runId, ts, kind, substr(text, 1, ?) AS text FROM run_events WHERE runId = ? ORDER BY id DESC LIMIT ?')

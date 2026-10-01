@@ -1,3 +1,4 @@
+import { buildFeedbackAuditPrompt } from './feedback-audit-prompt';
 import { clarificationPrompt } from './clarification-prompt';
 import type { AgentTask } from './adapter';
 import { buildPrePrPrompt } from './pre-pr-prompt';
@@ -7,6 +8,7 @@ import { REVIEW_CALIBRATION } from './review-calibration';
 const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: do not pause for confirmation; use the clarification protocol when a required human decision blocks safe progress.';
 
 export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 'claude-code'): string {
+  if (task.feedbackAudit) return buildFeedbackAuditPrompt(task, task.feedbackAudit.snapshotPath, task.feedbackAudit.reportPath, task.feedbackAudit.snapshot, runtime);
   if (task.prePr) return buildPrePrPrompt(task, runtime);
   const byline = appendAgentByline('', agentAttribution(runtime, task, task.review ? 'review agent' : 'PR author'));
   const attribution = `- End every PR description, review summary, inline comment, and comment/reply you author with this exact standalone byline, outside any code or suggestion fence: ${JSON.stringify(byline)}. Keep it as the final line and do not duplicate it. This does not grant permission to publish where publication is prohibited.`;

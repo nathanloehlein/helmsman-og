@@ -22,6 +22,7 @@ import { OutcomeValidationError } from './outcomes';
 import type { CampaignService } from './campaign-service';
 import { ClarificationValidationError, type ClarificationStore } from './clarifications';
 import { SECRET_KEYS } from './config-store';
+import { normalizeFeedbackOutcomeForStatus, type FeedbackOutcome } from '../../src/logic/feedbackOutcome';
 
 export interface ApiResult {
   status: number;
@@ -39,9 +40,11 @@ export interface RunSummary {
   costUsd: number | null;
   reviewOutcome?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   reviewVerdict?: string;
+  feedbackOutcome?: FeedbackOutcome;
 }
 
 function toRunSummary(row: RunRow, db: Db): RunSummary {
+  const feedbackOutcome = normalizeFeedbackOutcomeForStatus(db.latestFeedbackOutcome(row.id), row.status);
   const reviewVerdict = row.status === 'succeeded' ? db.latestReviewVerdict(row.id) : null;
   const verdictLabel = reviewVerdict?.match(/^Verdict: (Approve|Request changes|Comment only) — \S/)?.[1];
   const reviewOutcome = verdictLabel === 'Approve' ? 'APPROVE'
@@ -57,6 +60,7 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
     startedAt: row.startedAt,
     costUsd: row.costUsd,
     ...(reviewOutcome && reviewVerdict ? { reviewOutcome, reviewVerdict } : {}),
+    ...(feedbackOutcome ? { feedbackOutcome } : {}),
   };
 }
 

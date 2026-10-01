@@ -134,6 +134,33 @@ describe('db', () => {
     expect(after).toEqual(before);
   });
 
+  it('reads only the newest feedback outcome and never falls back to stale completion', () => {
+    db = openDb(':memory:');
+    const outcome = { state: 'completed', headSha: 'a'.repeat(40), summary: 'Verified.' };
+    expect(db.latestFeedbackOutcome('r1')).toBeNull();
+    db.appendEvent('r1', 'feedback-outcome', JSON.stringify(outcome), 't2');
+    db.appendEvent('other', 'feedback-outcome', JSON.stringify({ ...outcome, state: 'changes_remaining' }), 't3');
+    db.appendEvent('r1', 'log', JSON.stringify({ ...outcome, state: 'awaiting_decision' }), 't4');
+    expect(db.latestFeedbackOutcome('r1')).toEqual(outcome);
+    db.appendEvent('r1', 'feedback-outcome', '{malformed', 't1');
+    expect(db.latestFeedbackOutcome('r1')).toBeNull();
+    db.appendEvent('r1', 'feedback-outcome', JSON.stringify({ ...outcome, state: 'changes_remaining' }), 't0');
+    expect(db.latestFeedbackOutcome('r1')?.state).toBe('changes_remaining');
+    expect(db.latestFeedbackOutcome('missing')).toBeNull();
+  });
+
+  it('preserves feedback outcomes when reopening an existing database', () => {
+    const path = join(tmpdir(), `helmsman-feedback-${Math.random().toString(36).slice(2)}.sqlite`);
+    db = openDb(path);
+    db.insertRun(run());
+    const outcome = { state: 'changes_remaining', headSha: 'b'.repeat(40), summary: 'One finding remains.' };
+    db.appendEvent('r1', 'feedback-outcome', JSON.stringify(outcome), 't1');
+    db.close();
+    db = openDb(path);
+    expect(db.latestFeedbackOutcome('r1')).toEqual(outcome);
+    expect(db.getRun('r1')?.status).toBe('running');
+  });
+
   it('migrates: adds durable-run columns to a pre-existing runs table and round-trips them', () => {
     const path = join(tmpdir(), `helmsman-mig-${Math.random().toString(36).slice(2)}.sqlite`);
     const legacy = new Database(path);

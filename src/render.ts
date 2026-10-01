@@ -1,4 +1,5 @@
 import { renderLoading } from './renderLoading';
+import { normalizeFeedbackOutcomeForStatus, parseFeedbackOutcome } from './logic/feedbackOutcome';
 import { renderFirefoxBridge, type FirefoxBridgeView } from './renderFirefoxBridge';
 import { renderSlackMcp, type SlackMcpView } from './renderSlackMcp';
 import { term, isPirateMode, TERMINOLOGY, TERMINOLOGY_REFERENCE_KEYS } from './logic/terminology';
@@ -135,6 +136,13 @@ const ICON_COMMENT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
 const ICON_REVIEW_PENDING = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/></svg>';
 
 export function renderVoyageResult(run: RunSummary): string {
+  const feedback = normalizeFeedbackOutcomeForStatus(parseFeedbackOutcome(run.feedbackOutcome), run.status);
+  if (feedback && (feedback.state !== 'completed' || run.status === 'succeeded')) {
+    const label = feedback.state === 'completed' ? term('feedbackCompleted') : feedback.state === 'awaiting_decision' ? term('awaitingDecision') : term('feedbackRemaining');
+    const tone = feedback.state === 'completed' ? 'approved' : feedback.state === 'awaiting_decision' ? 'commented' : 'changes';
+    const icon = feedback.state === 'completed' ? ICON_CHECK : feedback.state === 'awaiting_decision' ? ICON_COMMENT : ICON_REVIEW_PENDING;
+    return `<span class="voyage-result voyage-result-${tone}" role="img" aria-label="${label}" title="${esc(`${label}. ${feedback.summary}`)}">${icon}</span>`;
+  }
   const results: Record<string, { label: string; tone: string; icon: string }> = {
     APPROVE: { label: `${term('review')} recommendation: Approve`, tone: 'approved', icon: ICON_CHECK },
     REQUEST_CHANGES: { label: `${term('review')} recommendation: Request changes`, tone: 'changes', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4v8m0-4h4a3 3 0 0 0 3-3V4"/><circle cx="5" cy="2.5" r="1.5"/><circle cx="5" cy="13.5" r="1.5"/><circle cx="12" cy="2.5" r="1.5"/></svg>' },
@@ -581,11 +589,17 @@ export interface RunTabView {
   complete: boolean;
   status?: string;
   reviewOutcome?: RunSummary['reviewOutcome'];
+  feedbackOutcome?: RunSummary['feedbackOutcome'];
 }
 
-export function runTabStatus(status?: string, complete = false, reviewOutcome?: RunSummary['reviewOutcome']): { kind: string; label: string; reviewOutcome?: RunSummary['reviewOutcome'] } {
+export function runTabStatus(status?: string, complete = false, reviewOutcome?: RunSummary['reviewOutcome'], feedbackOutcome?: RunSummary['feedbackOutcome']): { kind: string; label: string; reviewOutcome?: RunSummary['reviewOutcome']; feedbackOutcome?: NonNullable<RunSummary['feedbackOutcome']>['state'] } {
   const labels: Record<string, string> = { running: term('running'), succeeded: term('success'), failed: term('failed'), stopped: 'Stopped', queued: 'Queued', completed: 'Completed' };
   const kind = status && Object.hasOwn(labels, status) ? status : complete ? 'completed' : 'running';
+  const feedback = normalizeFeedbackOutcomeForStatus(parseFeedbackOutcome(feedbackOutcome), kind === 'completed' ? 'stopped' : kind);
+  if (feedback && (feedback.state !== 'completed' || kind === 'succeeded')) {
+    const label = feedback.state === 'completed' ? term('feedbackCompleted') : feedback.state === 'awaiting_decision' ? term('awaitingDecision') : term('feedbackRemaining');
+    return { kind, label, feedbackOutcome: feedback.state };
+  }
   const recommendations = { APPROVE: 'Approve', REQUEST_CHANGES: 'Request changes', COMMENT: 'Comment only' };
   if (kind === 'succeeded' && typeof reviewOutcome === 'string' && Object.hasOwn(recommendations, reviewOutcome)) {
     return { kind, label: recommendations[reviewOutcome], reviewOutcome };
@@ -597,13 +611,13 @@ export function renderRunsDrawer(tabs: RunTabView[], activeId: string | null, co
   const strip: string = tabs
     .map(
       (t, index) => {
-        const status = runTabStatus(t.status, t.complete, t.reviewOutcome);
+        const status = runTabStatus(t.status, t.complete, t.reviewOutcome, t.feedbackOutcome);
         const selected = t.id === activeId;
         return `
       <div class="run-tab${selected ? ' is-active' : ''}" data-tabid="${esc(t.id)}" data-run-status="${status.kind}" role="presentation">
         <button class="run-tab-select" type="button" data-tabid="${esc(t.id)}" role="tab" id="run-tab-${esc(encodeURIComponent(t.id))}" aria-selected="${selected}" aria-controls="run-log-panel" tabindex="${selected || activeId === null && index === 0 ? 0 : -1}" title="${esc(t.label)}">
           <span class="run-tab-label">${esc(t.label)}</span>
-          <span class="run-tab-status" data-review-outcome="${status.reviewOutcome ?? ''}" title="${status.reviewOutcome ? `${term('review')} recommendation: ${status.label}` : status.label}">${status.label}</span>
+          <span class="run-tab-status" data-review-outcome="${status.reviewOutcome ?? ''}" data-feedback-outcome="${status.feedbackOutcome ?? ''}" title="${status.reviewOutcome ? `${term('review')} recommendation: ${status.label}` : status.label}">${status.label}</span>
         </button>
         <div class="run-tab-meta">${!t.id.startsWith('err-') ? renderVoyageId(t.id) : ''}
           <div class="run-tab-actions">${!t.id.startsWith('err-') ? `<a class="run-tab-open app-link pane-link" href="${esc(routeHref({ view: 'runs', run: t.id, pane: 'tasks' }))}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(t.label)} in a new browser tab" title="Open ${term('run').toLowerCase()} in a new browser tab">${ICON_OPEN}</a>` : ''}

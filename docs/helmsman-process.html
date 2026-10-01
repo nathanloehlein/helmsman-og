@@ -86,7 +86,7 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <div class="workflow-options">
 <article class="flow-step"><h3>New coding task</h3><p>Continue through implementation and the exact-revision PR review loop below.</p></article>
 <article class="flow-step"><h3>Existing PR review</h3><p>Pin the current PR head and run a standalone review. The host verifies the result and required answers before posting.</p></article>
-<article class="flow-step"><h3>Existing PR feedback rerun</h3><p>Trusted local execution only. The agent updates, tests, commits, and pushes the same branch directly. This bypasses the new-code pre-PR review gate; see the separate flow below.</p></article>
+<article class="flow-step"><h3>Existing PR feedback rerun</h3><p>Trusted local execution only. The author pushes updates to the same branch and publishes responses. Independent review then gates completion; see the separate flow below.</p></article>
 </div>
 </section>
 <section class="review-section" aria-labelledby="review-heading">
@@ -210,11 +210,14 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <section aria-labelledby="rerun-heading">
 <h2 class="section-heading" id="rerun-heading">Existing-PR feedback reruns</h2>
 <div class="workflow-options">
-<article class="flow-step"><h3>1 · Prepare the PR branch</h3><p>The operator submits feedback. Resolve the existing PR branch, freeze execution settings, and prepare a branch worktree on the trusted local host.</p></article>
-<article class="flow-step"><h3>2 · Agent updates and publishes</h3><p>Address feedback, run tests, commit, and push to the same branch. The agent publishes directly using its normal update prompt; the new-code pre-PR gate does not run.</p></article>
-<article class="flow-step"><h3>3 · Record completion</h3><p>The host checks required answers and records completion. No new PR, post-creation Helmsman review queue, Jira transition, or Copilot request.</p></article>
+<article class="flow-step"><h3>1 · Capture the PR and discussion</h3><p>Resolve the existing PR branch, freeze settings, and prepare a worktree on the trusted local host. Capture every page of reviews, comments, and inline discussions, including edited summary comments and the PR description.</p></article>
+<article class="flow-step"><h3>2 · Author updates and publishes</h3><p>Address feedback, run tests, commit, push the same branch, and publish responses. Branch updates happen before the completion audit.</p></article>
+<article class="flow-step"><h3>3 · Independently audit</h3><p>Fresh reviewers use detached worktrees to check the published head, every captured source, and published response evidence. Changed worktrees or captured evidence block completion.</p></article>
+<article class="flow-step"><h3>4 · Refresh and resolve</h3><p>Fetch the latest snapshot before accepting the audit. New or edited feedback requires another pass. Repair remaining findings within the configured bound; optional suggestions may be deferred with evidence and a published response.</p></article>
+<article class="flow-step"><h3>5 · Obtain required decisions</h3><p>Required local clarifications leave the run active and retain capacity. Decision handoffs have a separate bound so an answer gets an application and verification pass. Unanswered, cancelled, or expired questions cannot resolve required findings.</p></article>
+<article class="flow-step"><h3>6 · Record the verified outcome</h3><p>Report completed, changes remaining, or awaiting decision. Failed or stopped worktrees are retained. No new PR, post-creation Helmsman review queue, Jira transition, or Copilot request.</p></article>
 </div>
-<p class="limit-note">The host does not apply the exact-revision review gate or recheck required answers immediately before an agent-managed branch push. The prompt requires the agent to wait for required answers before dependent work; unanswered required questions block successful completion. Docker feedback reruns fail preflight; select trusted local execution.</p>
+<p class="limit-note">The new coding prepublication gate is unchanged. Feedback authors push directly; the host does not recheck required answers immediately before that push, so the prompt requires waiting before dependent work. Independent audits gate completion. Docker feedback reruns fail preflight; select trusted local execution.</p>
 </section>
 <section class="lifecycle-section" aria-labelledby="lifecycle-heading">
 <h2 class="section-heading" id="lifecycle-heading">Services throughout a voyage</h2>
@@ -228,9 +231,9 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 </section>
 <section class="notes" aria-label="Flow boundaries">
 <div><h2>Review selection and concurrency</h2><p>The writer CLI must be available in the selected execution environment. If the alternate CLI is unavailable, one reviewer is allowed even when two are configured. Lead sessions run sequentially; prompts request concurrent focused sub-agents, but runtime does not verify delegation.</p></div>
-<div><h2>Round and session limits</h2><p>Configuration allows 1–2 reviewers, 1–5 rounds, and 5–180 minutes per session. Summary correction gets one separate session per report and does not use another review round. The 2,000-character limit uses JavaScript string length, including whitespace and bylines.</p></div>
+<div><h2>Round and session limits</h2><p>Shared Pre-PR review settings apply to newly launched coding and feedback voyages: 1–2 reviewers, 1–5 rounds, and 5–180 minutes per session. Running voyages keep captured settings. PRE_PR_MAX_ROUNDS separately bounds feedback repairs and decision handoffs. New coding summary correction gets one separate session per report; its 2,000-character limit includes whitespace and bylines.</p></div>
 <div><h2>Resume preserved work</h2><p>A valid checkpoint verifies saved artifact hashes and its frozen snapshot, skips implementation, and reuses the original reports for its saved review round. The current branch, base, head, and complete reviewer set must match. Legacy checkpoints without manifests use an explicit compatibility path. Oversized saved summaries can use the same correction step.</p></div>
-<div><h2>Publication and follow-up boundaries</h2><p>Pre-PR voyages have one outer attempt. Failures preserve work; a push may already have happened if a later publication check fails. Jira transitions apply to eligible Jira tasks, not todos or freeform tasks. The separate Helmsman review waits for availability and may reuse an existing review of the current head.</p></div>
+<div><h2>Publication and follow-up boundaries</h2><p>New coding and feedback voyages have one outer attempt; AGENT_MAX_ATTEMPTS does not multiply their loops. Failures and stops preserve work. Feedback pushes precede completion audits; a new coding push may precede a later failed publication check. Jira transitions apply to eligible Jira coding tasks, not feedback reruns, todos, or freeform tasks. The separate post-creation Helmsman review waits for availability and may reuse a review of the current head.</p></div>
 </section>
 <footer>Static HTML and SVG · No external scripts, fonts, or network dependencies. <a href="moonunit-adoption.md">Adoption evidence</a> · <a href="docker-run-host.md">Docker setup</a> · <a href="webhooks.md">Webhook setup</a></footer>
 </main>

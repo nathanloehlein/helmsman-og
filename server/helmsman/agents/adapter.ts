@@ -1,3 +1,5 @@
+import type { FeedbackSnapshot } from '../pr-feedback-snapshot';
+
 export interface AgentTask {
   contactHints?: { explicitContactId?: string; assigneeId?: string; reporterId?: string };
   ticketId: string;
@@ -23,6 +25,13 @@ export interface AgentTask {
   promptRevision?: string;
   modelRouting?: 'gocaas';
   dockerExecution?: { image: string; gatewayUrl: string; capability: string; runId: string; runtimeRoot?: string };
+  feedbackWorkflow?: true;
+  feedbackAudit?: {
+    decisions?: { path: string; fingerprint: string };
+    snapshotPath: string;
+    reportPath: string;
+    snapshot: Pick<FeedbackSnapshot, 'repo' | 'prNumber' | 'headSha' | 'baseSha' | 'fingerprint'>;
+  };
   prePrResume?: {
     baseSha: string;
     headSha: string;
@@ -43,7 +52,7 @@ export interface AgentTask {
   };
 }
 
-export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'usage' | 'error' | 'review-verdict' | 'run-complete';
+export type AgentEventKind = 'phase' | 'tool' | 'log' | 'result' | 'usage' | 'error' | 'review-verdict' | 'feedback-outcome' | 'run-complete';
 
 export interface AgentUsage {
   inputTokens?: number;

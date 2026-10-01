@@ -1,5 +1,6 @@
 import { term } from '../logic/terminology';
 import { RUN_LOG_LINE_LIMIT } from '../logic/runLog';
+import { normalizeFeedbackOutcomeForStatus, parseFeedbackOutcome, type FeedbackOutcome } from '../logic/feedbackOutcome';
 
 export interface LaunchResult {
   runId: string;
@@ -61,6 +62,7 @@ export interface RunStatusSummary {
   repo: string;
   ticketId?: string;
   reviewOutcome?: RunSummary['reviewOutcome'];
+  feedbackOutcome?: FeedbackOutcome;
 }
 
 export interface RunSummary {
@@ -74,6 +76,7 @@ export interface RunSummary {
   costUsd: number | null;
   reviewOutcome?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   reviewVerdict?: string;
+  feedbackOutcome?: FeedbackOutcome;
 }
 
 export interface AgentCaps {
@@ -89,6 +92,12 @@ interface AgentsListResponse {
   caps?: AgentCaps;
 }
 
+export function normalizeRunFeedback(run: RunSummary): RunSummary {
+  const { feedbackOutcome: rawOutcome, ...rest } = run;
+  const feedbackOutcome = normalizeFeedbackOutcomeForStatus(parseFeedbackOutcome(rawOutcome), run.status);
+  return { ...rest, ...(feedbackOutcome ? { feedbackOutcome } : {}) };
+}
+
 export async function getRun(runId: string): Promise<RunStatusSummary | null> {
   if (typeof runId !== 'string' || !/^[a-z\d_-]{1,128}$/i.test(runId)) return null;
   try {
@@ -97,11 +106,13 @@ export async function getRun(runId: string): Promise<RunStatusSummary | null> {
     const run = (await res.json()) as Partial<RunSummary> | null;
     if (!run || run.id !== runId || typeof run.status !== 'string' || typeof run.repo !== 'string') return null;
     const prNumber = typeof run.prNumber === 'number' && Number.isSafeInteger(run.prNumber) && run.prNumber > 0 ? run.prNumber : null;
+    const feedbackOutcome = normalizeFeedbackOutcomeForStatus(parseFeedbackOutcome(run.feedbackOutcome), run.status);
     return {
       status: run.status,
       prNumber,
       repo: run.repo,
       ...(typeof run.ticketId === 'string' ? { ticketId: run.ticketId } : {}),
+      ...(feedbackOutcome ? { feedbackOutcome } : {}),
       ...(run.status === 'succeeded' && (run.reviewOutcome === 'APPROVE' || run.reviewOutcome === 'REQUEST_CHANGES' || run.reviewOutcome === 'COMMENT')
         ? { reviewOutcome: run.reviewOutcome } : {}),
     };
@@ -115,7 +126,10 @@ export async function fetchAgents(): Promise<{ runs: RunSummary[]; autoClaim: st
     const res: Response = await fetch('/api/agents');
     if (!res.ok) return { runs: [], autoClaim: [], caps: DEFAULT_CAPS };
     const payload: AgentsListResponse = (await res.json()) as AgentsListResponse;
-    return { runs: payload.runs ?? [], autoClaim: payload.autoClaim ?? [], caps: payload.caps ?? DEFAULT_CAPS };
+    const runs = Array.isArray(payload?.runs)
+      ? payload.runs.filter(run => run && typeof run === 'object' && !Array.isArray(run)).map(normalizeRunFeedback)
+      : [];
+    return { runs, autoClaim: payload?.autoClaim ?? [], caps: payload?.caps ?? DEFAULT_CAPS };
   } catch {
     return { runs: [], autoClaim: [], caps: DEFAULT_CAPS };
   }

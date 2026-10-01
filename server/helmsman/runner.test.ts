@@ -1323,3 +1323,64 @@ it('stops the host if a required clarification times out during execution', asyn
   expect(host.stop).toHaveBeenCalledOnce();
   db.close();
 });
+
+describe('verified feedback completion', () => {
+  const feedbackTask: AgentTask = { ...task, prBranch: 'fix/svg', prNumber: 11104, feedbackWorkflow: true };
+  const outcome = (state: 'completed' | 'changes_remaining' | 'awaiting_decision'): AgentEvent => ({
+    kind: 'feedback-outcome', text: JSON.stringify({ state, headSha: 'a'.repeat(40), summary: 'Independent feedback assessment' }),
+  });
+
+  it.each([[], [outcome('changes_remaining')], [outcome('awaiting_decision')], [{ kind: 'feedback-outcome', text: '{}' } as AgentEvent]].map(events => ({ events })))(
+    'rejects process success without verified feedback completion: %j', async ({ events }) => {
+      const db = openDb(':memory:');
+      try {
+        const d = { ...deps(db, jsonAdapter('feedback:codex'), singleAttemptHost(events, true), freshRunsDir()),
+          preserveWorktreeOnFailure: true, createWorktreeFromBranch: async () => ({ path: '/tmp/wt', branch: 'fix/svg' }) };
+        await startRun(feedbackTask, d);
+        expect(db.getRun('run-1')?.status).toBe('failed');
+        expect(d.removeWorktree).not.toHaveBeenCalled();
+        expect(db.listEvents('run-1')).toContainEqual(expect.objectContaining({ kind: 'error', text: expect.stringContaining('not independently verified') }));
+      } finally { db.close(); }
+    });
+
+  it('accepts verified completion without opening another PR or requesting reviewers', async () => {
+    const db = openDb(':memory:');
+    try {
+      const enqueueCreatedPrReview = vi.fn();
+      const requestCopilotReview = vi.fn();
+      await startRun(feedbackTask, { ...deps(db, jsonAdapter('feedback:codex'), singleAttemptHost([outcome('completed')], true), freshRunsDir()),
+        createWorktreeFromBranch: async () => ({ path: '/tmp/wt', branch: 'fix/svg' }), enqueueCreatedPrReview, requestCopilotReview });
+      expect(db.getRun('run-1')).toMatchObject({ status: 'succeeded', prNumber: 11104 });
+      expect(enqueueCreatedPrReview).not.toHaveBeenCalled();
+      expect(requestCopilotReview).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
+  it('still rejects a completion claim with a required unanswered clarification', async () => {
+    const db = openDb(':memory:');
+    try {
+      await startRun(feedbackTask, { ...deps(db, jsonAdapter('feedback:codex'), singleAttemptHost([outcome('completed')], true), freshRunsDir()),
+        createWorktreeFromBranch: async () => ({ path: '/tmp/wt', branch: 'fix/svg' }), hasRequiredUnanswered: () => true });
+      expect(db.getRun('run-1')?.status).toBe('failed');
+    } finally { db.close(); }
+  });
+
+  it('applies the same completion gate after server recovery', async () => {
+    const db = openDb(':memory:');
+    const runsDir = freshRunsDir();
+    try {
+      const d = deps(db, jsonAdapter('feedback:codex'), singleAttemptHost([], true), runsDir);
+      const logPath = join(runsDir, 'run-1.log');
+      const exitPath = join(runsDir, 'run-1.exit');
+      writeFileSync(logPath, JSON.stringify(outcome('changes_remaining')) + '\n');
+      writeFileSync(exitPath, '0');
+      const row: RunRow = { id: 'run-1', ticketId: 'rerun', repo: task.repo, adapter: 'feedback:codex', status: 'running',
+        attempt: 1, prNumber: 11104, startedAt: d.now(), endedAt: null, costUsd: null, taskJson: JSON.stringify(feedbackTask),
+        logPath, exitPath, logOffset: 0, worktreePath: '/tmp/wt' };
+      db.insertRun(row);
+      await reattachRun(row, { ...d, preserveWorktreeOnFailure: true });
+      expect(db.getRun('run-1')?.status).toBe('failed');
+      expect(d.removeWorktree).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+});

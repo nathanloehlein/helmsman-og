@@ -1,8 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getRun, openRunStream, retryRun } from './agents';
+import { fetchAgents, getRun, openRunStream, retryRun } from './agents';
 import { RUN_LOG_LINE_LIMIT } from '../logic/runLog';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+describe('fetchAgents feedback outcomes', () => {
+  it('validates metadata and converts terminal pending decisions without hiding legacy rows', async () => {
+    const base = { id: 'run', status: 'succeeded', repo: 'owner/repo' };
+    const outcome = { state: 'completed', headSha: 'a'.repeat(40), summary: 'Verified.' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ runs: [
+      { ...base, feedbackOutcome: outcome }, { ...base }, { ...base, feedbackOutcome: { state: 'completed' } },
+      { ...base, status: 'failed', feedbackOutcome: { ...outcome, state: 'awaiting_decision' } },
+      null, 42, [],
+    ] }) }));
+    const { runs } = await fetchAgents();
+    expect(runs).toHaveLength(4);
+    expect(runs[0]?.feedbackOutcome).toEqual(outcome);
+    expect(runs[1]).not.toHaveProperty('feedbackOutcome');
+    expect(runs[2]).not.toHaveProperty('feedbackOutcome');
+    expect(runs[3]?.feedbackOutcome?.state).toBe('changes_remaining');
+  });
+});
 
 describe('retryRun', () => {
   it('posts the full original ID and returns only the new voyage ID', async () => {
@@ -218,6 +236,23 @@ describe('openRunStream', () => {
 });
 
 describe('getRun', () => {
+  it.each(['completed', 'changes_remaining', 'awaiting_decision'] as const)('preserves validated %s feedback metadata', async state => {
+    const feedbackOutcome = { state, headSha: 'a'.repeat(40), summary: 'Finding disposition.' };
+    const status = state === 'awaiting_decision' ? 'running' : 'succeeded';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status, repo: 'owner/repo', feedbackOutcome }) }));
+    expect(await getRun('old-run')).toMatchObject({ status, feedbackOutcome });
+  });
+
+  it.each([undefined, {}, { state: 'completed', headSha: 'bad', summary: 'done' }])('omits invalid or legacy feedback metadata %j', async feedbackOutcome => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'succeeded', repo: 'owner/repo', feedbackOutcome }) }));
+    expect(await getRun('old-run')).not.toHaveProperty('feedbackOutcome');
+  });
+
+  it('does not leave a stopped run awaiting a decision', async () => {
+    const feedbackOutcome = { state: 'awaiting_decision', headSha: 'a'.repeat(40), summary: 'Approve?' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'stopped', repo: 'owner/repo', feedbackOutcome }) }));
+    expect(await getRun('old-run')).toMatchObject({ feedbackOutcome: { state: 'changes_remaining' } });
+  });
   it.each(['APPROVE', 'REQUEST_CHANGES', 'COMMENT'])('preserves the saved %s recommendation for a successful run', async (reviewOutcome) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'succeeded', repo: 'owner/repo', reviewOutcome }) }));
     expect(await getRun('old-run')).toMatchObject({ status: 'succeeded', reviewOutcome });

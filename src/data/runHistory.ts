@@ -1,4 +1,4 @@
-import type { RunSummary } from './agents';
+import { normalizeRunFeedback, type RunSummary } from './agents';
 
 export const RUN_HISTORY_PAGE_SIZE = 25;
 
@@ -35,5 +35,5 @@ export async function fetchRunHistory(repo: string | null, offset = 0): Promise<
     || typeof page.total !== 'number' || !Number.isSafeInteger(page.total) || page.total < 0
     || !Array.isArray(page.runs) || page.runs.length > RUN_HISTORY_PAGE_SIZE || page.runs.length > Math.max(0, page.total - offset)
     || !page.runs.every(run => validRun(run, repo))) throw new Error('History response was invalid.');
-  return { runs: page.runs, total: page.total, limit: RUN_HISTORY_PAGE_SIZE, offset };
+  return { runs: page.runs.map(normalizeRunFeedback), total: page.total, limit: RUN_HISTORY_PAGE_SIZE, offset };
 }

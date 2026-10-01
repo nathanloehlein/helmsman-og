@@ -24,7 +24,7 @@ export function openRunTelemetry(path: string, outcomes: OutcomeStore): RunTelem
   return {
     record(run, task, event, byteOffset) {
       if (!Number.isSafeInteger(byteOffset) || byteOffset < 0) throw new Error('Invalid log offset for telemetry');
-      const provider = event.provider ?? run.adapter.replace(/^pre-pr:/, '');
+      const provider = event.provider ?? run.adapter.replace(/^(?:pre-pr|feedback):/, '');
       const model = event.model ?? task.model ?? null;
       insert.run(run.id, run.attempt, byteOffset, event.kind, provider, model, event.effort ?? task.effort ?? null,
         event.stage ?? null, event.round ?? null, event.eventId ?? null);

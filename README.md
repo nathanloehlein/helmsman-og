@@ -61,7 +61,8 @@ creation. The server checks capacity and prepares a worktree and frozen executio
 settings before launching the selected agent. New coding voyages implement, test,
 and commit locally, pass independent review, then publish the reviewed commit.
 Standalone PR reviews inspect a pinned revision and publish review comments;
-feedback reruns update an existing PR branch without the new-code review loop.
+feedback reruns publish updates to the existing branch, then independently audit
+the published revision and discussion before completion.
 
 The server's timers drive automatic dispatch; a separate cron job is not required.
 A global concurrency limit applies across launch sources. Independent tasks can run
@@ -189,7 +190,7 @@ Click **Launch** on a backlog ticket (or `POST /api/agents/launch {ticketId,titl
 Helmsman creates a git worktree under `AGENTS_ROOT`, spawns the configured agent
 (default: Codex) in it, streams the agent's events to a live log
 drawer over SSE (`GET /api/agents/:id/log`) and records the run in SQLite.
-Failed or stopped new coding voyages retain their worktrees for recovery; other
+Failed or stopped new coding voyages and feedback reruns retain their worktrees for recovery; other
 completed runs clean up their worktrees. `POST /api/agents/:id/stop` SIGTERMs a run. One run per repo at
 a time; global concurrency is capped by `AGENT_MAX_CONCURRENCY`. The agent opens a PR and
 never merges — the human review gate is real.
@@ -218,7 +219,8 @@ review before Helmsman pushes the branch or opens a PR. A fresh reviewer session
 uses the writer's CLI; by default, if the other supported CLI is installed, a second
 session uses it too. **Config → Pre-PR review** controls reviewers per round (1–2),
 maximum rounds (1–5), and the timeout for each session (5–180 minutes). Settings are
-captured when a voyage launches; changes do not affect running voyages. One reviewer
+captured when a voyage launches and also apply to newly launched feedback reruns;
+changes do not affect running voyages. One reviewer
 means a fresh session of the writer's CLI; two adds the other supported CLI when
 installed. With only one installed, one reviewer runs. Currently supported CLIs are
 Codex and Claude Code. Authenticate both when using two reviewers: an installed but
@@ -243,7 +245,8 @@ run directory in a `.pre-pr` artifact folder. These worktrees survive restart sw
 and can be removed from the local branches/worktrees page when no longer needed.
 The workflow runs in the existing durable run host and survives server restarts.
 
-This gate applies to new coding voyages, not existing-PR feedback reruns. The generic
+This publication gate applies to new coding voyages; existing-PR feedback reruns
+use the completion gate described below. The generic
 `command` adapter cannot launch a new coding voyage because it cannot provide this
 review contract. `AGENT_MAX_ATTEMPTS` does not multiply `PRE_PR_MAX_ROUNDS`.
 Each author, fix, or reviewer session has a 45-minute timeout by default. The existing post-PR review
@@ -315,9 +318,26 @@ so you can act on PRs that aren't from a run. From the panel you can **Approve /
 Request changes / Comment** (`POST /api/pr/review`, server-side token) and — when the PR's
 repo is checked out under `AGENTS_ROOT` — **Relaunch with feedback**: the agent checks out the
 existing PR branch, addresses the feedback, and pushes the **same** branch so the PR updates
-(no new PR, no Jira claim). GitHub reads/writes go through Helmsman (`GET /api/pr`,
+(no new PR, no Jira claim). Independent verification then gates completion.
+GitHub reads/writes go through Helmsman (`GET /api/pr`,
 `POST /api/pr/review`); the token never reaches the browser. **There is no Merge button** —
 merge stays a deliberate action on GitHub, and the agent never merges.
+
+Feedback reruns capture every page of the PR description, reviews, comments, and
+inline discussions, including edited summary comments. The author publishes fixes
+and responses on the existing PR. Fresh reviewer sessions use detached worktrees
+to audit the published head, every captured source, and published response evidence.
+Helmsman fetches a fresh snapshot before accepting completion; new or edited
+feedback requires another pass. Optional suggestions may be deferred with evidence
+and a published response. Required findings and decisions block completion.
+
+The outcome is `completed`, `changes_remaining`, or `awaiting_decision`. Required
+local clarifications keep the run active and retain capacity while waiting for
+answers. Repairs and decision handoffs have separate bounds of `PRE_PR_MAX_ROUNDS`,
+so an answered decision gets an application and verification pass. Exhausted
+bounds, missing evidence, or unanswered decisions leave work incomplete. Failed
+or stopped feedback worktrees are retained for recovery. Branch pushes happen
+before this completion audit; the new coding prepublication gate is unchanged.
 
 ### Direct links
 
@@ -430,8 +450,9 @@ Three adapters implement the same `AgentAdapter` contract, selected by `AGENT_AD
 
 ### Caps
 
-`AGENT_MAX_ATTEMPTS` bounds retries for existing-PR voyages; new coding voyages use
-one gated workflow with the bounded review loop above. `AGENT_MAX_COST_USD` (opt-in)
+`AGENT_MAX_ATTEMPTS` bounds retries for standalone PR reviews. New coding voyages
+and feedback reruns each use one workflow with their bounded review loops;
+`AGENT_MAX_ATTEMPTS` does not multiply those bounds. `AGENT_MAX_COST_USD` (opt-in)
 stops work once reported cost reaches the cap. Pre-PR voyages aggregate reported
 cost across author and reviewer sessions; Codex sessions currently provide no cost
 data, so the cap cannot bound their spend. Both, and the live attempt/cost of
@@ -441,7 +462,7 @@ each run, show on the running-agent rows (`×attempt/max`, `$cost/$cap`).
 
 On startup Helmsman reattaches to surviving run hosts and marks interrupted runs
 failed when their host is gone. It sweeps orphaned agent worktrees under each repo's
-`.worktrees/`, except failed or stopped pre-PR voyages retained for recovery. These
+`.worktrees/`, except failed or stopped pre-PR voyages and feedback reruns retained for recovery. These
 checks are fail-soft: a failure is logged and never blocks the server from listening.
 
 ## Workflow capabilities
@@ -463,7 +484,9 @@ page to send the response back to that run; no contact setup is needed. Waiting
 runs retain capacity, and an expired deadline never counts as an answer. Required
 questions block successful completion and host-managed publication. Existing-PR
 feedback reruns push through the agent's own CLI, so their pre-push waiting rule
-also depends on the agent following its instructions. Optional contacts suggest
+also depends on the agent following its instructions. Their independent completion
+audit routes required decisions to local clarifications and verifies applied answers
+and published responses before success. Optional contacts suggest
 respondents, including Jira assignees/reporters; Helmsman does not message them.
 
 **Costs & Outcomes** filters by the header repository and a 7/30/90/365-day window.
@@ -706,11 +729,11 @@ without confirmation timestamps show that their send time is unknown.
 | --- | --- | --- | --- |
 | `AGENT_ADAPTER` | `codex` | `codex`, `claude-code`, or `command`; install/sign in to that CLI on the server machine. Unknown values fall back to Codex. | Live |
 | `AGENT_CMD` | Empty | Executable and argument template for the command adapter; see [Agent backends](#agent-backends). Does not invoke a shell. | Live |
-| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts for existing-PR voyages, including the initial attempt; `1` means no retry. New coding voyages use one workflow, with review rounds controlled by `PRE_PR_MAX_ROUNDS`. | Live |
+| `AGENT_MAX_ATTEMPTS` | `1` | Total attempts for standalone PR reviews, including the initial attempt; `1` means no retry. New coding and feedback voyages each use one workflow bounded by `PRE_PR_MAX_ROUNDS`. | Live |
 | `AGENT_MAX_COST_USD` | Empty (no cap) | Cost limit in USD across attempts, enforced when the adapter reports cost. It cannot bound spend for adapters that do not report cost, including the current Codex and command adapters. | Live |
-| `PRE_PR_REVIEWER_COUNT` | `2` | Integer `1`–`2`. Independent reviewer sessions per round: `1` uses the writer's CLI, `2` adds the other supported CLI if installed. Only Codex and Claude Code are supported. One installed CLI means one reviewer; an installed reviewer that fails blocks publication. Set in **Config → Pre-PR review**. | Live; new voyages only |
-| `PRE_PR_MAX_ROUNDS` | `3` | Integer `1`–`5`. Total review rounds, including the initial round. `3` permits up to two fix-and-review cycles; `1` permits none. Every reviewer must approve the final commit; unresolved findings block publication when rounds are exhausted. | Live; new voyages only |
-| `PRE_PR_STAGE_TIMEOUT_MINUTES` | `45` | Integer `5`–`180`. Timeout for each implementation, fix, or reviewer session, not the whole voyage. Timeout blocks publication and preserves the author worktree. | Live; new voyages only |
+| `PRE_PR_REVIEWER_COUNT` | `2` | Integer `1`–`2`. Independent reviewer sessions per round: `1` uses the writer's CLI, `2` adds the other supported CLI if installed. Only Codex and Claude Code are supported. An installed reviewer that fails blocks new-code publication or feedback completion. Set in **Config → Pre-PR review**. | Live; newly launched coding and feedback voyages |
+| `PRE_PR_MAX_ROUNDS` | `3` | Integer `1`–`5`. New coding: total review rounds, including the initial round; `3` permits two fix-and-review cycles. Feedback: bounds repair passes and, separately, decision handoffs; answered decisions get an application and audit pass. Exhaustion blocks publication or completion respectively. | Live; newly launched coding and feedback voyages |
+| `PRE_PR_STAGE_TIMEOUT_MINUTES` | `45` | Integer `5`–`180`. Timeout for each author, fix, or reviewer session, not the whole voyage; also bounds feedback decision waits. Timeout blocks new-code publication or feedback completion and preserves the author worktree. | Live; newly launched coding and feedback voyages |
 | `AGENT_MAX_CONCURRENCY` | `3` | Maximum simultaneous runs across repositories. The separate one-run-per-repository limit still applies. | Restart |
 | `AUTO_CLAIM_INTERVAL_MS` | `60000` | Interval in milliseconds for the optional ticket auto-claim scheduler. Does not enable auto-claim or control either PR watcher. | Config-editable; restart timer |
 | `AGENTS_ROOT` | Server working directory | Parent directory of target repo checkouts, e.g. `/absolute/path/to/agent-repos`; not the path to a single checkout. | Restart |

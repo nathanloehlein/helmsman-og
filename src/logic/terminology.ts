@@ -1,4 +1,7 @@
 export const TERMINOLOGY = {
+  feedbackCompleted: { plain: 'Feedback completed', pirate: 'Feedback completed' },
+  feedbackRemaining: { plain: 'Feedback remaining', pirate: 'Feedback remaining' },
+  awaitingDecision: { plain: 'Awaiting decision', pirate: 'Awaiting decision' },
   success: { plain: 'Succeeded', pirate: 'Shipshape' },
   failed: { plain: 'Failed', pirate: 'Marooned' },
   stopped: { plain: 'Stopped', pirate: 'Stopped' },
