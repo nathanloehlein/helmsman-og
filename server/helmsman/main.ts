@@ -253,7 +253,11 @@ function baseRunnerDeps(cfg: AppConfig, jira: JiraActions | null): Omit<RunnerDe
     onRunComplete: run => { runTelemetry.complete(run); clarificationRuntime.complete(run.id); gateway.revokeRun(run.id); if (host.kind === 'docker') void stopDockerStages(run.id); },
     createWorktree: (repo: string, id: string) => standaloneWorkspace(repo, id, 'fresh', () => createWorktree(AGENTS_ROOT, repo, id)),
     createWorktreeFromBranch: (repo: string, id: string, branch: string) => standaloneWorkspace(repo, id, 'branch', () => createWorktreeFromBranch(AGENTS_ROOT, repo, id, branch,
-      path => pm.hasRun(basename(path)) || db.activeRuns().some(run => run.worktreePath === path))),
+      path => pm.hasRun(basename(path)) || db.activeRuns().some(run => run.worktreePath === path),
+      path => {
+        const retained = db.getRun(basename(path));
+        return Boolean(retained && isFeedbackUpdateAdapter(retained.adapter) && retained.status !== 'succeeded');
+      })),
     createReviewWorktree: (repo, id, number, headSha) => standaloneWorkspace(repo, id, 'review', () => createReviewWorktree(AGENTS_ROOT, repo, id, number, headSha), headSha),
     removeWorktree: (repo: string, path: string) => path.startsWith(`${DOCKER_WORKSPACES}/`) ? removeDockerWorkspace(DOCKER_WORKSPACES, path) : removeWorktree(AGENTS_ROOT, repo, path),
     now: () => new Date().toISOString(),

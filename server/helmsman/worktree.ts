@@ -24,7 +24,8 @@ export async function createWorktree(agentsRoot: string, repo: string, runId: st
   return { path, branch };
 }
 
-async function removeWorktreeForBranch(repoDir: string, branch: string, isActive: (path: string) => boolean): Promise<void> {
+async function removeWorktreeForBranch(repoDir: string, branch: string, isActive: (path: string) => boolean,
+  shouldPreserve: (path: string) => boolean): Promise<void> {
   const result = await run('git', ['-C', repoDir, 'worktree', 'list', '--porcelain']);
   const managedDirectory = join(await realpath(repoDir), '.worktrees');
   const target: string = `refs/heads/${branch}`;
@@ -38,17 +39,18 @@ async function removeWorktreeForBranch(repoDir: string, branch: string, isActive
       if (dirname(resolve(currentPath)) !== managedDirectory) {
         throw new Error(`Branch ${branch} is checked out in an unmanaged workspace at ${currentPath}. Use Local Git → Release branch on that worktree, then retry.`);
       }
-      await removeWorktreeAt(repoDir, currentPath);
+      if (shouldPreserve(currentPath)) await run('git', ['-C', currentPath, 'checkout', '--detach']);
+      else await removeWorktreeAt(repoDir, currentPath);
       currentPath = null;
     } else if (line === '') currentPath = null;
   }
 }
 
 export async function createWorktreeFromBranch(agentsRoot: string, repo: string, runId: string, branch: string,
-  isActive: (path: string) => boolean = () => true): Promise<Worktree> {
+  isActive: (path: string) => boolean = () => true, shouldPreserve: (path: string) => boolean = () => false): Promise<Worktree> {
   const repoDir: string = join(agentsRoot, repoBasename(repo));
   await run('git', ['-C', repoDir, 'worktree', 'prune']).catch(() => undefined);
-  await removeWorktreeForBranch(repoDir, branch, isActive);
+  await removeWorktreeForBranch(repoDir, branch, isActive, shouldPreserve);
   await run('git', ['-C', repoDir, 'fetch', 'origin', `+${branch}:${branch}`], { maxBuffer: 1024 * 1024 * 16 });
   const path: string = join(repoDir, '.worktrees', runId);
   await run('git', ['-C', repoDir, 'worktree', 'add', path, branch], { maxBuffer: 1024 * 1024 * 16 });

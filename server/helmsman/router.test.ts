@@ -9,6 +9,7 @@ import { InstructionError } from './instruction-channel';
 import type { PrStatus } from '../github';
 import type { BugsResponse } from '../../src/types';
 import { openDb, type RunRow } from './db';
+import { openClarificationStore } from './clarifications';
 
 const samplePrStatus: PrStatus = {
   number: 5,
@@ -62,6 +63,31 @@ const deps: RouterDeps = {
 };
 
 describe('handleApi', () => {
+  it('polls the clarification gate before returning authoritative records for that run', async () => {
+    const store = openClarificationStore(':memory:', { getRun: () => ({ repo: 'o/r', status: 'running' }) });
+    try {
+      store.ingestQuestion('other-run', { kind: 'question', id: 'other', prompt: 'Other question?', required: true });
+      const gate = vi.fn((runId: string) => {
+        store.ingestQuestion(runId, { kind: 'question', id: 'current', prompt: 'Current question?', required: true });
+        store.answer('current', { answer: 'Current answer.' });
+        return true;
+      });
+      const result = await handleApi('GET', '/api/runs/run-1/clarification-gate', new URLSearchParams(), null,
+        { ...deps, clarifications: store, clarificationGate: gate });
+      expect(gate).toHaveBeenCalledExactlyOnceWith('run-1');
+      expect(result).toEqual({ status: 200, json: { ready: true, clarifications: store.listForRun('run-1') } });
+      expect((result?.json as { clarifications: unknown[] }).clarifications).toHaveLength(1);
+    } finally { store.close(); }
+  });
+
+  it('preserves gate readiness without a store and returns no evidence on a gate error', async () => {
+    const request = (local: RouterDeps) => handleApi('GET', '/api/runs/run-1/clarification-gate', new URLSearchParams(), null, local);
+    expect(await request(deps)).toEqual({ status: 200, json: { ready: false, clarifications: [] } });
+    expect(await request({ ...deps, clarificationGate: () => true })).toEqual({ status: 200, json: { ready: true, clarifications: [] } });
+    expect(await request({ ...deps, clarificationGate: () => { throw new Error('poll failed'); } }))
+      .toEqual({ status: 200, json: { ready: false, clarifications: [] } });
+  });
+
   it('routes instruction reads and sends to the requested voyage and reports unavailable targets', async () => {
     const run = { id: 'run-1', status: 'running' } as RunRow;
     const state = { available: false, reason: 'Waiting for agent.', targets: [], instructions: [] };

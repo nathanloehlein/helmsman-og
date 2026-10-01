@@ -133,8 +133,12 @@ async function routeApi(
 ): Promise<ApiResult | null> {
   const clarificationGate = path.match(/^\/api\/runs\/([a-z\d_-]{1,128})\/clarification-gate$/i);
   if (clarificationGate && method === 'GET') {
-    try { return { status: 200, json: { ready: deps.clarificationGate?.(clarificationGate[1]!) === true } }; }
-    catch { return { status: 200, json: { ready: false } }; }
+    const runId = clarificationGate[1]!;
+    try {
+      const ready = deps.clarificationGate?.(runId) === true;
+      const clarifications = deps.clarifications?.listForRun(runId) ?? [];
+      return { status: 200, json: { ready, clarifications } };
+    } catch { return { status: 200, json: { ready: false, clarifications: [] } }; }
   }
   if (path.startsWith('/api/campaigns') && deps.campaigns) return deps.campaigns.handle(path, method, query, _body);
   if (path.startsWith('/api/clarifications') || path === '/api/trusted-contacts') {

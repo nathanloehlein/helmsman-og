@@ -14,6 +14,7 @@ export interface FeedbackUpdateOptions {
   author(snapshot: FeedbackSnapshot, feedback: string, round: number): Promise<void>;
   audit(snapshot: FeedbackSnapshot, round: number, decisions: string): Promise<unknown[]>;
   decide(decisions: FeedbackDecision[]): Promise<string>;
+  clarificationEvidence?(): Promise<string>;
   outcome(outcome: FeedbackOutcome): void;
   assertRevision(snapshot: FeedbackSnapshot): Promise<void>;
   isStopped(): boolean;
@@ -49,17 +50,20 @@ export async function runFeedbackUpdateWorkflow(options: FeedbackUpdateOptions):
       await options.author(snapshot, feedback + (humanAnswers ? `\n\nHuman clarification answers (apply only within their stated authority):\n${humanAnswers}` : ''), round);
       snapshot = await options.collect();
       await check(snapshot);
+      if (options.clarificationEvidence) humanAnswers = await options.clarificationEvidence();
       options.outcome({ state: 'changes_remaining', headSha: snapshot.headSha, summary: 'Independently checking the published revision and every feedback source.' });
       const values = await options.audit(snapshot, round, humanAnswers);
       if (!Array.isArray(values) || values.length === 0) throw new Error('Independent feedback review did not produce a report');
       const reports = values.map(value => parseFeedbackAudit(value, snapshot, humanAnswers ? createHash('sha256').update(humanAnswers).digest('hex') : undefined));
       const latest = await options.collect();
       await check(latest);
-      if (latest.fingerprint !== snapshot.fingerprint) {
+      const latestHumanAnswers = options.clarificationEvidence ? await options.clarificationEvidence() : humanAnswers;
+      if (latest.fingerprint !== snapshot.fingerprint || latestHumanAnswers !== humanAnswers) {
+        humanAnswers = latestHumanAnswers;
         repairAttempts++;
         snapshot = latest;
-        feedback = 'The PR or discussion changed during independent review. Read the latest snapshot and address new or edited findings before re-verification.';
-        lastSummary = 'New or edited feedback arrived during review; the earlier assessment is stale.';
+        feedback = 'The PR, discussion, or human clarification evidence changed during independent review. Read the latest snapshot and address new or edited findings before re-verification.';
+        lastSummary = 'New or edited feedback or clarification evidence arrived during review; the earlier assessment is stale.';
         options.outcome({ state: 'changes_remaining', headSha: latest.headSha, summary: lastSummary });
         continue;
       }
@@ -88,7 +92,8 @@ export async function runFeedbackUpdateWorkflow(options: FeedbackUpdateOptions):
         options.outcome({ state: 'awaiting_decision', headSha: snapshot.headSha, summary: lastSummary });
         const answers = await options.decide([...decisions.values()]);
         if (!answers.trim()) throw new Error('Required feedback decision returned no answer');
-        humanAnswers += `${humanAnswers ? '\n\n' : ''}${answers}`;
+        humanAnswers = options.clarificationEvidence ? await options.clarificationEvidence() : `${humanAnswers ? `${humanAnswers}\n\n` : ''}${answers}`;
+        if (!humanAnswers.trim()) throw new Error('Required feedback answer could not be confirmed by the clarification service');
         decisions.forEach((_, key) => answeredQuestions.add(key));
         snapshot = await options.collect();
         await check(snapshot);

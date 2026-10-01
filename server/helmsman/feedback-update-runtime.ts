@@ -15,6 +15,7 @@ import { selectReviewModel } from './review-policy';
 import { collectFeedbackSnapshot } from './pr-feedback-snapshot';
 import { runFeedbackUpdateWorkflow, type FeedbackDecision } from './feedback-update-workflow';
 import { parseFeedbackAudit } from './feedback-audit';
+import { readFeedbackClarifications } from './feedback-clarifications';
 import { createRunArtifactStore } from './artifacts';
 
 const exec = promisify(execFile);
@@ -170,6 +171,7 @@ export async function runFeedbackUpdateRuntime(input: { task: AgentTask; writerI
         }
         return reports;
       },
+      clarificationEvidence: () => readFeedbackClarifications(task, runId),
       decide: decisions => waitForFeedbackDecisions(task, decisions, abort.signal, settings.stageTimeoutMinutes * 60_000),
     });
   } finally {

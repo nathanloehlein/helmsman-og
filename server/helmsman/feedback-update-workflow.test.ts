@@ -101,6 +101,36 @@ describe('feedback completion workflow', () => {
     expect(deps.outcome).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'completed' }));
   });
 
+  it('binds answers requested by the author into the independent audit', async () => {
+    const evidence = 'Local operator answered author question: apply historical remediation before merge.';
+    const decisionFingerprint = createHash('sha256').update(evidence).digest('hex');
+    const audit = vi.fn(async () => [{ ...report(), decisionFingerprint }]);
+    const deps = options({ clarificationEvidence: async () => evidence, audit });
+    await runFeedbackUpdateWorkflow(deps);
+    expect(audit).toHaveBeenCalledWith(snapshot, 1, evidence);
+    expect(deps.decide).not.toHaveBeenCalled();
+    expect(deps.outcome).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'completed' }));
+  });
+
+  it('reaudits when authoritative clarification evidence changes during review', async () => {
+    const evidence = vi.fn().mockResolvedValueOnce('Initial answer').mockResolvedValue('Updated authority evidence');
+    const audit = vi.fn(async (_snapshot: FeedbackSnapshot, _round: number, decisions: string) => [{
+      ...report(), decisionFingerprint: createHash('sha256').update(decisions).digest('hex'),
+    }]);
+    const deps = options({ clarificationEvidence: evidence, audit });
+    await runFeedbackUpdateWorkflow(deps);
+    expect(audit).toHaveBeenCalledTimes(2);
+    expect(audit).toHaveBeenLastCalledWith(snapshot, 2, 'Updated authority evidence');
+    expect(deps.author).toHaveBeenLastCalledWith(snapshot, expect.stringContaining('Updated authority evidence'), 2);
+  });
+
+  it('cannot complete if an author exits with an unanswered required question', async () => {
+    const deps = options({ clarificationEvidence: async () => { throw new Error('Required clarification is unanswered'); } });
+    await expect(runFeedbackUpdateWorkflow(deps)).rejects.toThrow('unanswered');
+    expect(deps.audit).not.toHaveBeenCalled();
+    expect(deps.outcome).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'changes_remaining' }));
+  });
+
   it('does not accept a missing answer or expired decision', async () => {
     const blocked = report();
     blocked.coverage[0]!.findings[0] = { title: 'Historical exposure', required: true, disposition: 'decision_required',

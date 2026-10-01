@@ -134,6 +134,9 @@ describe('createWorktreeFromBranch', () => {
       await writeFile(join(first.path, 'unfinished.txt'), 'work in progress');
       await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => true)).rejects.toThrow('active workspace');
       await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x')).rejects.toThrow('active workspace');
+      const preserve = vi.fn(() => true);
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => true, preserve)).rejects.toThrow('active workspace');
+      expect(preserve).not.toHaveBeenCalled();
       expect(await readFile(join(first.path, 'unfinished.txt'), 'utf8')).toBe('work in progress');
 
       const second: Worktree = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'run-2', 'fix/x', () => false);
@@ -142,6 +145,67 @@ describe('createWorktreeFromBranch', () => {
     } finally {
       await rm(agentsRoot, { recursive: true, force: true });
     }
+  });
+
+  it('detaches retained feedback work without losing changes or unpublished commits while refreshing the retry branch', async () => {
+    const agentsRoot = await mkdtemp(join(tmpdir(), 'retained-feedback-agents-'));
+    try {
+      const sourceDir = join(agentsRoot, 'source');
+      const repoDir = join(agentsRoot, 'repo');
+      await mkdir(sourceDir);
+      const git = async (dir: string, args: string[]) => (await execFileAsync('git', ['-C', dir, ...args])).stdout.trim();
+      await git(sourceDir, ['init', '-q', '-b', 'main']);
+      await git(sourceDir, ['config', 'user.email', 'test@example.com']);
+      await git(sourceDir, ['config', 'user.name', 'Test']);
+      await git(sourceDir, ['config', 'commit.gpgsign', 'false']);
+      await writeFile(join(sourceDir, 'tracked.txt'), 'base\n');
+      await git(sourceDir, ['add', 'tracked.txt']);
+      await git(sourceDir, ['commit', '-qm', 'base']);
+      await git(sourceDir, ['branch', 'fix/x']);
+      await execFileAsync('git', ['clone', '-q', sourceDir, repoDir]);
+      await git(repoDir, ['config', 'user.email', 'test@example.com']);
+      await git(repoDir, ['config', 'user.name', 'Test']);
+      await git(repoDir, ['config', 'commit.gpgsign', 'false']);
+
+      const first = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'failed-feedback', 'fix/x');
+      await writeFile(join(first.path, 'unpublished.txt'), 'local commit only\n');
+      await git(first.path, ['add', 'unpublished.txt']);
+      await git(first.path, ['commit', '-qm', 'unpublished feedback fix']);
+      const unpublishedHead = await git(first.path, ['rev-parse', 'HEAD']);
+      await writeFile(join(first.path, 'tracked.txt'), 'staged fix\n');
+      await git(first.path, ['add', 'tracked.txt']);
+      await writeFile(join(first.path, 'tracked.txt'), 'staged fix\nunstaged fix\n');
+      await writeFile(join(first.path, 'unfinished.txt'), 'untracked fix\n');
+      const originalStatus = await git(first.path, ['status', '--porcelain']);
+      await git(sourceDir, ['checkout', '-q', 'fix/x']);
+      await git(sourceDir, ['commit', '-q', '--allow-empty', '-m', 'new published head']);
+      const publishedHead = await git(sourceDir, ['rev-parse', 'HEAD']);
+      const preserve = vi.fn(() => true);
+
+      const indexLock = await git(first.path, ['rev-parse', '--git-path', 'index.lock']);
+      await writeFile(indexLock, 'locked');
+      try {
+        await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'retry-feedback', 'fix/x', () => false, preserve)).rejects.toThrow();
+        expect(await git(first.path, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('fix/x');
+        expect(await git(repoDir, ['rev-parse', 'fix/x'])).toBe(unpublishedHead);
+        expect(existsSync(join(repoDir, '.worktrees', 'retry-feedback'))).toBe(false);
+      } finally { await rm(indexLock, { force: true }); }
+      preserve.mockClear();
+      const second = await createWorktreeFromBranch(agentsRoot, 'o/repo', 'retry-feedback', 'fix/x', () => false, preserve);
+
+      expect(preserve).toHaveBeenCalledOnce();
+      expect(await git(first.path, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('HEAD');
+      expect(await git(first.path, ['rev-parse', 'HEAD'])).toBe(unpublishedHead);
+      expect(await git(first.path, ['status', '--porcelain'])).toBe(originalStatus);
+      expect(await git(first.path, ['show', ':tracked.txt'])).toBe('staged fix');
+      expect(await readFile(join(first.path, 'tracked.txt'), 'utf8')).toBe('staged fix\nunstaged fix\n');
+      expect(await readFile(join(first.path, 'unfinished.txt'), 'utf8')).toBe('untracked fix\n');
+      expect(await readFile(join(first.path, 'unpublished.txt'), 'utf8')).toBe('local commit only\n');
+      expect(await git(second.path, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('fix/x');
+      expect(await git(second.path, ['rev-parse', 'HEAD'])).toBe(publishedHead);
+      expect(await git(second.path, ['status', '--porcelain'])).toBe('');
+      expect(existsSync(join(second.path, 'unpublished.txt'))).toBe(false);
+    } finally { await rm(agentsRoot, { recursive: true, force: true }); }
   });
 });
 
@@ -162,7 +226,10 @@ describe('concurrent worktrees', () => {
       await writeFile(join(second.path, 'change.txt'), 'second');
       expect(await readFile(join(first.path, 'change.txt'), 'utf8')).toBe('first');
       expect(await readFile(join(second.path, 'change.txt'), 'utf8')).toBe('second');
-      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'third', 'main', () => false)).rejects.toThrow('unmanaged workspace');
+      const preserve = vi.fn(() => true);
+      await expect(createWorktreeFromBranch(agentsRoot, 'o/repo', 'third', 'main', () => false, preserve)).rejects.toThrow('unmanaged workspace');
+      expect(preserve).not.toHaveBeenCalled();
+      expect((await execFileAsync('git', ['-C', repoDir, 'branch', '--show-current'])).stdout.trim()).toBe('main');
       expect(existsSync(join(repoDir, '.git'))).toBe(true);
     } finally { await rm(agentsRoot, { recursive: true, force: true }); }
   });
