@@ -668,9 +668,7 @@ export class DashboardView {
       const summary = this.runs.find(run => run?.id === route.run) ?? await getRun(route.run);
       if (seq !== this.routeSeq) return;
       if (summary) {
-        const label = summary.ticketId === 'review' && summary.prNumber
-          ? `${term('review')} #${summary.prNumber}`
-          : summary.ticketId || (summary.prNumber ? `${term('pr')} #${summary.prNumber}` : route.run);
+        const label = this.runLabel(summary, route.run);
         this.openRunTab(route.run, label, false);
         const tab = this.runTabs.find(item => item.runId === route.run);
         if (tab) {
@@ -2347,7 +2345,7 @@ export class DashboardView {
       this.runRetries.delete(runId);
       const previous = this.runTabs.find(tab => tab.runId === runId);
       const run = this.runs.find(item => item.id === runId);
-      const label = previous?.label ?? run?.ticketId ?? 'Retry';
+      const label = previous?.label ?? this.runLabel(run, runId);
       this.openRunTab(result.runId, label);
       this.focusRunTab(result.runId);
       void this.refresh();
@@ -2739,11 +2737,11 @@ export class DashboardView {
     try {
       const result: LaunchResult = await launchRun({ mode: 'rerun', repo: t.repo, prNumber: t.number, feedback, ...this.readTuning(t.panel, 'pr') });
       if (seq !== this.launchSeq) return;
-      this.openRunTab(result.runId, `feedback #${t.number}`);
+      this.openRunTab(result.runId, this.runLabel({ ticketId: 'rerun', repo: t.repo, prNumber: t.number }, result.runId));
     } catch (err: unknown) {
       if (seq !== this.launchSeq) return;
       const message: string = err instanceof Error ? err.message : term('relaunchFailed');
-      this.openErrorTab(`feedback #${t.number}`, message);
+      this.openErrorTab(this.runLabel({ ticketId: 'rerun', repo: t.repo, prNumber: t.number }, ''), message);
     }
   }
 
@@ -2817,6 +2815,17 @@ export class DashboardView {
     const runId: string | undefined = row.dataset.runid;
     if (!runId) return;
     void this.navigate({ ...this.route, view: 'runs', pane: 'tasks', run: runId });
+  }
+
+  private runLabel(run: Pick<RunStatusSummary, 'ticketId' | 'repo' | 'prNumber'> | null | undefined, fallback: string): string {
+    if (run?.ticketId === 'rerun') {
+      const repo: string = run.repo?.trim() ?? '';
+      const pr: string = typeof run.prNumber === 'number' && Number.isSafeInteger(run.prNumber) && run.prNumber > 0 ? `#${run.prNumber}` : '';
+      return `${term('branchUpdate')}${pr ? ` ${pr}` : ''} · ${repo || fallback}`;
+    }
+    return run?.ticketId === 'review' && run.prNumber
+      ? `${term('review')} #${run.prNumber}`
+      : run?.ticketId || (run?.prNumber ? `${term('pr')} #${run.prNumber}` : fallback);
   }
 
   private openRunTab(runId: string, label: string, updateRoute: boolean = true): void {

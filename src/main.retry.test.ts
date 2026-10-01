@@ -32,10 +32,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function setup(path: string, retry: () => Promise<Response> = async () => json({ runId: FRESH })) {
+async function setup(path: string, retry: () => Promise<Response> = async () => json({ runId: FRESH }), failed: RunSummary = run(FAILED, 'failed')) {
   window.history.replaceState(null, '', path);
   const snapshot = await loadDashboard();
-  const runs = [run(FAILED, 'failed'), run(SUCCEEDED, 'succeeded'), run(RUNNING, 'running'), run(STOPPED, 'stopped')];
+  const runs = [failed, run(SUCCEEDED, 'succeeded'), run(RUNNING, 'running'), run(STOPPED, 'stopped')];
   const requests: { pathname: string; method: string }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), window.location.origin);
@@ -133,6 +133,13 @@ describe('retrying a failed voyage', () => {
     expect(document.querySelector(`.run-tab.is-active[data-tabid="${FRESH}"]`)).not.toBeNull();
     expect(document.querySelector(`.run-tab[data-tabid="${FAILED}"]`)).toBeNull();
     expect(streams.some(stream => stream.url === `/api/agents/${FRESH}/log`)).toBe(true);
+  });
+
+  it('keeps the PR and repository in a retried feedback tab', async () => {
+    await setup('/runs', undefined, { ...run(FAILED, 'failed'), ticketId: 'rerun', prNumber: 42 });
+    buttons()[0]!.click();
+    await flush();
+    expect(document.querySelector('.run-tab.is-active .run-tab-label')?.textContent).toBe('Branch update #42 · org/repo');
   });
 
   it('disables every control for the same source and suppresses duplicate clicks while pending', async () => {

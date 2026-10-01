@@ -695,7 +695,7 @@ describe('DashboardView drawer survives polling', () => {
     await vi.waitFor(() => {
       expect(FakeEventSource.instances.length).toBeGreaterThan(0);
     });
-    expect(document.querySelector('.run-drawer .run-tab')).not.toBeNull();
+    expect(document.querySelector('.run-drawer .run-tab-label')?.textContent).toBe('Branch update #7 · o/r');
   });
 
   it.each([false, true])('launches a code review and opens the drawer with explicit model override: %s', async (override) => {

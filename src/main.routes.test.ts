@@ -279,6 +279,14 @@ describe('URL navigation', () => {
     expect(streams[0]?.close).toHaveBeenCalled();
   });
 
+  it.each([true, false])('identifies a reopened feedback run by repository and PR (listed: %s)', async (listed) => {
+    const run: RunSummary = { id: 'feedback-run', ticketId: 'rerun', repo: 'org/a', status: 'failed', attempt: 1, prNumber: 42, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
+    const { root } = await setup('/runs?run=feedback-run', url => url.pathname === '/api/agents/feedback-run' ? json(run) : null, listed ? [run] : []);
+    const tab = root.querySelector('.run-tab.is-active .run-tab-select');
+    expect(tab?.querySelector('.run-tab-label')?.textContent).toBe('Branch update #42 · org/a');
+    expect(tab?.getAttribute('title')).toBe('Branch update #42 · org/a');
+  });
+
   it('keeps the readable verdict directly above success when the drawer repaints', async () => {
     const run: RunSummary = { id: 'review-run', ticketId: 'review', repo: 'org/a', status: 'running', attempt: 1, prNumber: 11, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
     const { root } = await setup('/runs?run=review-run', () => null, [run]);

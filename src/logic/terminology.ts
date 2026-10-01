@@ -1,4 +1,5 @@
 export const TERMINOLOGY = {
+  branchUpdate: { plain: 'Branch update', pirate: 'Branch update' },
   feedbackCompleted: { plain: 'Feedback completed', pirate: 'Feedback completed' },
   feedbackRemaining: { plain: 'Feedback remaining', pirate: 'Feedback remaining' },
   awaitingDecision: { plain: 'Awaiting decision', pirate: 'Awaiting decision' },
