@@ -40,6 +40,7 @@ const deps: RouterDeps = {
     listRuns: () => [{ id: 'r1', ticketId: 'T-1', repo: 'o/r', adapter: 'claude-code', status: 'running', attempt: 1, prNumber: null, startedAt: 'x', endedAt: null, costUsd: null, worktreePath: null }],
     latestReviewVerdict: () => null,
     latestFeedbackOutcome: () => null,
+    latestRunError: () => null,
   } as unknown as RouterDeps['db'],
   canStart: (_repo: string) => ({ ok: true }),
   launch: (_body: { ticketId?: string; title?: string; repo: string; task?: string }) => 'run-0',
@@ -379,6 +380,119 @@ describe('handleApi', () => {
       expect(detail?.json).toMatchObject({ feedbackOutcome });
       expect((history?.json as { runs: unknown[] }).runs[0]).toMatchObject({ feedbackOutcome });
     } finally { db.close(); }
+  });
+
+  it('exposes the latest failure separately from stale feedback on all summary APIs', async () => {
+    const db = openDb(':memory:');
+    try {
+      db.insertRun({ ...deps.db.listRuns(1)[0]!, status: 'failed' });
+      const feedbackOutcome = { state: 'changes_remaining', headSha: 'a'.repeat(40), summary: 'Earlier test setup failure.' };
+      db.appendEvent('r1', 'feedback-outcome', JSON.stringify(feedbackOutcome), 't1');
+      db.appendEvent('r1', 'error', 'Required security decision expired unanswered.', 't2');
+      const listEvents = vi.spyOn(db, 'listEvents');
+      const local = { ...deps, db };
+      const list = await handleApi('GET', '/api/agents', new URLSearchParams(), null, local);
+      const detail = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null, local);
+      const history = await handleApi('GET', '/api/runs', new URLSearchParams('repo=o/r'), null, local);
+      for (const summary of [(list?.json as { runs: unknown[] }).runs[0], detail?.json, (history?.json as { runs: unknown[] }).runs[0]]) {
+        expect(summary).toMatchObject({ failureReason: 'Required security decision expired unanswered.', feedbackOutcome });
+      }
+      expect(listEvents).not.toHaveBeenCalled();
+    } finally { db.close(); }
+  });
+
+  it.each(['running', 'succeeded', 'stopped'] as const)('omits transient error details from a %s run', async status => {
+    const row = { ...deps.db.listRuns(1)[0]!, status };
+    const latestRunError = vi.fn(() => 'Recovered failure.');
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null,
+      { ...deps, db: { ...deps.db, getRun: () => row, latestRunError } });
+    expect(result?.json).not.toHaveProperty('failureReason');
+    expect(latestRunError).not.toHaveBeenCalled();
+  });
+
+  it('preserves old failed run summaries when no error was recorded', async () => {
+    const row = { ...deps.db.listRuns(1)[0]!, status: 'failed' as const };
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null,
+      { ...deps, db: { ...deps.db, getRun: () => row } });
+    expect(result?.json).toMatchObject({ id: 'r1', status: 'failed' });
+    expect(result?.json).not.toHaveProperty('failureReason');
+    expect(result?.json).not.toHaveProperty('decisionQuestions');
+  });
+
+  it('includes required unanswered decision details and excludes answered, optional and unrelated questions', async () => {
+    const store = openClarificationStore(':memory:', { getRun: () => ({ repo: 'o/r', status: 'running' }) });
+    try {
+      store.ingestQuestion('r1', { kind: 'question', id: 'answered', prompt: 'Answered question?', required: true });
+      store.answer('answered', { answer: 'Approved.' });
+      store.ingestQuestion('r1', { kind: 'question', id: 'optional', prompt: 'Optional question?', required: false });
+      store.ingestQuestion('other', { kind: 'question', id: 'other', prompt: 'Other question?', required: true });
+      store.ingestQuestion('r1', { kind: 'question', id: 'expired', prompt: 'Accept historical SVG risk?', required: true, timeoutAt: '2000-01-01T00:00:00Z' });
+      store.timeoutDue();
+      store.ingestQuestion('r1', { kind: 'question', id: 'cancelled', prompt: 'Plan a backfill?', required: true });
+      store.cancelForRun('r1');
+      store.ingestQuestion('r1', { kind: 'question', id: 'pending', prompt: 'Approve remaining risk?', required: true });
+      const row = { ...deps.db.listRuns(1)[0]!, status: 'failed' as const };
+      const local = { ...deps, db: { ...deps.db, getRun: () => row }, clarifications: store };
+      const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null, local);
+      const questions = (result?.json as { decisionQuestions: unknown[] }).decisionQuestions;
+      expect(questions).toHaveLength(3);
+      expect(questions).toEqual(expect.arrayContaining([
+        { question: 'Accept historical SVG risk?', state: 'timed-out' },
+        { question: 'Plan a backfill?', state: 'cancelled' },
+        { question: 'Approve remaining risk?', state: 'pending' },
+      ]));
+      const list = await handleApi('GET', '/api/agents', new URLSearchParams(), null, local);
+      expect((list?.json as { runs: unknown[] }).runs[0]).not.toHaveProperty('decisionQuestions');
+    } finally { store.close(); }
+  });
+
+  it.each(['failed', 'stopped', 'running', 'succeeded'] as const)('bounds decision detail and handles %s runs', async status => {
+    const listForRun = vi.fn(() => Array.from({ length: 5 }, (_, index) => ({
+      question: `${index}${'x'.repeat(5000)}`, required: true, state: 'pending' as const,
+    })));
+    const row = { ...deps.db.listRuns(1)[0]!, status };
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null, {
+      ...deps, db: { ...deps.db, getRun: () => row }, clarifications: { listForRun } as unknown as RouterDeps['clarifications'],
+    });
+    if (status === 'succeeded') {
+      expect(result?.json).not.toHaveProperty('decisionQuestions');
+      expect(listForRun).not.toHaveBeenCalled();
+    } else {
+      expect(listForRun).toHaveBeenCalledExactlyOnceWith('r1');
+      expect((result?.json as { decisionQuestions: unknown[] }).decisionQuestions).toEqual([0, 1, 2].map(index => ({
+        question: `${index}${'x'.repeat(3999)}`, state: 'pending',
+      })));
+    }
+  });
+
+  it.each(['failed', 'stopped', 'running', 'succeeded'] as const)('loads historical review diagnostics only for terminal failures: %s', async status => {
+    const row = { ...deps.db.listRuns(1)[0]!, status };
+    const outcome = { state: 'changes_remaining' as const, headSha: 'a'.repeat(40), summary: 'Three review rounds exhausted.' };
+    const diagnostics = { reviewDiagnostics: { round: 3, headSha: outcome.headSha, blockers: [{ reviewer: 'codex', title: 'Tests unavailable', detail: 'Missing vitest in reviewer checkout.' }] } };
+    const reviewDiagnostics = vi.fn(async () => diagnostics);
+    const local = { ...deps, reviewDiagnostics, db: { ...deps.db, getRun: () => row, latestFeedbackOutcome: () => outcome } };
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null, local);
+    if (status === 'failed' || status === 'stopped') {
+      expect(reviewDiagnostics).toHaveBeenCalledExactlyOnceWith(row, outcome.headSha);
+      expect(result?.json).toMatchObject(diagnostics);
+    } else {
+      expect(result?.json).not.toHaveProperty('reviewDiagnostics');
+      expect(reviewDiagnostics).not.toHaveBeenCalled();
+    }
+    reviewDiagnostics.mockClear();
+    await handleApi('GET', '/api/agents', new URLSearchParams(), null, local);
+    expect(reviewDiagnostics).not.toHaveBeenCalled();
+  });
+
+  it('retains terminal error and feedback if historical artifact reading fails', async () => {
+    const row = { ...deps.db.listRuns(1)[0]!, status: 'failed' as const };
+    const result = await handleApi('GET', '/api/agents/r1', new URLSearchParams(), null, {
+      ...deps, db: { ...deps.db, getRun: () => row, latestRunError: () => 'Required decision expired.' },
+      reviewDiagnostics: async () => { throw new Error('private filesystem error'); },
+    });
+    expect(result?.status).toBe(200);
+    expect(result?.json).toMatchObject({ failureReason: 'Required decision expired.', reviewDiagnosticsError: expect.stringContaining('could not be verified') });
+    expect(JSON.stringify(result?.json)).not.toContain('private filesystem');
   });
 
   it.each(['failed', 'stopped'] as const)('reports an unanswered decision as remaining feedback after %s', async status => {

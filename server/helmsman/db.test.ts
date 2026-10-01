@@ -125,6 +125,21 @@ describe('db', () => {
     expect(db.latestReviewVerdict('r1')).toBe('x'.repeat(512));
   });
 
+  it('reads the latest nonblank error for only the requested run and bounds its text', () => {
+    db = openDb(':memory:');
+    expect(db.latestRunError('r1')).toBeNull();
+    db.appendEvent('r1', 'error', 'Earlier failure.', 't3');
+    db.appendEvent('r1', 'error', 'Required decision timed out.', 't1');
+    db.appendEvent('other', 'error', 'Other failure.', 't4');
+    db.appendEvent('r1', 'log', 'Ignore log output.', 't5');
+    db.appendEvent('r1', 'error', ' \t\r\n ', 't6');
+    expect(db.latestRunError('r1')).toBe('Required decision timed out.');
+    expect(db.latestRunError('missing')).toBeNull();
+    db.appendEvent('r1', 'error', 'x'.repeat(10000), 't7');
+    expect(db.latestRunError('r1')).toBe('x'.repeat(4000));
+    expect(db.listEvents('r1').at(-1)?.text).toHaveLength(10000);
+  });
+
   it('updateRun with empty patch is a no-op', () => {
     db = openDb(':memory:');
     db.insertRun(run());
@@ -175,6 +190,9 @@ describe('db', () => {
     const migrated = new Database(path);
     const plan = migrated.prepare("EXPLAIN QUERY PLAN SELECT text FROM run_events WHERE runId = ? AND kind = 'review-verdict' ORDER BY id DESC LIMIT 1").all('old') as { detail: string }[];
     expect(plan.some((step) => step.detail.includes('idx_events_review_verdict'))).toBe(true);
+    const errorPlan = migrated.prepare("EXPLAIN QUERY PLAN SELECT substr(text, 1, 4000) FROM run_events WHERE runId = ? AND kind = 'error' AND trim(text, char(9) || char(10) || char(13) || ' ') != '' ORDER BY id DESC LIMIT 1").all('old') as { detail: string }[];
+    expect(errorPlan.some((step) => step.detail.includes('idx_events_error'))).toBe(true);
+    expect(db.latestRunError('old')).toBeNull();
     migrated.close();
     expect(db.getRun('old')?.launchJson).toBeNull();
     db.updateRun('old', { hostKind: 'detached', hostRef: '{"kind":"detached","pid":9}', logPath: '/l', exitPath: '/e', specPath: '/s', logOffset: 42, taskJson: '{"ticketId":"T-1"}', launchJson: '{"repo":"o/r","ticketId":"T-1"}' });

@@ -29,6 +29,7 @@ import { createClarificationRuntime, clarificationPaths } from './clarification-
 import { createOutcomeService } from './outcome-service';
 import { recoverRuns } from './recovery';
 import { handleApi } from './router';
+import { createFeedbackDiagnosticsReader } from './feedback-diagnostics';
 import { ProcessManager, RunConflictError } from './process-manager';
 import { launchResources, restoredResources } from './run-reservations';
 import { RunBus } from './event-bus';
@@ -110,6 +111,7 @@ const bus: RunBus = new RunBus();
 const AGENTS_ROOT: string = process.env.AGENTS_ROOT ?? process.cwd();
 const RUNS_DIR: string = process.env.RUNS_DIR ?? join(AGENTS_ROOT, '.helmsman-runs');
 mkdirSync(RUNS_DIR, { recursive: true });
+const reviewDiagnostics = createFeedbackDiagnosticsReader(RUNS_DIR);
 const WRAPPER: string = fileURLToPath(new URL('./run-wrapper.mjs', import.meta.url));
 const configStore: ConfigStore = new ConfigStore(process.env, db);
 let goCaasRequired = false;
@@ -814,6 +816,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Use Helmsman Config to change Slack authentication settings.' })); return;
     }
     const api = await handleApi(req.method ?? 'GET', url.pathname, url.searchParams, body, {
+      reviewDiagnostics,
       clarificationGate: runId => {
         if (db.getRun(runId)?.status !== 'running') return false;
         clarificationRuntime.poll(runId);

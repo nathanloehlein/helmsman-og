@@ -56,7 +56,25 @@ export interface RunEvent {
   text: string;
 }
 
-export interface RunStatusSummary {
+export interface RunDecisionQuestion {
+  question: string;
+  state: 'pending' | 'timed-out' | 'cancelled';
+}
+
+export interface RunReviewDiagnostics {
+  round: number;
+  headSha: string;
+  blockers: Array<{ reviewer: 'codex' | 'claude-code'; title: string; detail: string }>;
+}
+
+interface RunDiagnostics {
+  reviewDiagnostics?: RunReviewDiagnostics;
+  reviewDiagnosticsError?: string;
+  failureReason?: string;
+  decisionQuestions?: RunDecisionQuestion[];
+}
+
+export interface RunStatusSummary extends RunDiagnostics {
   status: string;
   prNumber: number | null;
   repo: string;
@@ -65,7 +83,7 @@ export interface RunStatusSummary {
   feedbackOutcome?: FeedbackOutcome;
 }
 
-export interface RunSummary {
+export interface RunSummary extends RunDiagnostics {
   id: string;
   ticketId: string;
   repo: string;
@@ -92,10 +110,46 @@ interface AgentsListResponse {
   caps?: AgentCaps;
 }
 
+function reviewDiagnostics(value: unknown): RunReviewDiagnostics | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.round !== 'number' || !Number.isSafeInteger(record.round) || record.round < 1 || record.round > 10000
+    || typeof record.headSha !== 'string' || !/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(record.headSha)
+    || !Array.isArray(record.blockers)) return null;
+  const blockers: RunReviewDiagnostics['blockers'] = [];
+  for (const value of record.blockers as unknown[]) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const finding = value as Record<string, unknown>;
+    if ((finding.reviewer !== 'codex' && finding.reviewer !== 'claude-code') || typeof finding.title !== 'string' || !finding.title.trim()
+      || typeof finding.detail !== 'string' || !finding.detail.trim()) return null;
+    blockers.push({ reviewer: finding.reviewer, title: finding.title.trim().slice(0, 180), detail: finding.detail.trim().slice(0, 4000) });
+    if (blockers.length === 10) break;
+  }
+  return { round: record.round, headSha: record.headSha, blockers };
+}
+
+function runDiagnostics(run: { status: string; failureReason?: unknown; decisionQuestions?: unknown; reviewDiagnostics?: unknown; reviewDiagnosticsError?: unknown }): RunDiagnostics {
+  const failureReason = run.status === 'failed' && typeof run.failureReason === 'string' ? run.failureReason.trim().slice(0, 4000) : '';
+  const decisionQuestions: RunDecisionQuestion[] = [];
+  if (['running', 'failed', 'stopped'].includes(run.status) && Array.isArray(run.decisionQuestions)) {
+    for (const value of run.decisionQuestions) {
+      if (!value || typeof value !== 'object' || typeof value.question !== 'string' || !value.question.trim()) continue;
+      if (value.state !== 'pending' && value.state !== 'timed-out' && value.state !== 'cancelled') continue;
+      decisionQuestions.push({ question: value.question.trim().slice(0, 4000), state: value.state });
+      if (decisionQuestions.length === 3) break;
+    }
+  }
+  const terminal = run.status === 'failed' || run.status === 'stopped';
+  const review = terminal ? reviewDiagnostics(run.reviewDiagnostics) : null;
+  const reviewError = terminal && typeof run.reviewDiagnosticsError === 'string' ? run.reviewDiagnosticsError.trim().slice(0, 4000) : '';
+  return { ...(failureReason ? { failureReason } : {}), ...(decisionQuestions.length ? { decisionQuestions } : {}),
+    ...(review ? { reviewDiagnostics: review } : {}), ...(reviewError ? { reviewDiagnosticsError: reviewError } : {}) };
+}
+
 export function normalizeRunFeedback(run: RunSummary): RunSummary {
-  const { feedbackOutcome: rawOutcome, ...rest } = run;
+  const { feedbackOutcome: rawOutcome, failureReason: _failureReason, decisionQuestions: _decisionQuestions, reviewDiagnostics: _reviewDiagnostics, reviewDiagnosticsError: _reviewDiagnosticsError, ...rest } = run;
   const feedbackOutcome = normalizeFeedbackOutcomeForStatus(parseFeedbackOutcome(rawOutcome), run.status);
-  return { ...rest, ...(feedbackOutcome ? { feedbackOutcome } : {}) };
+  return { ...rest, ...runDiagnostics(run), ...(feedbackOutcome ? { feedbackOutcome } : {}) };
 }
 
 export async function getRun(runId: string): Promise<RunStatusSummary | null> {
@@ -109,6 +163,7 @@ export async function getRun(runId: string): Promise<RunStatusSummary | null> {
     const feedbackOutcome = normalizeFeedbackOutcomeForStatus(parseFeedbackOutcome(run.feedbackOutcome), run.status);
     return {
       status: run.status,
+      ...runDiagnostics({ ...run, status: run.status }),
       prNumber,
       repo: run.repo,
       ...(typeof run.ticketId === 'string' ? { ticketId: run.ticketId } : {}),

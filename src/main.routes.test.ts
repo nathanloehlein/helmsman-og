@@ -287,6 +287,52 @@ describe('URL navigation', () => {
     expect(tab?.getAttribute('title')).toBe('Branch update #42 · org/a');
   });
 
+  it('shows the terminal failure and unanswered decision above the log, independently of stale review feedback', async () => {
+    const run: RunSummary = { id: 'failed-feedback', ticketId: 'rerun', repo: 'org/a', status: 'failed', attempt: 1, prNumber: 42, startedAt: '2026-09-17T16:00:00Z', costUsd: null, feedbackOutcome: { state: 'changes_remaining', headSha: 'a'.repeat(40), summary: 'Earlier assessment is stale.' } };
+    const { root } = await setup('/runs?run=failed-feedback', url => url.pathname === '/api/agents/failed-feedback' ? json({ ...run, failureReason: 'Required clarification timed out without an answer', decisionQuestions: [{ question: 'Allow historical <svg> copies?', state: 'timed-out' }], reviewDiagnostics: { round: 3, headSha: 'a'.repeat(40), blockers: [{ reviewer: 'codex', title: 'Verification unavailable', detail: 'The checkout has no node_modules/.bin/vitest.' }] } }) : null, [run]);
+    await vi.waitFor(() => expect(root.querySelector('.run-failure-reason')?.textContent).toBe('Required clarification timed out without an answer'));
+    const explanation = root.querySelector('.run-explanation');
+    expect(explanation?.hasAttribute('hidden')).toBe(false);
+    expect(explanation?.querySelector('.run-failure-reason')?.textContent).toBe('Required clarification timed out without an answer');
+    expect(explanation?.textContent).toContain('Earlier assessment is stale.');
+    expect(explanation?.textContent).toContain('Allow historical <svg> copies?');
+    expect(explanation?.querySelector('svg')).toBeNull();
+    expect(explanation?.querySelector('.run-review-blocker')?.textContent).toBe('The checkout has no node_modules/.bin/vitest.');
+    expect(explanation?.compareDocumentPosition(root.querySelector('.run-drawer-body')!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('keeps the final failure details when an older summary request finishes late', async () => {
+    const initial = deferred<Response>();
+    const run: RunSummary = { id: 'finishing-run', ticketId: 'TASK-1', repo: 'org/a', status: 'running', attempt: 1, prNumber: null, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
+    let details = 0;
+    const { root } = await setup('/runs?run=finishing-run', url => url.pathname === '/api/agents/finishing-run'
+      ? ++details === 1 ? initial.promise : json({ ...run, status: 'failed', failureReason: 'Required clarification timed out without an answer' }) : null, [run]);
+    streams[0]?.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ id: 1, runId: run.id, ts: run.startedAt, kind: 'run-complete', text: 'failed' }) }));
+    await vi.waitFor(() => expect(root.querySelector('.run-failure-reason')?.textContent).toContain('Required clarification timed out'));
+    initial.resolve(json(run));
+    await initial.promise;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(root.querySelector('.run-failure-reason')?.textContent).toContain('Required clarification timed out');
+    expect(root.querySelector('.run-tab')?.getAttribute('data-run-status')).toBe('failed');
+  });
+
+  it.each([
+    { reviewDiagnostics: { round: 1, headSha: 'a'.repeat(40), blockers: [{ reviewer: 'codex', title: 'Test dependencies missing', detail: 'Vitest unavailable.' }] } },
+    { reviewDiagnosticsError: 'Review diagnostics could not be verified.' },
+  ])('shows recorded review details for a stopped run without inventing a failure', async diagnostics => {
+    const run: RunSummary = { id: 'stopped-review', ticketId: 'TASK-1', repo: 'org/a', status: 'stopped', attempt: 1, prNumber: null, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
+    const { root } = await setup('/runs?run=stopped-review', url => url.pathname === '/api/agents/stopped-review' ? json({ ...run, ...diagnostics }) : null, [run]);
+    await vi.waitFor(() => expect(root.querySelector('.run-explanation')?.hasAttribute('hidden')).toBe(false));
+    expect(root.querySelector('.run-explanation h3')?.textContent).toBe('Inspection details');
+    expect(root.querySelector('.run-failure-reason')).toBeNull();
+  });
+
+  it('explains missing historical failure details without inventing a reason', async () => {
+    const run: RunSummary = { id: 'legacy-failure', ticketId: 'TASK-1', repo: 'org/a', status: 'failed', attempt: 1, prNumber: null, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
+    const { root } = await setup('/runs?run=legacy-failure', () => null, [run]);
+    expect(root.querySelector('.run-failure-reason')?.textContent).toContain('No failure reason was recorded');
+  });
+
   it('keeps the readable verdict directly above success when the drawer repaints', async () => {
     const run: RunSummary = { id: 'review-run', ticketId: 'review', repo: 'org/a', status: 'running', attempt: 1, prNumber: 11, startedAt: '2026-09-17T16:00:00Z', costUsd: null };
     const { root } = await setup('/runs?run=review-run', () => null, [run]);

@@ -107,6 +107,7 @@ interface RunTab {
   lines: RunEvent[];
   streamState?: RunStreamState;
   lastEventId?: number;
+  detailVersion?: number;
   footer: RunStatusSummary | null;
   feedbackOutcome?: FeedbackOutcome;
   pr: { repo: string; number: number } | null;
@@ -669,7 +670,8 @@ export class DashboardView {
     if (seq !== this.routeSeq) return;
     if (route.view !== 'dashboard' && route.view !== 'prs' && route.view !== 'runs' && route.view !== 'config') this.paint();
     if (route.run) {
-      const summary = this.runs.find(run => run?.id === route.run) ?? await getRun(route.run);
+      const cached = this.runs.find(run => run?.id === route.run);
+      const summary = cached ?? await getRun(route.run);
       if (seq !== this.routeSeq) return;
       if (summary) {
         const label = this.runLabel(summary, route.run);
@@ -681,6 +683,7 @@ export class DashboardView {
           tab.status = summary.status;
           tab.complete = this.isTerminalRunStatus(summary.status);
           if (summary.prNumber) tab.pr = { repo: summary.repo, number: summary.prNumber };
+          if (cached) void this.refreshRunDetails(route.run, false);
         }
       } else this.openErrorTab(term('unavailableRunTitle'), term('unavailableRunMessage'));
     }
@@ -3006,7 +3009,7 @@ export class DashboardView {
       tab.unsub = null;
       this.updateRunTabStatus(tab);
       if (runId === this.activeTabId) this.renderFooterDom(tab);
-      void this.finalizeTab(runId);
+      void this.refreshRunDetails(runId);
     }
     if (runId === this.activeTabId) {
       this.paintRunStreamStatus();
@@ -3034,22 +3037,24 @@ export class DashboardView {
     }
   }
 
-  private async finalizeTab(runId: string): Promise<void> {
-    const summary: RunStatusSummary | null = await getRun(runId);
+  private async refreshRunDetails(runId: string, refreshPr: boolean = true): Promise<void> {
     const tab: RunTab | undefined = this.runTabs.find((t: RunTab): boolean => t.runId === runId);
     if (!tab || this.destroyed) return;
+    const version = (tab.detailVersion ?? 0) + 1;
+    tab.detailVersion = version;
+    const summary: RunStatusSummary | null = await getRun(runId);
+    if (!summary || this.destroyed || !this.runTabs.includes(tab) || tab.detailVersion !== version) return;
     tab.footer = summary;
-    if (summary) {
-      tab.feedbackOutcome = summary.feedbackOutcome ?? tab.feedbackOutcome;
-      tab.status = summary.status;
-      this.updateRunTabStatus(tab);
-    }
-    if (summary && summary.prNumber != null && !tab.pr) {
+    tab.feedbackOutcome = summary.feedbackOutcome ?? tab.feedbackOutcome;
+    tab.status = summary.status;
+    tab.complete = this.isTerminalRunStatus(summary.status);
+    this.updateRunTabStatus(tab);
+    if (summary.prNumber != null && !tab.pr) {
       tab.pr = { repo: summary.repo, number: summary.prNumber };
     }
     if (runId === this.activeTabId) {
       this.renderFooterDom(tab);
-      if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number, true);
+      if (tab.pr) void this.loadTabPr(runId, tab.pr.repo, tab.pr.number, refreshPr);
     }
   }
 
@@ -3175,7 +3180,65 @@ export class DashboardView {
     this.stickToBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
   }
 
+  private renderRunExplanation(tab: RunTab): void {
+    const panel = this.runDrawerEl.querySelector<HTMLElement>('.run-explanation');
+    if (!panel) return;
+    const failed = tab.status === 'failed';
+    const questions = tab.footer?.decisionQuestions ?? [];
+    const stoppedReview = tab.status === 'stopped' && Boolean(tab.footer?.reviewDiagnostics?.blockers.length || tab.footer?.reviewDiagnosticsError);
+    panel.hidden = !failed && questions.length === 0 && !stoppedReview;
+    panel.replaceChildren();
+    if (panel.hidden) return;
+    const heading = document.createElement('h3');
+    heading.textContent = term(failed ? 'runFailureHeading' : questions.length ? 'runDecisionHeading' : 'runReviewDetails');
+    panel.appendChild(heading);
+    const assessment = tab.feedbackOutcome ?? tab.footer?.feedbackOutcome;
+    const reason = tab.footer?.failureReason ?? tab.lines.findLast(line => line.kind === 'error' && line.text.trim())?.text;
+    if (failed) {
+      const detail = document.createElement('p');
+      detail.className = 'run-failure-reason';
+      detail.textContent = reason ?? assessment?.summary ?? term('runFailureUnavailable');
+      panel.appendChild(detail);
+    }
+    for (const question of questions) {
+      const label = document.createElement('h4');
+      label.textContent = term(question.state === 'pending' ? 'questionPending' : question.state === 'timed-out' ? 'questionTimedOut' : 'questionCancelled');
+      const detail = document.createElement('p');
+      detail.className = 'run-decision-question';
+      detail.textContent = question.question;
+      panel.append(label, detail);
+    }
+    if (assessment?.summary && reason && assessment.summary !== reason) {
+      const label = document.createElement('h4');
+      label.textContent = term('lastFeedbackAssessment');
+      const detail = document.createElement('p');
+      detail.textContent = assessment.summary;
+      panel.append(label, detail);
+    }
+    const review = tab.footer?.reviewDiagnostics;
+    if (review?.blockers.length) {
+      const label = document.createElement('h4');
+      label.textContent = `${term('lastIndependentReview')} · ${term('reviewRound')} ${review.round} · ${review.headSha.slice(0, 10)}`;
+      panel.appendChild(label);
+      for (const finding of review.blockers) {
+        const title = document.createElement('h4');
+        title.textContent = `${finding.reviewer}: ${finding.title}`;
+        const detail = document.createElement('p');
+        detail.className = 'run-review-blocker';
+        detail.textContent = finding.detail;
+        panel.append(title, detail);
+      }
+    }
+    if (tab.footer?.reviewDiagnosticsError) {
+      const error = document.createElement('p');
+      error.textContent = tab.footer.reviewDiagnosticsError;
+      panel.appendChild(error);
+    }
+
+  }
+
   private renderFooterDom(tab: RunTab): void {
+    this.renderRunExplanation(tab);
     const footer: HTMLElement | null = this.runDrawerEl.querySelector<HTMLElement>('.run-drawer-footer');
     if (!footer) return;
     footer.textContent = '';

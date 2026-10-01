@@ -236,6 +236,33 @@ describe('openRunStream', () => {
 });
 
 describe('getRun', () => {
+  it('preserves the final failure reason and required unanswered questions', async () => {
+    const failureReason = 'Required clarification timed out without an answer';
+    const decisionQuestions = [{ question: 'May historical SVG copies remain?', state: 'timed-out' }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'failed', repo: 'owner/repo', failureReason, decisionQuestions }) }));
+    expect(await getRun('old-run')).toMatchObject({ failureReason, decisionQuestions });
+  });
+
+  it.each([undefined, null, { round: -1 }, { round: 1, headSha: 'a'.repeat(40), blockers: [null] }])('omits malformed review diagnostics %j', async reviewDiagnostics => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'failed', repo: 'owner/repo', reviewDiagnostics }) }));
+    expect(await getRun('old-run')).not.toHaveProperty('reviewDiagnostics');
+  });
+
+  it('does not treat a recovered error or answered question as a failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'succeeded', repo: 'owner/repo', failureReason: 'Transient error', decisionQuestions: [{ question: 'Proceed?', state: 'answered' }] }) }));
+    const run = await getRun('old-run');
+    expect(run).not.toHaveProperty('failureReason');
+    expect(run).not.toHaveProperty('decisionQuestions');
+  });
+
+  it('bounds and validates failure metadata from the API', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'old-run', status: 'failed', repo: 'owner/repo', failureReason: {}, decisionQuestions: [null, {}, { question: 2, state: 'pending' }, { question: 'Answered', state: 'answered' }, ...Array.from({ length: 5 }, () => ({ question: 'x'.repeat(5000), state: 'timed-out' }))] }) }));
+    const run = await getRun('old-run');
+    expect(run).not.toHaveProperty('failureReason');
+    expect(run?.decisionQuestions).toHaveLength(3);
+    expect(run?.decisionQuestions?.[0]?.question).toHaveLength(4000);
+  });
+
   it.each(['completed', 'changes_remaining', 'awaiting_decision'] as const)('preserves validated %s feedback metadata', async state => {
     const feedbackOutcome = { state, headSha: 'a'.repeat(40), summary: 'Finding disposition.' };
     const status = state === 'awaiting_decision' ? 'running' : 'succeeded';

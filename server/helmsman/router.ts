@@ -5,6 +5,7 @@ import type { FirefoxBridgeStatus } from '../../src/data/firefoxBridge';
 import { SlackReviewError, type SlackReviewResult } from './slack/review-request';
 import type { SlackReviewRequestState } from '../../src/data/slackReview';
 import type { Db, RunRow } from './db';
+import { REVIEW_DIAGNOSTICS_ERROR, type ReviewDiagnosticsResult } from './feedback-diagnostics';
 import type { PrStatus } from '../github';
 import { isGithubRepo, type PrListResponse } from '../pr-lists';
 import type { TriageResponse } from '../triage-endpoint';
@@ -42,10 +43,12 @@ export interface RunSummary {
   reviewOutcome?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   reviewVerdict?: string;
   feedbackOutcome?: FeedbackOutcome;
+  failureReason?: string;
 }
 
 function toRunSummary(row: RunRow, db: Db): RunSummary {
   const feedbackOutcome = normalizeFeedbackOutcomeForStatus(db.latestFeedbackOutcome(row.id), row.status);
+  const failureReason = row.status === 'failed' ? db.latestRunError(row.id) : null;
   const reviewVerdict = row.status === 'succeeded' ? db.latestReviewVerdict(row.id) : null;
   const verdictLabel = reviewVerdict?.match(/^Verdict: (Approve|Request changes|Comment only) — \S/)?.[1];
   const reviewOutcome = verdictLabel === 'Approve' ? 'APPROVE'
@@ -62,10 +65,12 @@ function toRunSummary(row: RunRow, db: Db): RunSummary {
     costUsd: row.costUsd,
     ...(reviewOutcome && reviewVerdict ? { reviewOutcome, reviewVerdict } : {}),
     ...(feedbackOutcome ? { feedbackOutcome } : {}),
+    ...(failureReason ? { failureReason } : {}),
   };
 }
 
 export interface RouterDeps {
+  reviewDiagnostics?: (run: RunRow, headSha?: string) => Promise<ReviewDiagnosticsResult>;
   instructions?: ReturnType<typeof createInstructionService>;
   clarificationGate?: (runId: string) => boolean;
   outcomes?: OutcomeService;
@@ -334,7 +339,17 @@ async function routeApi(
     const runId = runMatch[1];
     if (!runId || !/^[a-z\d_-]{1,128}$/i.test(runId)) return { status: 400, json: { error: 'invalid run ID' } };
     const run = deps.db.getRun(runId);
-    return run ? { status: 200, json: toRunSummary(run, deps.db) } : { status: 404, json: { error: 'run not found' } };
+    if (!run) return { status: 404, json: { error: 'run not found' } };
+    const decisionQuestions = run.status === 'succeeded' ? [] : (deps.clarifications?.listForRun(runId) ?? [])
+      .filter(question => question?.required && ['pending', 'timed-out', 'cancelled'].includes(question.state))
+      .slice(0, 3)
+      .map(({ question, state }) => ({ question: question.slice(0, 4000), state }));
+    let diagnostics: ReviewDiagnosticsResult = {};
+    if ((run.status === 'failed' || run.status === 'stopped') && deps.reviewDiagnostics) {
+      try { diagnostics = await deps.reviewDiagnostics(run, deps.db.latestFeedbackOutcome(run.id)?.headSha); }
+      catch { diagnostics = { reviewDiagnosticsError: REVIEW_DIAGNOSTICS_ERROR }; }
+    }
+    return { status: 200, json: { ...toRunSummary(run, deps.db), ...(decisionQuestions.length ? { decisionQuestions } : {}), ...diagnostics } };
   }
   const resumeMatch = path.match(/^\/api\/agents\/([^/]+)\/resume$/);
   if (resumeMatch && method === 'POST') {
