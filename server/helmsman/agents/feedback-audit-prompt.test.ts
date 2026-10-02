@@ -42,6 +42,10 @@ describe('buildFeedbackAuditPrompt', () => {
     expect(prompt()).toContain('decision_required, required:true and a precise question');
     expect(prompt()).toContain('Do not convert required findings to optional');
     expect(prompt()).toContain('Optional suggestions may be deferred');
+    expect(prompt()).toContain('Apply the acceptance-property and materiality rules to existing source findings as well as fresh findings');
+    expect(prompt()).toContain('a prior review label alone is not proof');
+    expect(prompt()).toContain('required:false and a verified published explanation citing the property');
+    expect(prompt()).toContain('never relabel a genuine material requirement optional');
     expect(prompt()).toContain('Non-blocking notes do not belong in findings arrays');
     expect(prompt()).toContain('why a narrower fix is insufficient');
   });

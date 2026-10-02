@@ -22,6 +22,13 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain('NEVER push, open a PR');
     expect(prompt).toContain('current Helmsman-managed branch');
     expect(prompt).toContain('commit the finished changes on this branch');
+    expect(prompt).toContain('one-sentence observable acceptance property and explicit Non-goals');
+    expect(prompt).toContain('Non-goals cannot waive one or excuse a material regression');
+    expect(prompt).toContain('Before the first implementation commit, draft the acceptance property');
+    expect(prompt).toContain('permitted external PR metadata file');
+    expect(prompt).toContain('Compare the ticket\'s offered approaches');
+    expect(prompt).toContain('enforceable wall-clock deadline and memory limits');
+    expect(prompt).toContain('Test the observable acceptance property at the boundary');
     expect(prompt).toContain(JSON.stringify(reportPath));
     expect(prompt).toContain('{"title":"Concise PR title","body":"GitHub-flavored Markdown PR description"}');
     expect(prompt).toContain('only after independent reviewers approve the same final commit');
@@ -40,6 +47,9 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain('Duplicate payment when the request times out.');
     expect(prompt).toContain('Round: 2');
     expect(prompt).toContain('not dismiss a finding');
+    expect(prompt).toContain('Before each repair, triage the finding against the acceptance property');
+    expect(prompt).toContain('Batch the verified fixes available in the current review round');
+    expect(prompt).toContain('do not trigger extra re-reviews, pause or disable required gates');
     expect(prompt).toContain('independent reviewer reapproval');
     expect(prompt).toContain('Non-blocking observations and optional follow-ups are not required repairs');
   });
@@ -63,6 +73,13 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain('Non-blocking notes do not belong in findings arrays');
     expect(prompt).toContain('must not change an otherwise APPROVE verdict');
     expect(prompt).toContain('Pass these scope and calibration rules to every review sub-agent');
+    expect(prompt).toContain('verify that the author\'s scope covers every material requirement');
+    expect(prompt).toContain('missing prose alone is not a blocker');
+    expect(prompt).toContain('Share the property, Non-goals and relevant trust boundary');
+    expect(prompt).toContain('Existing regression tests do not establish that their invariant is required');
+    expect(prompt).toContain('Same-thread timers cannot interrupt synchronous parsing');
+    expect(prompt).toContain('worker heap limits may exclude native/external allocations');
+    expect(prompt).toContain('do not demand a redesign solely for preference');
     expect(prompt).toContain('focused sub-agents');
     expect(prompt).toContain('Do not modify code, commit, push');
     expect(prompt).toContain(`summary.length <= ${PRE_PR_REVIEW_SUMMARY_LIMIT}`);
@@ -114,6 +131,10 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).not.toContain('Try to falsify');
     expect(prompt).not.toContain('Use $review-agent');
     expect(prompt).not.toContain('Choose APPROVE');
+    expect(prompt).not.toContain('Before changing code');
+    expect(prompt).not.toContain('Before the first implementation commit');
+    expect(prompt).not.toContain('Batch the verified fixes');
+    expect(prompt).not.toContain('Establish the observable acceptance property');
   });
 
   it.each([
@@ -153,4 +174,15 @@ it.each(['codex', 'claude-code'] as const)('requires all pinned review skills fo
   expect(prompt).toContain('do not use or install global skill copies');
   expect(prompt).toContain('why a narrower fix is insufficient');
   expect(prompt).toContain('do not submit a GitHub approval, request-changes review, or comment yourself');
+});
+
+it.each(['codex', 'claude-code'] as const)('pins direct %s author scope before implementation without early publication', runtime => {
+  const prompt = buildPrompt(task('implement', { prePr: undefined }), runtime);
+  expect(prompt).toContain('Before the first implementation commit, draft the PR description');
+  expect(prompt).toContain('this draft does not authorize early publication or additional repository files');
+  expect(prompt).toContain('Cover every material acceptance criterion');
+  expect(prompt).toContain('do not infer safety from an extension or metadata alone');
+  expect(prompt).toContain('Test the observable acceptance property at the boundary');
+  expect(prompt.indexOf('draft the PR description')).toBeLessThan(prompt.indexOf('Explore, implement the change'));
+  expect(prompt).not.toContain('Batch the verified fixes');
 });

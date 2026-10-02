@@ -28,6 +28,12 @@ describe.each(['codex', 'claude-code'] as const)('%s PR feedback prompt', runtim
   it('keeps fixes scoped and reports response-only or incomplete outcomes honestly', () => {
     const prompt = buildPrompt(task, runtime);
     expect(prompt).toContain('Keep changes within the ticket scope');
+    expect(prompt).toContain('Read and preserve the acceptance property and Non-goals in the existing PR description');
+    expect(prompt).toContain('Before each repair, triage the finding against the acceptance property');
+    expect(prompt).toContain('propose tangential work as a separate follow-up instead of implementing it');
+    expect(prompt).toContain('Do not create external tickets without authorization');
+    expect(prompt).toContain('Batch the verified fixes available in the current review round');
+    expect(prompt).toContain('do not trigger extra re-reviews, pause or disable required gates');
     expect(prompt).toContain('Rare edge cases and optional improvements do not automatically require code changes');
     expect(prompt).toContain('Do not create an empty commit for a response-only outcome');
     expect(prompt).toContain('Leave disputed, deferred, and blocked threads unresolved');

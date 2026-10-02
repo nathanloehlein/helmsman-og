@@ -3,7 +3,7 @@ import { clarificationPrompt } from './clarification-prompt';
 import type { AgentTask } from './adapter';
 import { buildPrePrPrompt } from './pre-pr-prompt';
 import { agentAttribution, appendAgentByline } from '../agent-attribution';
-import { REVIEW_CALIBRATION } from './review-calibration';
+import { FEEDBACK_GUIDANCE, IMPLEMENTATION_GUIDANCE, REVIEW_CALIBRATION } from './review-calibration';
 
 const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: do not pause for confirmation; use the clarification protocol when a required human decision blocks safe progress.';
 
@@ -71,6 +71,9 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `## Task`,
       `- Address this review feedback: ${task.task}.`,
       `- Fix verified material blockers with the smallest sufficient change. Non-blocking observations and optional follow-ups are not required repairs; do not expand the ticket to address them unless explicitly requested. Explain any scope expansion necessary for an acceptance criterion or concrete consequential regression.`,
+      "- Read and preserve the acceptance property and Non-goals in the existing PR description when available; otherwise derive them from the original requirements and state them in your permitted response. Do not silently rewrite scope to dismiss feedback.",
+      ...IMPLEMENTATION_GUIDANCE,
+      ...FEEDBACK_GUIDANCE,
       ``,
       `## Steps`,
       attribution,
@@ -100,6 +103,8 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
     ``,
     `## Steps`,
     attribution,
+    "- Before the first implementation commit, draft the PR description with the acceptance property at the top and a Non-goals list. Carry that scope into the published description; this draft does not authorize early publication or additional repository files.",
+    ...IMPLEMENTATION_GUIDANCE,
     `- Explore, implement the change, run the tests, commit on a new branch.`,
     openPrStep,
     task.modelRouting === 'gocaas'
