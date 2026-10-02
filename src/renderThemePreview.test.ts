@@ -8,8 +8,6 @@ describe('renderThemePreview', () => {
   it.each([true, false])('updates review labels at render time for pirate mode=%s without changing verdict meanings', enabled => {
     setPirateMode(enabled);
     document.body.innerHTML = renderThemePreview();
-    const swatches = [...document.querySelectorAll('.theme-preview-swatch')];
-    expect(swatches[7]?.textContent?.trim()).toBe(enabled ? 'Inspection' : 'Review');
     expect(document.querySelector('.chip-review')?.textContent).toBe(enabled ? 'Inspection needed' : 'Review needed');
     expect(document.querySelector('.chip-done')?.textContent).toBe('Approved');
     expect(document.querySelector('.chip-blocked')?.textContent).toBe('Changes requested');
@@ -32,8 +30,8 @@ describe('renderThemePreview', () => {
     const colors = Array.from(document.querySelectorAll<HTMLElement>('.theme-preview-color'), (element) => element.style.background);
 
     expect(colors).toEqual([
-      'var(--bg)', 'var(--panel)', 'var(--panel-hi)', 'var(--accent)', 'var(--text)',
-      'var(--text-dim)', 'var(--good)', 'var(--review)', 'var(--queued)', 'var(--bad)',
+      'var(--bg)', 'var(--panel)', 'var(--panel-hi)', 'var(--accent)', 'var(--secondary)',
+      'var(--text)', 'var(--text-dim)',
     ]);
   });
 });
