@@ -29,9 +29,9 @@ PR metadata file and carry the scope into its final body. Requirements remain
 authoritative: Non-goals cannot waive material criteria or excuse material
 regressions introduced or newly exposed by the change. Scope stays stable across
 rounds unless verified requirement clarification or correction justifies a recorded
-change. Reviewers verify the property against the requirements. When prior metadata
-is unavailable, including in isolated stages, they reconstruct it from available
-requirements; missing prose alone is not a blocker.
+change. Reviewers verify the property against the requirements. The host carries bounded author context into later staged prompts. When prior
+metadata is unavailable, reviewers reconstruct scope from available requirements;
+missing prose alone is not a blocker.
 
 Authors compare the ticket's alternatives and prefer the smallest effective
 structural control, such as serving policy, response headers or sandboxing. They
@@ -57,9 +57,54 @@ not weaker acceptance criteria or skipped repairs. Authors batch verified repair
 within the current authorized round; Helmsman continues to own review scheduling,
 publication permissions and required gates.
 
-This is prompt guidance, not new runtime enforcement. It adds no invariant storage,
-metadata fields or acceptance gate, and does not change review scheduling or parser
-execution inside Helmsman. Existing run snapshots remain unchanged.
+## Shared context and focused verification
+
+Staged author metadata now includes an optional structured `brief`: `property`,
+`nonGoals`, `boundaries`, `verification`, and `decisions`. New author prompts request
+it; legacy metadata without a brief falls back to bounded PR-body prose. The host
+validates and bounds the brief, preserves the initial scope and latest author
+claims, and passes them through the existing `prePr.feedback` context. This does
+not change public plugin interfaces.
+
+A sidecar beside the PR metadata retains intermediate author decisions and check
+claims alongside compact completed review-round evidence, and restores that history
+on explicit continuation. Later rounds see that history; reviewers
+within the same round do not see peer reports. Full original report artifacts
+remain available. Truncated or missing history proves nothing was settled. Briefs,
+author dispositions and old verdicts are untrusted evidence, not requirements,
+security-owner approval or approval of the current revision. The final exact-revision
+review and publication gates remain binding.
+
+Instructions are selected by role: authors receive implementation guidance,
+reviewers receive evidence and verdict rules, and feedback authors receive repair
+and response guidance. Publication and security boundaries remain universal. A
+short hostile-parser containment rule applies to every relevant role; detailed
+containment guidance is added when task title, task text, Jira context or feedback
+suggest parsing is relevant. A missed keyword never waives the safety rule.
+
+Before reporting a defect, reviewers check the strongest counterargument: existing
+guards, supported caller constraints, configuration and actual runtime behavior.
+They report decisive evidence or discard the candidate. An inaccessible essential
+fact is a specific limitation, not an invented defect or automatic approval.
+
+Authors and reviewers plan the smallest checks establishing acceptance and affected
+behavior while honoring required repository checks. They record commands, revision,
+outcomes and limitations, and reuse only evidence still applicable to the current
+code and environment. Relevant changes, failures and invalidated assumptions require
+fresh verification. Settled findings reopen for changed code, requirements, evidence
+or a specific error in prior reasoning; explain the reason. Prior approval never
+replaces required review of the complete final diff.
+
+## Evaluating decisions
+
+The [prompt evaluation guide](prompt-evaluation.md) provides eight synthetic review
+cases drawn from the supplied retrospective. Export blinded exercises using the
+current Codex and Claude prompts, collect predictions through authorized GoCaaS, and
+score verdict accuracy, critical misses, overblocking and context/token budgets.
+Local fixture and scorer tests check the framework, not model quality. No live
+model run is required or performed by these commands. Compare saved baseline and
+changed-prompt predictions with the same actual model settings; inspect rationales
+as well as verdicts. Existing execution snapshots remain frozen.
 
 ## Checking parity
 

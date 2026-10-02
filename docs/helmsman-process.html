@@ -63,6 +63,16 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 </ul>
 <p class="toolbar">Defaults shown; live configuration may differ. <a href="helmsman-process.md">Mermaid source and full notes</a> · <a href="prompt-parity.md">Pre/post prompt parity</a> · Works offline · Print or save as PDF from your browser.</p>
 </header>
+<section aria-labelledby="prompt-context-heading">
+<h2 class="section-heading" id="prompt-context-heading">Acceptance context and review efficiency</h2>
+<div class="intake-sources">
+<article class="flow-step"><h3>Author metadata → bounded brief</h3><p>Capture the acceptance property, Non-goals, boundaries, verification evidence and finding decisions. Retain initial scope and latest author claims; legacy metadata falls back to bounded PR-body prose.</p></article>
+<article class="flow-step"><h3>Completed rounds → later stages</h3><p>A sidecar retains intermediate author decisions/check claims and completed-round evidence, restoring them on explicit continuation. Stages receive this context through the existing feedback field. Same-round peer reports stay hidden; full original artifacts remain available.</p></article>
+<article class="flow-step"><h3>Focused instructions → verified verdict</h3><p>Role-specific guidance requires counterevidence before findings and the smallest verification plan honoring required checks. Reuse still-applicable evidence; reopen decisions for changed evidence or erroneous reasoning. Parser safety has a universal baseline plus context-selected detail.</p></article>
+</div>
+<p class="limit-note">Briefs and historical verdicts are untrusted evidence, not requirements or owner approval. Missing or truncated history proves nothing was settled. The final exact-revision review and publication gates remain binding. See <a href="prompt-parity.md">prompt parity</a> and <a href="prompt-evaluation.md">prompt evaluations</a>; local scorer checks do not establish model quality.</p>
+</section>
+
 <section aria-labelledby="question-attention-heading">
 <h2 class="section-heading" id="question-attention-heading">Agent Questions attention</h2>
 <div class="intake-sources">
@@ -113,7 +123,7 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <div class="diagram review-diagram">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 450 1200 1520" role="img" aria-labelledby="diagram-title diagram-desc">
 <title id="diagram-title">Prepared coding workflow through exact-revision review, publication and follow-up reviews</title>
-<desc id="diagram-desc">After intake and frozen execution preparation, create a workspace, implement and commit. Review leads run sequentially against the pinned revision. Validate reports, correct an oversized summary once, and fix findings within the round limit. All selected reviewers must approve with no findings, and required Agent Questions must be answered. The host pushes the exact approved commit, verifies it and rechecks required answers before creating the PR. Jira and Copilot actions follow, with a queued Helmsman review. Failures preserve work; there is no automatic merge.</desc>
+<desc id="diagram-desc">After intake and frozen execution preparation, create a workspace, implement and commit. Retain the initial and latest acceptance brief and completed prior rounds; same-round peer reports remain hidden. Review leads run sequentially against the pinned revision. Validate reports, correct an oversized summary once, and fix findings within the round limit. All selected reviewers must approve with no findings, and required Agent Questions must be answered. The host pushes the exact approved commit, verifies it and rechecks required answers before creating the PR. Jira and Copilot actions follow, with a queued Helmsman review. Failures preserve work; there is no automatic merge.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#526d86"/></marker></defs>
 <path d="M600 575 V605" class="edge " marker-end="url(#arrow)"/>
 <path d="M600 700 V735" class="edge " marker-end="url(#arrow)"/>
@@ -147,14 +157,14 @@ footer { font-size: 13px; color: #587082; margin-top: 24px; }
 <g class="node normal"><rect x="375" y="605" width="450" height="95" rx="14"/>
 <text x="600.0" y="634" text-anchor="middle" class="node-title">2 · Writer implements</text>
 <text x="600.0" y="660" text-anchor="middle" class="node-detail">Run checks and commit locally</text>
-<text x="600.0" y="683" text-anchor="middle" class="node-detail">Write PR metadata; no publication yet</text>
+<text x="600.0" y="683" text-anchor="middle" class="node-detail">Metadata + brief; no publication yet</text>
 </g>
 <g class="node review"><rect x="375" y="735" width="450" height="145" rx="14"/>
 <text x="600.0" y="764" text-anchor="middle" class="node-title">3 · Review the pinned committed diff</text>
 <text x="600.0" y="790" text-anchor="middle" class="node-detail">Sequential leads: writer CLI → alternate</text>
 <text x="600.0" y="813" text-anchor="middle" class="node-detail">Fresh review workspace for each lead</text>
 <text x="600.0" y="836" text-anchor="middle" class="node-detail">Prompts request focused sub-agents</text>
-<text x="600.0" y="859" text-anchor="middle" class="node-detail">Independent scopes may run concurrently</text>
+<text x="600.0" y="859" text-anchor="middle" class="node-detail">Brief + prior rounds; same-round peers hidden</text>
 </g>
 <g class="node review"><rect x="375" y="900" width="450" height="95" rx="14"/>
 <text x="600.0" y="929" text-anchor="middle" class="node-title">4 · Validate each report</text>

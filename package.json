@@ -13,7 +13,9 @@
     "slack:firefox": "node scripts/slack-firefox.mjs",
     "cmux:costs": "node scripts/cmux-codex-cost.mjs",
     "cmux:costs:install": "node scripts/install-cmux-codex-cost.mjs",
-    "cmux:costs:uninstall": "node scripts/install-cmux-codex-cost.mjs --uninstall"
+    "cmux:costs:uninstall": "node scripts/install-cmux-codex-cost.mjs --uninstall",
+    "eval:prompts": "node --import tsx scripts/prompt-evaluation.mjs",
+    "test:prompt-evaluation": "node --import tsx --test scripts/prompt-evaluation-check.mjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

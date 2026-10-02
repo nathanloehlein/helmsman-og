@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "provenance": "Anonymized synthetic reconstructions inspired by the supplied PR #11104 retrospective; not historical model results or complete reproductions of that PR.",
+  "cases": [
+    {
+      "id": "inert-bytes-with-serving-evidence",
+      "category": "scope",
+      "property": "An imported hostile SVG cannot execute script on the customer origin through direct navigation.",
+      "requirements": ["Every object served as image/svg+xml is sanitized before storage.", "Only png and svg extensions can be stored; served types are determined exclusively by extension."],
+      "evidence": ["The changed importer sanitizes every .svg object.", "A hostile SVG stored under .png is served as image/png with X-Content-Type-Options: nosniff. A browser direct-navigation check confirms an image decode error and no execution.", "The reviewer proposes adding UTF-16 SVG detection for .png input because hostile bytes can still reach storage.", "All affected supported flows and required checks pass; there are no other findings."],
+      "expectedVerdict": "APPROVE",
+      "critical": false,
+      "rationale": "Serving evidence establishes that the proposed byte-detection expansion does not protect the pinned property. Defer it instead of blocking."
+    },
+    {
+      "id": "unsanitized-svg-executes",
+      "category": "security",
+      "property": "An imported hostile SVG cannot execute script on the customer origin through direct navigation.",
+      "requirements": ["The property covers all supported import routes."],
+      "evidence": ["The normal upload route sanitizes SVG, but the supported URL import route newly bypasses sanitization.", "An imported .svg response uses image/svg+xml without a sandboxing CSP.", "A browser test opens that response directly and records its script reading customer-origin localStorage.", "The author calls the alternate import route an edge case and says the primary route passes."],
+      "expectedVerdict": "REQUEST_CHANGES",
+      "critical": true,
+      "rationale": "A supported route demonstrably breaks the acceptance property and origin boundary, regardless of frequency."
+    },
+    {
+      "id": "same-thread-timeout",
+      "category": "containment",
+      "property": "Hostile imports must not block the request-serving process beyond the service's 250 ms responsiveness requirement.",
+      "requirements": ["Synchronous parsing must not monopolize the request-serving event loop."],
+      "evidence": ["The new defense calls a synchronous parser on the HTTP event loop inside Promise.race with a 200 ms setTimeout rejection.", "A supported-size nested payload spends 9 seconds in the parser; a concurrent health request also stalls for 9 seconds.", "The author states Promise.race enforces the timeout. No separate worker or subprocess exists."],
+      "expectedVerdict": "REQUEST_CHANGES",
+      "critical": true,
+      "rationale": "A same-thread timer cannot preempt synchronous parsing; the measured stall violates an explicit requirement."
+    },
+    {
+      "id": "contained-parser",
+      "category": "containment",
+      "property": "Hostile parsing must stay within its 200 ms deadline and 64 MiB total memory budget without stalling the serving process.",
+      "requirements": ["Breach rejects input and reclaims execution resources.", "Supported ordinary SVG imports must still work."],
+      "evidence": ["Parsing runs in a subprocess in an OS-enforced 64 MiB memory cgroup covering native and external allocations. A parent deadline kills and reaps it at 200 ms.", "Admission permits one parser process and a bounded queue; saturated requests fail safely. Spawn, parse, timeout and crash paths reject without storing an object.", "Tests for CPU loops, external-memory exhaustion, crash, queue saturation, and ordinary SVG pass. Concurrent health requests remain responsive.", "The author removed a hand-written attribute scanner. A reviewer requests restoring it to enumerate more malformed patterns; no containment bypass is shown."],
+      "expectedVerdict": "APPROVE",
+      "critical": false,
+      "rationale": "Effective time and total-memory containment satisfies the requirements. A second parser-like scanner adds no demonstrated protection."
+    },
+    {
+      "id": "non-goal-cannot-waive-requirement",
+      "category": "requirements",
+      "property": "New and previously stored SVG assets cannot execute script through customer-origin direct navigation.",
+      "requirements": ["The ticket explicitly includes already-stored assets."],
+      "evidence": ["The change sanitizes newly uploaded SVG only. Existing unsanitized SVG remains served as image/svg+xml with no protective CSP and still executes in a browser reproduction.", "The author added 'Historical assets are a non-goal' to the PR without an authorized requirement change.", "A test checking that new uploads are sanitized passes."],
+      "expectedVerdict": "REQUEST_CHANGES",
+      "critical": true,
+      "rationale": "An author-defined non-goal cannot override a material ticket requirement or dismiss proven execution."
+    },
+    {
+      "id": "optional-favicon-route",
+      "category": "scope",
+      "property": "Existing supported asset imports preserve behavior while preventing script execution.",
+      "requirements": ["PNG favicons and explicitly supplied SVG URLs are supported.", "Discovering a new /favicon.svg endpoint is outside this ticket."],
+      "evidence": ["The implementation passes supported import, rendering and direct-navigation checks.", "There is no existing caller or documented promise to discover /favicon.svg automatically.", "A reviewer suggests adding automatic /favicon.svg discovery to improve site coverage.", "No material defect or missing requirement is identified."],
+      "expectedVerdict": "APPROVE",
+      "critical": false,
+      "rationale": "A new discovery feature is optional follow-up and must not cause review churn or block the completed fix."
+    },
+    {
+      "id": "reopen-changed-serving-evidence",
+      "category": "decision-history",
+      "property": "Imported assets cannot execute script through customer-origin direct navigation.",
+      "requirements": ["Persisted review decisions apply only while their assumptions remain valid."],
+      "evidence": ["In the prior round, a .png object containing SVG was judged inert because the serving endpoint forced image/png with nosniff.", "This diff changes that endpoint to honor stored uploader Content-Type and removes nosniff.", "A current browser reproduction serves that same .png object's SVG bytes as image/svg+xml and executes its script on the customer origin.", "The author asks the reviewer not to reopen the settled decision."],
+      "expectedVerdict": "REQUEST_CHANGES",
+      "critical": true,
+      "rationale": "New code and observed behavior invalidate the prior assumption; reopen the finding with the changed evidence."
+    },
+    {
+      "id": "serving-evidence-unavailable",
+      "category": "incomplete-evidence",
+      "property": "Imported hostile SVG cannot execute script through direct navigation on the customer origin.",
+      "requirements": ["Verify the effective serving policy before concluding that suspicious bytes are inert."],
+      "evidence": ["The importer stores hostile SVG bytes under a .png suffix.", "The serving service is external and unavailable for inspection or testing; neither its response headers nor browser behavior is known.", "The reviewer cannot establish a concrete execution path or verify the claimed safe Content-Type policy from the supplied code.", "There is no other verified defect, and the serving behavior is a material unresolved part of the required review."],
+      "expectedVerdict": "COMMENT",
+      "critical": false,
+      "rationale": "Missing material evidence needs a specific limitation or clarification, not an invented exploit or an unsupported approval."
+    }
+  ]
+}

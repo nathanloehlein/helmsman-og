@@ -1,6 +1,6 @@
 import type { AgentTask } from './adapter';
 import type { FeedbackSnapshot } from '../pr-feedback-snapshot';
-import { REVIEW_CALIBRATION } from './review-calibration';
+import { reviewGuidance } from './review-calibration';
 
 export function buildFeedbackAuditPrompt(task: AgentTask, snapshotPath: string, reportPath: string,
   snapshot: Pick<FeedbackSnapshot, 'repo' | 'prNumber' | 'headSha' | 'baseSha' | 'fingerprint'>, runtime: 'codex' | 'claude-code'): string {
@@ -42,7 +42,7 @@ export function buildFeedbackAuditPrompt(task: AgentTask, snapshotPath: string, 
     '- Distinguish established defects from genuine owner decisions. Do not request a decision merely to avoid an evidenced in-scope repair. Do not convert required findings to optional to pass the gate.',
     '',
     '## Fresh code findings',
-    ...REVIEW_CALIBRATION,
+    ...reviewGuidance(task, task.task),
     '- Put fresh material code defects in the top-level findings array, separate from source dispositions. Do not hide a fresh blocker in summary or count a source response as proof that code is correct. A fresh material finding blocks completion. No finding quota; use [] if none.',
     '',
     '## Required audit report',

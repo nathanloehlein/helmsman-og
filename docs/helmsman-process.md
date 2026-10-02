@@ -68,13 +68,33 @@ Slack bounty and GitHub requested-review watchers poll every five minutes when e
 
 In Docker mode the host supervises, verifies artifacts, and publishes; only writer/reviewer stages enter containers. Agent containers reach approved provider operations and restricted GitHub reads through a capability-scoped gateway. They receive no long-lived host credentials, unrestricted internet access, or Docker socket. Trusted local execution retains its existing host permissions.
 
+## Acceptance context and review efficiency
+
+The author writes an acceptance brief in PR metadata: property, Non-goals,
+boundaries, verification evidence and finding decisions. The host bounds and retains
+the initial and latest brief; old metadata falls back to bounded PR-body prose.
+Later stages receive this context through the existing feedback field. A sidecar
+retains intermediate author decisions/check claims and completed prior review rounds
+and supports explicit continuation; peers in
+the same round stay independent. Full report artifacts remain available.
+
+Role-specific prompts require counterevidence before defects are reported and the
+smallest verification plan that honors required checks. Reuse only still-applicable
+evidence; reopen decisions when code, requirements, evidence or prior reasoning
+changes. Parser safety has a universal baseline and context-selected detail. Briefs
+and historical verdicts are untrusted evidence: neither owner decisions nor the
+final exact-revision gate can be bypassed. See [prompt parity](prompt-parity.md) and
+[prompt evaluations](prompt-evaluation.md); local evaluation checks do not claim
+model-quality results.
+
 ## New coding tasks and PR publication
 
 ```mermaid
 flowchart TD
     Prepared([Coding workflow prepared]) --> Context[Load task context and prepare workspace<br/>Managed branch; validate base, remote and clean checkout<br/>Writer CLI available in selected execution environment]
     Context --> Writer[Writer implements and runs checks<br/>Commits locally and writes PR metadata]
-    Writer --> Review[Review round: sequential CLI leads<br/>Writer CLI first, then installed alternate<br/>Each lead is prompted to delegate focused sub-agents]
+    Writer --> Brief[Retain initial and latest acceptance brief<br/>Include completed prior rounds; hide same-round peers]
+    Brief --> Review[Review round: sequential CLI leads<br/>Writer CLI first, then installed alternate<br/>Each lead is prompted to delegate focused sub-agents]
     Review --> Reports{Reports valid for the pinned SHA?}
     Reports -->|Otherwise valid; summary over 2,000 characters| Correction[One summary-only correction attempt per report<br/>Revalidate; preserve verdict and findings<br/>Keep original report]
     Correction -->|Valid| Gate{Every selected reviewer approves<br/>with no findings?}
@@ -83,7 +103,7 @@ flowchart TD
     Reports -->|Malformed, stale or changed worktree| Stop
     Gate -->|COMMENT / incomplete review| Stop
     Gate -->|REQUEST_CHANGES; rounds remain| Fix[Writer fixes deduplicated findings<br/>Runs checks and commits a new revision]
-    Fix --> Review
+    Fix --> Brief
     Gate -->|Findings at final round| Stop
     Gate -->|Yes| Answers{Required Agent Questions answered?}
     Answers -->|No / gate unavailable| Stop

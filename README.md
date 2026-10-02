@@ -22,9 +22,10 @@ remains a human action on GitHub.
 See the [workflow reference](docs/helmsman-process.md) or the
 [standalone flowcharts](docs/helmsman-process.html) for intake, execution, review,
 publication, and recovery. The HTML diagrams work offline and can be printed.
-[Prompt parity](docs/prompt-parity.md) documents the shared pre/post coder and reviewer
-instructions, acceptance-property and bounded-parsing guidance, and the comparison
-check in the post-rewrite checkout.
+[Prompt parity](docs/prompt-parity.md) documents shared role-specific instructions,
+retained acceptance briefs and review decisions, counterevidence checks, and focused
+verification. [Prompt evaluations](docs/prompt-evaluation.md) export blinded cases
+and score saved model predictions; the parity check runs from the post-rewrite checkout.
 
 ## Stack
 

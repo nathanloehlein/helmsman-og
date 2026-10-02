@@ -3,7 +3,7 @@ import { clarificationPrompt } from './clarification-prompt';
 import type { AgentTask } from './adapter';
 import { buildPrePrPrompt } from './pre-pr-prompt';
 import { agentAttribution, appendAgentByline } from '../agent-attribution';
-import { FEEDBACK_GUIDANCE, IMPLEMENTATION_GUIDANCE, REVIEW_CALIBRATION } from './review-calibration';
+import { FEEDBACK_GUIDANCE, implementationGuidance, reviewGuidance } from './review-calibration';
 
 const UNATTENDED = 'Working dir = the repo checkout. Fully unattended: do not pause for confirmation; use the clarification protocol when a required human decision blocks safe progress.';
 
@@ -31,7 +31,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `- Adversarial does not mean a finding quota or automatic rejection. Discard speculative or immaterial issues; retain the materiality threshold below. APPROVE is correct when the change withstands scrutiny.`,
       ``,
       `## Material findings only`,
-      ...REVIEW_CALIBRATION,
+      ...reviewGuidance(task, task.task),
       `- REQUEST_CHANGES requires an evidenced material problem introduced or newly exposed by this PR: an obvious logic flaw, a consequential structural or integration defect, or a missed explicit material acceptance criterion. Examples include modifying the wrong data, false success, a broken primary workflow, unsafe authorization, data loss, or an unusable primary interaction.`,
       `- For each candidate, establish the realistic supported trigger, the changed code path, the expected versus actual behavior, and the material consequence. Cite the actual requirement for acceptance-criteria claims. If criteria are inaccessible, say so briefly; do not invent them. A source trace can be sufficient proof; do not demand a reproduction when the failure is unambiguous.`,
       `- Omit style preferences, speculative hardening, hypothetical inputs unsupported by callers, refactor wishes, minor visual polish, and standalone missing tests/docs/logs/type annotations. Test gaps matter when they expose a demonstrated defect or miss an explicit material requirement. Accessibility, localization, telemetry, and performance can qualify when evidence establishes substantial user impact or a material acceptance failure; checklist compliance alone is insufficient.`,
@@ -72,7 +72,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `- Address this review feedback: ${task.task}.`,
       `- Fix verified material blockers with the smallest sufficient change. Non-blocking observations and optional follow-ups are not required repairs; do not expand the ticket to address them unless explicitly requested. Explain any scope expansion necessary for an acceptance criterion or concrete consequential regression.`,
       "- Read and preserve the acceptance property and Non-goals in the existing PR description when available; otherwise derive them from the original requirements and state them in your permitted response. Do not silently rewrite scope to dismiss feedback.",
-      ...IMPLEMENTATION_GUIDANCE,
+      ...implementationGuidance(task, task.task),
       ...FEEDBACK_GUIDANCE,
       ``,
       `## Steps`,
@@ -104,7 +104,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
     `## Steps`,
     attribution,
     "- Before the first implementation commit, draft the PR description with the acceptance property at the top and a Non-goals list. Carry that scope into the published description; this draft does not authorize early publication or additional repository files.",
-    ...IMPLEMENTATION_GUIDANCE,
+    ...implementationGuidance(task, task.task),
     `- Explore, implement the change, run the tests, commit on a new branch.`,
     openPrStep,
     task.modelRouting === 'gocaas'

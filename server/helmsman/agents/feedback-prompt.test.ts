@@ -29,9 +29,9 @@ describe.each(['codex', 'claude-code'] as const)('%s PR feedback prompt', runtim
     const prompt = buildPrompt(task, runtime);
     expect(prompt).toContain('Keep changes within the ticket scope');
     expect(prompt).toContain('Read and preserve the acceptance property and Non-goals in the existing PR description');
-    expect(prompt).toContain('Before each repair, triage the finding against the acceptance property');
-    expect(prompt).toContain('propose tangential work as a separate follow-up instead of implementing it');
-    expect(prompt).toContain('Do not create external tickets without authorization');
+    expect(prompt).toContain('Triage each repair against the property');
+    expect(prompt).toContain('propose tangents as follow-ups');
+    expect(prompt).toContain('do not create external tickets without authorization');
     expect(prompt).toContain('Batch the verified fixes available in the current review round');
     expect(prompt).toContain('do not trigger extra re-reviews, pause or disable required gates');
     expect(prompt).toContain('Rare edge cases and optional improvements do not automatically require code changes');
