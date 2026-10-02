@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { buildMeta } from './build-meta';
 
 const meta = buildMeta();
@@ -10,5 +10,6 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    exclude: [...configDefaults.exclude, '.agent-workspaces/**', '.helmsman-runs/**'],
   },
 });
