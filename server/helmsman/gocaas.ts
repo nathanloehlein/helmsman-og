@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { AgentTask } from './agents/adapter';
+import { chunkArgument } from './argv-chunks';
 
 export const GOCAAS_URL = 'https://caas-gocode-prod.caas-prod.prod.onkatana.net';
 type Env = Record<string, string | undefined>;
@@ -42,17 +43,7 @@ export function pinModelRouting(task: AgentTask, required: boolean): AgentTask {
 
 export function routeAgentCommand(task: AgentTask, provider: ModelProvider, command: { cmd: string; args: string[] }): { cmd: string; args: string[] } {
   if (task.modelRouting !== 'gocaas' || task.dockerExecution) return command;
-  // Long individual script arguments can be killed before Node starts on macOS.
-  const chunks: string[] = [];
-  let chunk = '';
-  for (const character of JSON.stringify(command.args)) {
-    if (chunk.length + character.length > 256) {
-      chunks.push(chunk);
-      chunk = '';
-    }
-    chunk += character;
-  }
-  if (chunk) chunks.push(chunk);
+  const chunks = chunkArgument(JSON.stringify(command.args));
   return { cmd: process.execPath, args: ['--import', import.meta.resolve('tsx'),
     fileURLToPath(new URL('./gocaas-cli.ts', import.meta.url)), provider, ...chunks] };
 }

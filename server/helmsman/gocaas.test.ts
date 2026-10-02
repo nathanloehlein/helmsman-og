@@ -8,6 +8,7 @@ import { prePrAdapter } from './agents/pre-pr';
 import { buildPrompt } from './agents/prompt';
 import { restoreRunAdapter } from './agents/restore';
 import { GOCAAS_URL, goCaasKey, goCaasLaunch, pinModelRouting, requiresGoCaas, routeAgentCommand } from './gocaas';
+import { joinArgumentChunks } from './argv-chunks';
 
 const mocks = vi.hoisted(() => ({ existsSync: vi.fn(), execFile: vi.fn() }));
 vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>(), existsSync: mocks.existsSync }));
@@ -81,12 +82,12 @@ describe('agent command routing', () => {
 
   it.each(providers)('preserves routing through pre-PR and restored $id adapters', adapter => {
     const prePr = prePrAdapter(adapter, '/runs').buildCommand(corporateTask);
-    expect(JSON.parse(prePr.args[3] ?? 'null')?.task?.modelRouting).toBe('gocaas');
+    expect(JSON.parse(joinArgumentChunks(prePr.args.slice(3)) || 'null')?.task?.modelRouting).toBe('gocaas');
     for (const id of [adapter.id, `pre-pr:${adapter.id}`]) {
       const restored = restoreRunAdapter({ adapter: id, taskJson: JSON.stringify(corporateTask) }, { runsDir: '/runs' });
       const command = restored.buildCommand(corporateTask);
       if (id.startsWith('pre-pr:')) {
-        expect(JSON.parse(command.args[3] ?? 'null')?.task?.modelRouting).toBe('gocaas');
+        expect(JSON.parse(joinArgumentChunks(command.args.slice(3)) || 'null')?.task?.modelRouting).toBe('gocaas');
       } else {
         expect(command.args[2]).toMatch(/\/gocaas-cli\.ts$/);
         expect(command.args[3]).toBe(adapter.id);

@@ -14,6 +14,7 @@ import type { HostRef, RunHost } from './run-host';
 import { parsePrMetadata, readPrePrReport } from './pre-pr-runtime';
 import { parsePrePrReview, PrePrSummaryTooLongError } from './pre-pr-workflow';
 import { createRunArtifactStore } from './artifacts';
+import { joinArgumentChunks } from './argv-chunks';
 
 const exec = promisify(execFile);
 
@@ -64,7 +65,11 @@ export async function inspectPrePrContinuation(row: RunRow, runsDir: string) {
   if (row.logOffset !== logSize) throw new ResumeError('The original log must be fully processed before continuing.');
   const spec = record(await readPrePrReport(specPath));
   const args = spec?.args;
-  const original = Array.isArray(args) && typeof args.at(-1) === 'string' ? record(JSON.parse(args.at(-1))) : null;
+  const scriptIndex = Array.isArray(args) ? args.findIndex(arg => typeof arg === 'string' && arg.endsWith('/pre-pr-cli.ts')) : -1;
+  const chunks = Array.isArray(args) && scriptIndex >= 0 ? args.slice(scriptIndex + 1) : null;
+  const original = chunks?.length && chunks.every((chunk): chunk is string => typeof chunk === 'string')
+    ? record(JSON.parse(joinArgumentChunks(chunks)))
+    : null;
   const writerId = row.adapter === 'pre-pr:codex' ? 'codex' : 'claude-code';
   const originalTask = record(original?.task);
   if (spec?.cwd !== row.worktreePath || original?.writerId !== writerId || original?.runsDir !== root

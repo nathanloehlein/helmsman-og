@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { normalizePrePrSettings, type PrePrSettings } from '../../../src/logic/prePrSettings';
 import type { AgentAdapter } from './adapter';
 import { prePrAdapter } from './pre-pr';
+import { chunkArgument } from '../argv-chunks';
 
 export function isFeedbackUpdateAdapter(id: string): boolean {
   return id === 'feedback:codex' || id === 'feedback:claude-code';
@@ -18,7 +19,7 @@ export function feedbackUpdateAdapter(writer: AgentAdapter, runsDir: string, set
       }
       return { cmd: process.execPath,
         args: ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../feedback-update-cli.ts', import.meta.url)),
-          JSON.stringify({ task, writerId: writer.id, runsDir, settings: normalizePrePrSettings(settings) })] };
+          ...chunkArgument(JSON.stringify({ task, writerId: writer.id, runsDir, settings: normalizePrePrSettings(settings) }))] };
     },
   };
 }
