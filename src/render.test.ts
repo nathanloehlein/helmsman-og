@@ -110,7 +110,10 @@ describe('renderDashboard', () => {
     expect(el.querySelector('.ui-customization-panel .theme-select')).toBe(select);
     expect(el.querySelector('.ui-customization-panel .theme-preview')).not.toBeNull();
     expect(el.querySelector('.helm-head .theme-select')).toBeNull();
-    expect(el.querySelector('label[for="ui-theme"]')?.textContent).toBe('Theme');
+    expect(el.querySelector('.ui-theme-control label[for="ui-theme"]')?.textContent).toBe('Theme');
+    expect(el.querySelector('.ui-theme-control #ui-theme-help')?.id).toBe(select?.getAttribute('aria-describedby'));
+    expect(el.querySelector('.ui-terminology-settings .terminology-reference')?.hasAttribute('open')).toBe(false);
+    expect(el.querySelector('.ui-theme-control')?.nextElementSibling?.classList.contains('theme-preview')).toBe(true);
     expect(Array.from(select!.options).map((o) => o.value)).toEqual(THEMES.map((t) => t.id));
     expect(select!.querySelector<HTMLOptionElement>('option[selected]')?.value).toBe('dracula');
   });

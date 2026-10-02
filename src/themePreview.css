@@ -1,22 +1,53 @@
-.theme-preview {
+.ui-customization-body {
+  display: grid;
+  gap: 24px;
+  padding: 20px;
+}
+
+.ui-customization-body p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ui-theme-control {
+  display: grid;
+  grid-template-columns: minmax(180px, 320px) minmax(0, 1fr);
+  gap: 8px 20px;
+  align-items: center;
+}
+
+.ui-theme-control label {
   grid-column: 1 / -1;
+  color: var(--text);
+  font: 12px var(--mono);
+}
+
+.ui-theme-control .theme-select {
+  width: 100%;
+  min-height: 36px;
+  min-width: 0;
+  appearance: none;
+  padding-right: 32px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 17px) center, calc(100% - 12px) center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.theme-preview {
   min-width: 0;
   display: grid;
   gap: 16px;
-  margin-top: 4px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
+  padding: 18px;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
 }
 
-.theme-preview-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 16px;
-}
-
-.theme-preview-heading h3 {
+.theme-preview-heading h3,
+.ui-terminology-copy h3 {
   margin: 0;
   font: 12px var(--mono);
   color: var(--text);
@@ -27,9 +58,23 @@
   font-size: 11px;
 }
 
+.theme-preview-samples {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 24px;
+}
+
+.theme-preview-palette-group,
+.theme-preview-status-group {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
 .theme-preview-palette {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 12px;
   margin: 0;
   padding: 0;
@@ -46,22 +91,54 @@
 
 .theme-preview-color {
   display: block;
-  height: 34px;
+  height: 36px;
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .theme-preview-statuses {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  align-content: start;
   gap: 10px;
   padding: 12px;
-  background: var(--panel-2);
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
-.theme-preview-statuses .theme-preview-caption {
-  margin-right: 4px;
+.ui-terminology-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.ui-terminology-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.ui-terminology-settings .terminology-reference {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+}
+
+.ui-terminology-settings .terminology-reference summary {
+  color: var(--secondary);
+}
+
+@media (max-width: 900px) {
+  .theme-preview-samples { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .ui-customization-body { padding: 16px; gap: 20px; }
+  .ui-theme-control { grid-template-columns: minmax(0, 1fr); }
+  .theme-preview { padding: 14px; }
+  .theme-preview-palette { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

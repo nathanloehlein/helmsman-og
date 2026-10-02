@@ -1280,12 +1280,19 @@ function configCustomizationPanel(themeId: string): string {
   return `      <section class="panel config-panel ui-customization-panel" aria-labelledby="ui-customization-title">
         <div class="panel-head"><span class="panel-title" id="ui-customization-title">UI customization</span></div>
         <div class="ui-customization-body">
-          <p id="pirate-mode-help">Toggle Pirate mode with the flag at the bottom-right of every page. The preference is saved in this browser; your content stays unchanged.</p>
-          <details class="terminology-reference"><summary>Terminology reference</summary><table><thead><tr><th scope="col">Plain</th><th scope="col">Pirate</th></tr></thead><tbody>${TERMINOLOGY_REFERENCE_KEYS.map(key => TERMINOLOGY[key]).map(({ plain, pirate }) => `<tr><td>${esc(plain)}</td><td>${esc(pirate)}</td></tr>`).join('')}</tbody></table></details>
-          <label for="ui-theme">Theme</label>
-          <select id="ui-theme" class="theme-select" aria-describedby="ui-theme-help">${themeOptions}</select>
-          <p id="ui-theme-help">Applies immediately and is saved in this browser.</p>
+          <div class="ui-theme-control">
+            <label for="ui-theme">Theme</label>
+            <select id="ui-theme" class="theme-select" aria-describedby="ui-theme-help">${themeOptions}</select>
+            <p id="ui-theme-help">Applies immediately. Saved in this browser.</p>
+          </div>
           ${renderThemePreview()}
+          <div class="ui-terminology-settings">
+            <div class="ui-terminology-copy">
+              <h3>Pirate mode</h3>
+              <p id="pirate-mode-help">Use the flag at the bottom-right to switch labels. Your content stays unchanged.</p>
+            </div>
+            <details class="terminology-reference"><summary>Terminology reference</summary><table><thead><tr><th scope="col">Plain</th><th scope="col">Pirate</th></tr></thead><tbody>${TERMINOLOGY_REFERENCE_KEYS.map(key => TERMINOLOGY[key]).map(({ plain, pirate }) => `<tr><td>${esc(plain)}</td><td>${esc(pirate)}</td></tr>`).join('')}</tbody></table></details>
+          </div>
         </div>
       </section>`;
 }
