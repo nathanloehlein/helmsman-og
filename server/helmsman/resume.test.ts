@@ -8,6 +8,9 @@ import { openDb, type Db, type RunRow } from './db';
 import { inspectPrePrContinuation, resumeFailedPrePrRun } from './resume';
 import type { LaunchSpec, RunHost } from './run-host';
 import { createRunArtifactStore } from './artifacts';
+import { joinArgumentChunks } from './argv-chunks';
+
+const SCRIPT_ARG = '/helmsman/pre-pr-cli.ts';
 
 const fixtures: { root: string; db: Db }[] = [];
 afterEach(() => { for (const { root, db } of fixtures.splice(0)) { db.close(); rmSync(root, { recursive: true, force: true }); } });
@@ -39,7 +42,7 @@ function fixture() {
   const specPath = join(runsDir, `${id}.json`);
   const logPath = join(runsDir, `${id}.log`);
   const exitPath = join(runsDir, `${id}.exit`);
-  const spec = { cwd, cmd: 'node', args: [JSON.stringify({ task, settings, writerId: 'codex', runsDir })] };
+  const spec = { cwd, cmd: 'node', args: [SCRIPT_ARG, JSON.stringify({ task, settings, writerId: 'codex', runsDir })] };
   writeFileSync(specPath, JSON.stringify(spec));
   writeFileSync(logPath, 'original log\n');
   writeFileSync(exitPath, '1');
@@ -79,7 +82,7 @@ describe('same-voyage pre-PR continuation', () => {
     expect(JSON.parse(result.taskJson ?? '{}')).toMatchObject(f.task);
     const launched = JSON.parse(readFileSync(f.row.specPath!, 'utf8')) as LaunchSpec;
     expect(launched.cwd).toBe(f.cwd);
-    expect(JSON.parse(launched.args.at(-1)!)).toMatchObject({ settings: f.settings, task: { prePrResume: { headSha: f.headSha, round: 2 } } });
+    expect(JSON.parse(joinArgumentChunks(launched.args.slice(3)))).toMatchObject({ settings: f.settings, task: { prePrResume: { headSha: f.headSha, round: 2 } } });
     expect(readFileSync(f.row.logPath!, 'utf8')).toBe('original log\nnew stage\n');
     const archive = readdirSync(f.deps.runsDir).find(name => name.startsWith(`${f.row.id}.attempt-1-`));
     expect(JSON.parse(readFileSync(join(f.deps.runsDir, archive!, 'spec.json'), 'utf8'))).toEqual(f.spec);
@@ -93,7 +96,7 @@ describe('same-voyage pre-PR continuation', () => {
     const previous = 'a'.repeat(64);
     const next = 'b'.repeat(64);
     const task = { ...f.task, workflowSnapshotId: previous };
-    const spec = { ...f.spec, args: [JSON.stringify({ task, settings: f.settings, writerId: 'codex', runsDir: f.deps.runsDir })] };
+    const spec = { ...f.spec, args: [SCRIPT_ARG, JSON.stringify({ task, settings: f.settings, writerId: 'codex', runsDir: f.deps.runsDir })] };
     writeFileSync(f.row.specPath!, JSON.stringify(spec));
     f.row.taskJson = JSON.stringify(task);
     f.db.updateRun(f.row.id, { taskJson: f.row.taskJson });
@@ -112,7 +115,7 @@ describe('same-voyage pre-PR continuation', () => {
     if (reason === 'changed-head') { writeFileSync(join(f.cwd, 'task.txt'), 'changed'); f.git('add', '.'); f.git('commit', '--quiet', '-m', 'changed'); }
     if (reason === 'malformed-report') writeFileSync(join(f.artifacts, 'review-2-claude-code.json'), JSON.stringify({ baseSha: f.baseSha, headSha: f.headSha, verdict: 'APPROVE', summary: 'x'.repeat(2064), findings: [{}] }));
     if (reason === 'missing-report') rmSync(join(f.artifacts, 'review-2-claude-code.json'));
-    if (reason === 'invalid-settings') writeFileSync(f.row.specPath!, JSON.stringify({ ...f.spec, args: [JSON.stringify({ task: f.task, writerId: 'codex', runsDir: f.deps.runsDir, settings: { ...f.settings, maxRounds: 99 } })] }));
+    if (reason === 'invalid-settings') writeFileSync(f.row.specPath!, JSON.stringify({ ...f.spec, args: [SCRIPT_ARG, JSON.stringify({ task: f.task, writerId: 'codex', runsDir: f.deps.runsDir, settings: { ...f.settings, maxRounds: 99 } })] }));
     if (reason === 'unconsumed-log') appendFileSync(f.row.logPath!, 'unread');
     if (reason === 'branch-changed') f.git('checkout', '--quiet', '-b', 'different');
     if (reason === 'running') f.row.status = 'running';

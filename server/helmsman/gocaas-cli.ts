@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { goCaasKey, goCaasLaunch, goCodePath } from './gocaas';
+import { joinArgumentChunks } from './argv-chunks';
 
 try {
   const provider = process.argv[2];
-  const args: unknown = JSON.parse(process.argv.slice(3).join('') || 'null');
+  const args: unknown = JSON.parse(joinArgumentChunks(process.argv.slice(3)) || 'null');
   if (!['codex', 'claude-code'].includes(provider ?? '') || !Array.isArray(args) || !args.every(arg => typeof arg === 'string')) {
     throw new Error('Invalid GoCaaS agent invocation');
   }

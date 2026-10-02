@@ -1,9 +1,10 @@
 import type { AgentEvent } from './agents/adapter';
 import { runPrePrRuntime } from './pre-pr-runtime';
+import { joinArgumentChunks } from './argv-chunks';
 
 const emit = (event: AgentEvent) => process.stdout.write(`${JSON.stringify({ __helmsmanPrePr: 1, ...event })}\n`);
 try {
-  const serialized = process.argv[2];
+  const serialized = joinArgumentChunks(process.argv.slice(2));
   if (!serialized) throw new Error('Pre-PR worker input is required');
   const input = JSON.parse(serialized) as Parameters<typeof runPrePrRuntime>[0];
   if (!input?.task || !['codex', 'claude-code'].includes(input.writerId) || typeof input.runsDir !== 'string') throw new Error('Invalid pre-PR worker input');

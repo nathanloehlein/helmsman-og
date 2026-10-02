@@ -5,6 +5,7 @@ import { claudeCodeAdapter } from './agents/claude-code';
 import { codexAdapter } from './agents/codex';
 import { assertClarificationReady, executePrePrStage, stageEventEmitter } from './pre-pr-runtime';
 import { sanitizeDockerGit } from './docker-stage';
+import { joinArgumentChunks } from './argv-chunks';
 
 const emit = (event: AgentEvent) => process.stdout.write(`${JSON.stringify({ __helmsmanPrePr: 1, ...event })}\n`);
 const abort = new AbortController();
@@ -14,7 +15,7 @@ process.once('SIGTERM', stop);
 process.once('SIGINT', stop);
 process.once('SIGHUP', stop);
 try {
-  const input = JSON.parse(process.argv[2] ?? 'null') as { task?: AgentTask; reviewerId?: string } | null;
+  const input = JSON.parse(joinArgumentChunks(process.argv.slice(2)) || 'null') as { task?: AgentTask; reviewerId?: string } | null;
   const task = input?.task;
   if (!task?.review || !task.dockerExecution || !['codex', 'claude-code'].includes(input?.reviewerId ?? '')) throw new Error('Invalid Docker review task');
   const adapter = input?.reviewerId === 'claude-code' ? claudeCodeAdapter : codexAdapter;

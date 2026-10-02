@@ -6,6 +6,7 @@ import { restoreRunAdapter } from './restore';
 import { retryIntent } from '../retry';
 import type { AgentTask } from './adapter';
 import type { RunRow } from '../db';
+import { joinArgumentChunks } from '../argv-chunks';
 
 const task: AgentTask = { ticketId: 'rerun', title: 'Update', repo: 'o/r', jiraBaseUrl: '', prNumber: 11104, prBranch: 'fix/svg', feedbackWorkflow: true, task: 'Address feedback' };
 
@@ -13,7 +14,7 @@ describe('feedback update adapter', () => {
   it('launches the completion workflow on the existing PR', () => {
     const command = feedbackUpdateAdapter(codexAdapter, '/runs').buildCommand(task);
     expect(command.args[2]).toContain('feedback-update-cli.ts');
-    expect(JSON.parse(command.args[3]!)).toMatchObject({ task, writerId: 'codex', runsDir: '/runs' });
+    expect(JSON.parse(joinArgumentChunks(command.args.slice(3)))).toMatchObject({ task, writerId: 'codex', runsDir: '/runs' });
   });
 
   it.each([{ ...task, review: true }, { ...task, feedbackWorkflow: undefined }, { ...task, prNumber: undefined }, { ...task, prBranch: undefined }])(

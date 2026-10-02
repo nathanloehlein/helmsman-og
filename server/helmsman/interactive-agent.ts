@@ -7,18 +7,13 @@ import { codexSettings } from './agent-attribution';
 import { validEffort, validModel } from '../../src/logic/agentOptions';
 import { goCaasKey, goCaasLaunch, goCodePath, type ModelProvider } from './gocaas';
 import { startInstructionEndpoint, InstructionDeliveryUnknownError } from './instruction-channel';
+import { chunkArgument } from './argv-chunks';
 
 export interface InteractiveAgentConfig { provider: ModelProvider; task: AgentTask; }
 interface Command { cmd: string; args: string[]; env?: NodeJS.ProcessEnv; }
 
 export function interactiveAgentCommand(task: AgentTask, provider: ModelProvider): Command {
-  const chunks: string[] = [];
-  let chunk = '';
-  for (const character of JSON.stringify({ provider, task })) {
-    if (chunk.length + character.length > 256) { chunks.push(chunk); chunk = ''; }
-    chunk += character;
-  }
-  if (chunk) chunks.push(chunk);
+  const chunks = chunkArgument(JSON.stringify({ provider, task }));
   return { cmd: process.execPath, args: ['--import', import.meta.resolve('tsx'),
     fileURLToPath(new URL('./interactive-agent-cli.ts', import.meta.url)), ...chunks] };
 }
