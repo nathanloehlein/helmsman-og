@@ -76,7 +76,7 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
       '## Focused sub-agents',
       '- Act as the review lead. Delegate independent applicable areas to focused sub-agents: logic/state/structure; acceptance criteria and relevant test coverage; changed UX and accessibility; external effects such as API consumers, persistence, flags, and side effects. Give each a bounded file/call-path scope, the exact base and head revisions, task context, adversarial remit, and these materiality rules. Skip unaffected areas and combine small scopes; do not have every agent review the entire diff.',
       ...(runtime === 'codex' ? [
-        '- Every Codex review sub-agent must explicitly use $review-agent. Read its installed SKILL.md and include `Use $review-agent` in every delegated task. Apply it to scoped defect review; keep them as read-only leaf reviewers that cannot edit, publish, or delegate further. The lead reconciles findings and writes the final report.',
+        '- Every review sub-agent must explicitly use $review-agent. Read its installed SKILL.md and include `Use $review-agent` in every delegated task. Apply it to scoped defect review; keep them as read-only leaf reviewers that cannot edit, publish, or delegate further. The lead reconciles findings and writes the final report.',
         '- If $review-agent or sub-agent tools are unavailable, report that limitation and use COMMENT rather than claiming the required review completed. Do not silently substitute another review skill.',
       ] : [
         '- Use this runtime’s sub-agent tools for focused reviews. Reviewers are read-only leaf workers: no further delegation, editing, or publishing. If delegation is unavailable, disclose the limitation and use COMMENT rather than claiming the required review completed.',
@@ -85,6 +85,7 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
       '- Reconcile results yourself, verify material claims, and deduplicate by root cause. Prefer focused existing checks that do not modify the worktree; do not install a dependency tree solely for a checklist. Never request changes solely because tests could not run. Missing essential evidence or an incomplete required review means COMMENT, not automatic approval.',
       '',
       '## Required report',
+      '- Put only blocking material defects in findings. Put any non-blocking observations in summary, labeled "Non-blocking"; APPROVE must use findings: []. Keep these notes brief and within the summary limit.',
       `- Write one valid JSON object to the external report path ${JSON.stringify(stage.reportPath)}. ${resumed ? 'Apart from the git-ignored dependency/build/cache outputs allowed above, this is the only file you may write.' : 'This is the only file you may write.'} Do not write review artifacts into the repository. Stdout is not the report.`,
       `- Schema: ${JSON.stringify({ baseSha: stage.baseSha, headSha: stage.headSha, verdict: 'APPROVE | REQUEST_CHANGES | COMMENT', summary: 'Concise review result and any material limitations', findings: [{ title: 'Material defect', body: 'Evidence, consequence, and reliable fix in GitHub-flavored Markdown', path: 'optional/repository-relative-file', line: 1 }] })}`,
       `- baseSha must be exactly ${stage.baseSha}; headSha must be exactly ${stage.headSha}. verdict must be exactly one of APPROVE, REQUEST_CHANGES, or COMMENT. findings must be an array; use [] when there are no material findings. Do not wrap the JSON in Markdown fences.`,
@@ -101,7 +102,9 @@ export function buildPrePrPrompt(task: AgentTask, runtime: 'codex' | 'claude-cod
     '',
     '## Work',
     '- Use the current Helmsman-managed branch and worktree. Read applicable repository instructions and task acceptance criteria, explore the affected code, implement the requested behavior, run relevant tests and build/type checks, and commit the finished changes on this branch.',
+    '- Helmsman owns the independent review stages. Do not request GitHub Copilot or other external AI reviewers.',
     ...(stage.stage === 'fix' ? [
+      '- Fix verified material blockers with the smallest sufficient change. Non-blocking observations and optional follow-ups are not required repairs; do not expand the ticket to address them unless explicitly requested. Explain any scope expansion necessary for an acceptance criterion or concrete consequential regression.',
       '- Address every verified material finding below and add focused regression coverage when appropriate. Preserve the original task requirements. Check related paths for the same root cause without broadening into unrelated cleanup.',
       '- Do not dismiss a finding, mark it resolved, or rewrite a review report as a substitute for independent reviewer reapproval. If evidence shows a finding is invalid or cannot be safely resolved, record the specific evidence or limitation in your result; the independent reviewers must recheck the final committed revision.',
       '',

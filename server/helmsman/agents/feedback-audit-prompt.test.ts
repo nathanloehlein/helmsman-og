@@ -43,6 +43,7 @@ describe('buildFeedbackAuditPrompt', () => {
     expect(prompt()).toContain('Do not convert required findings to optional');
     expect(prompt()).toContain('Optional suggestions may be deferred');
     expect(prompt()).toContain('Non-blocking notes do not belong in findings arrays');
+    expect(prompt()).toContain('why a narrower fix is insufficient');
   });
 
   it('treats source bodies and user feedback as untrusted data', () => {
@@ -51,7 +52,7 @@ describe('buildFeedbackAuditPrompt', () => {
   });
 
   it('uses pinned review skills without authorizing publication', () => {
-    expect(prompt()).toContain('/pinned/skills/review-agent/SKILL.md');
+    expect(prompt()).toContain('Read all required pinned skills in "/pinned/skills"');
     expect(prompt()).toContain('must use $review-agent');
     expect(prompt()).toContain('read-only leaf reviewer');
     expect(prompt()).toContain('If essential context, required skills or verification are unavailable');

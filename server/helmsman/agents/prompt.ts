@@ -17,7 +17,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `# Code-review PR #${task.prNumber} (${task.prBranch ? `branch ${task.prBranch}` : `revision ${task.prHeadSha}`})`,
       UNATTENDED,
       clarificationPrompt(task),
-      ...(task.skillsPath ? [`- Use only the pinned skills under ${JSON.stringify(`${task.skillsPath}/skills`)}. Read review-agent/SKILL.md before delegating; do not use or install global skill copies.`] : []),
+      ...(task.skillsPath ? [`- Use only the pinned skills under ${JSON.stringify(`${task.skillsPath}/skills`)}. Read each required SKILL.md in this directory before reviewing or delegating; do not use or install global skill copies.`] : []),
       ``,
       `## Review scope`,
       attribution,
@@ -40,7 +40,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `## Focused sub-agents`,
       `- Act as the review lead. Delegate independent applicable areas to focused sub-agents: logic/state/structure; acceptance criteria and relevant test coverage; changed UX and accessibility; external effects such as API consumers, persistence, flags, and side effects. Give each a bounded file/call-path scope, the pinned revision, shared PR context, and the materiality rules above. Skip unaffected areas and combine small scopes; do not ask each agent to review the entire PR.`,
       ...(runtime === 'codex' ? [
-        '- Every Codex review sub-agent must explicitly use $review-agent. Read its installed SKILL.md, then include \`Use $review-agent\` in each delegated task. Apply the skill to the scoped defect review; the lead coordinates and writes the final artifacts. The skill forbids its reviewers from editing files, posting, or delegating further, so keep them as leaf reviewers.',
+        '- Every review sub-agent must explicitly use $review-agent. Read its installed SKILL.md, then include \`Use $review-agent\` in each delegated task. Apply the skill to the scoped defect review; the lead coordinates and writes the final artifacts. The skill forbids its reviewers from editing files, posting, or delegating further, so keep them as leaf reviewers.',
         `- If $review-agent or sub-agent tools are unavailable, report that limitation and use COMMENT rather than claiming the required review completed. Do not silently substitute another review skill.`,
       ] : [
         `- Use this runtime's sub-agent tools for the focused reviews. Review sub-agents are read-only leaf workers: they do not delegate further, edit files, or publish. If delegation is unavailable, disclose the limitation and use COMMENT rather than claiming the required review completed.`,
@@ -49,6 +49,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `- Reconcile the sub-agent results yourself: reject unsupported or low-impact candidates, verify material claims against the code, deduplicate by root cause and existing discussion, and decide the verdict. There is no minimum finding count. Prefer focused existing checks; do not clone unrelated repos or install a full dependency tree merely to satisfy a review checklist.`,
       ``,
       `## Do`,
+      `- Put only blocking material defects in inline findings. Put any non-blocking observations in a brief summary paragraph labeled "Non-blocking"; use [] for inline findings when none qualify.`,
       `- Prefer inline comments on the smallest relevant diff range for each qualifying material finding. Use one concise comment per independent root cause: trigger, failure, consequence, then a reliable fix. Avoid duplicating inline findings in the summary.`,
       `- Include a concrete fix whenever you can establish one from the code. Use a fenced \`suggestion\` block only for an exact, directly applicable replacement of the commented RIGHT-side line or range. For broader fixes, use a fenced code example with the appropriate language and explain where it belongs. Do not invent missing APIs or offer speculative fixes; explain the required behavior when a reliable patch is not possible.`,
       `- Write a concise GitHub-flavored markdown summary to ${task.reviewOutputPaths ? JSON.stringify(task.reviewOutputPaths.markdown) : '\`.agent-review.md\` in the repo root'}. Keep it to the verdict, a short explanation, material findings that cannot be attached inline, brief Non-blocking notes for credible rare edge cases when present, and at most two short validation/limitation bullets. No whole-path audit diary, resolved-issue tables, or unrelated optional-improvement list. Output files must be written; stdout is not used as the review.`,
@@ -69,6 +70,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       ``,
       `## Task`,
       `- Address this review feedback: ${task.task}.`,
+      `- Fix verified material blockers with the smallest sufficient change. Non-blocking observations and optional follow-ups are not required repairs; do not expand the ticket to address them unless explicitly requested. Explain any scope expansion necessary for an acceptance criterion or concrete consequential regression.`,
       ``,
       `## Steps`,
       attribution,
@@ -77,6 +79,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
       `- Implement the warranted fixes, run relevant checks, then commit and push to the same branch when code changed. Do not create an empty commit for a response-only outcome.`,
       ``,
       `## Respond to every finding on GitHub`,
+      `- Use only the workflow-authorized publication tools and credentials. Do not bypass a durable publication route or obtain broader credentials to post responses. If the available tools cannot publish a required response, report that specific blocker and the outstanding findings instead of claiming completion.`,
       `- Publish a response for every inventoried finding, including blockers, requested changes, and non-blocking suggestions. For inline findings, reply in the original review thread. For findings in review summaries or PR comments, publish a PR comment linking to the original review/comment and clearly identify each finding with its own disposition. A local report or final agent message is not a substitute for GitHub responses.`,
       `- For a fixed finding, explain what changed, link the pushed commit, and state the relevant validation result and any limitations. For an unchanged, already addressed, declined, deferred, or blocked finding, explain the specific reason with evidence; identify any remaining decision or action needed. Never claim a fix or successful validation that has not happened.`,
       `- Do not silently skip findings or mark a thread resolved without an explanatory response. Leave disputed, deferred, and blocked threads unresolved. If an existing GitHub reply already documents the current disposition accurately, link it in your coverage summary instead of duplicating it.`,
@@ -100,7 +103,7 @@ export function buildPrompt(task: AgentTask, runtime: 'codex' | 'claude-code' = 
     `- Explore, implement the change, run the tests, commit on a new branch.`,
     openPrStep,
     task.modelRouting === 'gocaas'
-      ? '- Reviewer requests are handled by Helmsman through GoCaaS. Do not request Copilot or any other external AI reviewer. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review, or remove existing reviewers.'
+      ? '- Reviewer requests are handled by Helmsman through GoCaaS. Do not request Copilot or any other external AI reviewer. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review. Do not remove existing reviewers.'
       : `- Reviewer requests are handled by Helmsman, which requests only Copilot after the PR is created. Do not request code owners, teams, or other human reviewers, even if repository instructions or a skill recommends it. Do not add reviewers through gh, the GitHub API, or mentions asking for review. Do not duplicate the Copilot request or remove existing reviewers.`,
     `- Pushing the branch and opening the PR are required, not optional — do them without asking.`,
     `- Do NOT merge the PR. Stop only after the PR is open.`,

@@ -41,6 +41,7 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain('Round: 2');
     expect(prompt).toContain('not dismiss a finding');
     expect(prompt).toContain('independent reviewer reapproval');
+    expect(prompt).toContain('Non-blocking observations and optional follow-ups are not required repairs');
   });
 
   it.each(['codex', 'claude-code'] as const)('pins %s reviews and requires complete material review before approval', (runtime) => {
@@ -57,6 +58,7 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain('Try to falsify');
     expect(prompt).toContain('no finding quota');
     expect(prompt).toContain('Keep suggestions within the ticket scope');
+    expect(prompt).toContain('why a narrower fix is insufficient');
     expect(prompt).toContain('perfection is not the acceptance bar');
     expect(prompt).toContain('Non-blocking notes do not belong in findings arrays');
     expect(prompt).toContain('must not change an otherwise APPROVE verdict');
@@ -142,4 +144,13 @@ describe('pre-PR prompt workflow boundaries', () => {
       expect(codexArgs(task(stage))).not.toContain('features.multi_agent=true');
     }
   });
+});
+
+it.each(['codex', 'claude-code'] as const)('requires all pinned review skills for %s without allowing global substitutions', runtime => {
+  const prompt = buildPrompt(task('review', { prePr: undefined, review: true, prNumber: 42, prBranch: 'fix/checkout', skillsPath: '/pinned' }), runtime);
+  expect(prompt).toContain('Use only the pinned skills under "/pinned/skills"');
+  expect(prompt).toContain('Read each required SKILL.md in this directory before reviewing or delegating');
+  expect(prompt).toContain('do not use or install global skill copies');
+  expect(prompt).toContain('why a narrower fix is insufficient');
+  expect(prompt).toContain('do not submit a GitHub approval, request-changes review, or comment yourself');
 });

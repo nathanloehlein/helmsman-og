@@ -34,6 +34,8 @@ describe.each(['codex', 'claude-code'] as const)('%s PR feedback prompt', runtim
     expect(prompt).toContain('link it in your coverage summary instead of duplicating it');
     expect(prompt).toContain('Verify that the responses were published on the correct PR');
     expect(prompt).toContain('which findings still lack a response');
+    expect(prompt).toContain('Do not bypass a durable publication route or obtain broader credentials');
+    expect(prompt).toContain('Non-blocking observations and optional follow-ups are not required repairs');
     expect(prompt).toContain('do NOT open a new pull request and do NOT merge');
     expect(prompt).toContain('End every PR description, review summary, inline comment, and comment/reply');
   });
