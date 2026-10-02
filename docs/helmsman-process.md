@@ -1,6 +1,6 @@
 # Helmsman voyage flow
 
-Open [helmsman-process.html](helmsman-process.html) for the standalone diagrams. They work offline and can be printed or saved as a PDF from a browser.
+Open [helmsman-process.html](helmsman-process.html) for the standalone diagrams. They work offline and can be printed or saved as a PDF from a browser. See [prompt parity](prompt-parity.md) for shared pre/post coder and reviewer instructions and the local comparison check. Existing run snapshots remain frozen.
 
 This describes Helmsman **0.3.0**: manual and automated intake, frozen execution settings, isolated agent stages, Agent Questions, durable evidence and recovery, and Costs & Outcomes. New coding tasks use the exact-revision PR review gate. Existing-PR reviews and feedback reruns follow separate paths.
 

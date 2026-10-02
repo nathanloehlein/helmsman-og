@@ -22,6 +22,8 @@ remains a human action on GitHub.
 See the [workflow reference](docs/helmsman-process.md) or the
 [standalone flowcharts](docs/helmsman-process.html) for intake, execution, review,
 publication, and recovery. The HTML diagrams work offline and can be printed.
+[Prompt parity](docs/prompt-parity.md) documents the shared pre/post coder and reviewer
+instructions and the comparison check in the post-rewrite checkout.
 
 ## Stack
 
@@ -227,8 +229,8 @@ Codex and Claude Code. Authenticate both when using two reviewers: an installed 
 broken alternate reviewer blocks publication rather than silently reducing the gate.
 
 Reviewers inspect the same pinned commit in separate detached worktrees and focus
-on material logic, structure, acceptance criteria, UX, and external effects. Codex
-reviewers require the installed `$review-agent` skill; each CLI delegates relevant
+on material logic, structure, acceptance criteria, UX, and external effects. Codex and
+Claude reviewers require the pinned `review-agent` skill; each CLI delegates relevant
 areas to focused leaf agents. Reviews default to low effort and use medium for
 larger changes across areas. The author fixes verified findings, then **all**
 reviewers review the new commit again. By default there are at most three review
@@ -903,10 +905,10 @@ case blocks only with evidence of a material requirement failure or serious cust
 harm. Reviewers omit standalone test/doc/style suggestions and speculative hardening.
 A lead passes these rules to delegates covering
 applicable logic, acceptance/tests, UX, and external-effects scopes, then verifies
-and deduplicates findings. Codex review runs enable multi-agent support and require
-an installed `$review-agent` skill for each read-only leaf reviewer. The lead alone
-writes the output files. Missing required skills or delegation tools produce a
-COMMENT limitation. Low effort remains the default for scoped workers; high effort
+and deduplicates findings. Codex and Claude review runs pin the required `review-agent`
+skill. Codex uses skill-based leaf reviewers; Claude uses native subagents. The lead alone
+writes the output files. Missing required skills fail preparation; a reviewer that
+cannot access a pinned skill or delegation tools reports a COMMENT limitation. Low effort remains the default for scoped workers; high effort
 is reserved for serious architecture changes. See the [five-review calibration
 audit](docs/reviewer-calibration-2026-09-17.md) for examples and rationale.
 
