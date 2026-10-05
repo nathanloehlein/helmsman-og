@@ -85,9 +85,10 @@ function fakeCodex(mode = 'success') {
 function run(task: AgentTask, provider: 'codex' | 'claude-code', command: { cmd: string; args: string[] }, timeout?: number) {
   const abort = new AbortController(); agents.push(abort);
   const output: string[] = [];
-  const promise = runInteractiveAgent({ task, provider }, { command, output: line => output.push(line), diagnostic: () => {}, signal: abort.signal, requestTimeoutMs: timeout });
+  const options = { command, output: (line: string) => output.push(line), diagnostic: () => {}, signal: abort.signal, requestTimeoutMs: timeout };
+  const promise = runInteractiveAgent({ task, provider }, options);
   void promise.catch(() => {});
-  return { promise, output, abort };
+  return { promise, output, abort, setRequestTimeout: (milliseconds: number) => { options.requestTimeoutMs = milliseconds; } };
 }
 
 describe('interactive agent provider transport', () => {
@@ -129,8 +130,9 @@ describe('interactive agent provider transport', () => {
 
   it.each(['disconnect', 'timeout'])('records uncertain delivery after %s', async mode => {
     const input = await task();
-    const agent = run(input, 'codex', fakeCodex(mode), 80);
+    const agent = run(input, 'codex', fakeCodex(mode));
     const endpoint = await target(input.instructionsDir!);
+    agent.setRequestTimeout(80);
     expect((await sendInstruction(input.instructionsDir!, { id: randomUUID(), targetId: endpoint.id, text: 'Uncertain instruction' })).status).toBe('unknown');
     if (mode === 'disconnect') await expect(agent.promise).rejects.toThrow('Agent exited');
     else await agent.promise;
