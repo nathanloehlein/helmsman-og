@@ -30,7 +30,7 @@ describe('renderThemePreview', () => {
     const colors = Array.from(document.querySelectorAll<HTMLElement>('.theme-preview-color'), (element) => element.style.background);
 
     expect(colors).toEqual([
-      'var(--bg)', 'var(--panel)', 'var(--panel-hi)', 'var(--accent)', 'var(--secondary)',
+      'var(--bg)', 'var(--panel)', 'var(--panel-hi)', 'var(--control-bg)', 'var(--accent)', 'var(--secondary)',
       'var(--text)', 'var(--text-dim)',
     ]);
   });

@@ -8,7 +8,7 @@
 .todo-editor .panel-head, .todo-backlog .panel-head { display: flex; justify-content: space-between; gap: 12px; }
 .todo-editor fieldset { border: 0; margin: 0; min-width: 0; padding: 16px; display: grid; gap: 14px; }
 .todo-field { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
-.todo-field input, .todo-field textarea, .todo-field select { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); color: var(--text); font: inherit; line-height: 1.5; }
+.todo-field input, .todo-field textarea, .todo-field select { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--control-border); border-radius: var(--radius); padding: 8px 10px; background-color: var(--control-bg); color: var(--text); font: inherit; line-height: 1.5; }
 .todo-field textarea { resize: vertical; }
 .todo-field-hint, .todo-missing { color: var(--text-dim); font-size: 11px; line-height: 1.6; }
 .todo-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

@@ -7,7 +7,7 @@
 .feedback-form { display: grid; gap: 16px; }
 .feedback-form h2, .feedback-form p { margin: 0; }
 .feedback-form label { display: grid; gap: 6px; }
-.feedback-form input, .feedback-form textarea { box-sizing: border-box; width: 100%; font: inherit; padding: 10px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
+.feedback-form input, .feedback-form textarea { box-sizing: border-box; width: 100%; font: inherit; padding: 10px; color: var(--text); background-color: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius); }
 .feedback-form textarea { resize: vertical; }
 .feedback-form a { color: var(--accent); overflow-wrap: anywhere; }
 .feedback-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }

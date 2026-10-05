@@ -17,7 +17,7 @@
 .clarification-empty p { color: var(--text-dim); }
 .clarification-page label { display: grid; gap: 6px; }
 .clarification-page label:has(input[type="checkbox"]) { display: flex; align-items: center; }
-.clarification-page input:not([type="checkbox"]), .clarification-page textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.clarification-page input:not([type="checkbox"]), .clarification-page textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background-color: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius); padding: 10px; }
 .clarification-page textarea { resize: vertical; min-height: 90px; }
 .clarification-page :is(input, textarea, button, summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .clarification-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

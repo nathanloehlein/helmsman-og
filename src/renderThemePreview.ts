@@ -5,6 +5,7 @@ const SWATCHES = [
   ['Background', '--bg'],
   ['Panel', '--panel'],
   ['Raised', '--panel-hi'],
+  ['Input', '--control-bg'],
   ['Accent', '--accent'],
   ['Companion', '--secondary'],
   ['Text', '--text'],

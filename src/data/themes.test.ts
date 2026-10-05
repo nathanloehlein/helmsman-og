@@ -119,6 +119,27 @@ describe('THEMES data', () => {
   );
 
   it.each(themePalettes)(
+    '$id separates editable fields while keeping their text and boundaries legible',
+    theme => {
+      const background = theme.vars['--control-bg'] ?? '';
+      const border = theme.vars['--control-border'] ?? '';
+      expect(background).toMatch(/^#[a-f\d]{6}$/i);
+      expect(border).toMatch(/^#[a-f\d]{6}$/i);
+      for (const foreground of ['--text', '--text-dim', '--text-faint']) {
+        expect(contrast(theme.vars[foreground] ?? '', background), `${theme.id}: ${foreground} in input`).toBeGreaterThanOrEqual(4.5);
+      }
+      for (const surface of ['--panel', '--panel-2']) {
+        expect(contrast(background, theme.vars[surface] ?? ''), `${theme.id}: input fill on ${surface}`).toBeGreaterThanOrEqual(1.1);
+      }
+      for (const surface of ['--panel', '--panel-2', '--panel-hi']) {
+        expect(contrast(border, theme.vars[surface] ?? ''), `${theme.id}: input boundary on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
+      expect(contrast(border, background), `${theme.id}: input boundary against fill`).toBeGreaterThanOrEqual(3);
+      expect(contrast(theme.vars['--accent'] ?? '', background), `${theme.id}: input focus against fill`).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  it.each(themePalettes)(
     '$id keeps labels readable on filled actions and success statuses',
     theme => {
       for (const [foreground, background] of [['--on-accent', '--accent'], ['--on-good', '--good']] as const) {

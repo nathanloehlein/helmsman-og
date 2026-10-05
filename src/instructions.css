@@ -4,7 +4,7 @@
 .instruction-form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .instruction-form label { display: flex; flex-direction: column; gap: 4px; }
 .instruction-input { flex: 1 1 240px; }
-.instruction-form textarea, .instruction-form select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; font: inherit; }
+.instruction-form textarea, .instruction-form select { background-color: var(--control-bg); color: var(--text); border: 1px solid var(--control-border); border-radius: var(--radius); padding: 6px 8px; font: inherit; }
 .instruction-form textarea { width: 100%; resize: vertical; max-height: 160px; }
 .instruction-form select { max-width: 280px; }
 .instruction-help { color: var(--text-dim); margin: 6px 0 0; }

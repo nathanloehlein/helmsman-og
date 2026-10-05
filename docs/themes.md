@@ -26,4 +26,6 @@ The named editor palettes are UI adaptations, not exact reproductions: small tex
 
 Theme IDs remain stable so saved preferences still work. The loading screen and application share the same palette catalog. Amber uses the CSS root defaults; switching to it clears the other theme overrides.
 
+Editable fields use a dedicated `--control-bg` surface and opaque `--control-border`, including fields inside raised PR panels and feature forms. Dark themes use recessed fills; light themes use shaded fills. Text and placeholders retain at least 4.5:1 contrast, and input boundaries retain at least 3:1 against both the fill and surrounding panel surfaces. Focus keeps the theme accent. The Input swatch in Appearance previews the field surface.
+
 `src/data/themes.test.ts` checks text roles at 4.5:1 on the palette surfaces, filled-label contrast, control outlines at 3:1, and page/panel separation. These token checks complement browser checks; they do not certify every composite UI state.

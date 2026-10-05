@@ -43,6 +43,8 @@
   --panel: var(--face);
   --panel-2: var(--face-2);
   --panel-hi: var(--face-hi);
+  --control-bg: #08080b;
+  --control-border: #968670;
   --line: rgba(196, 198, 197, 0.32);
   --line-strong: rgba(196, 198, 197, 0.72);
   --line-faint: rgba(196, 198, 197, 0.18);
@@ -490,7 +492,7 @@ button:hover { background: var(--accent-plate); color: var(--on-accent); border-
 .newrun-fields { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; align-items: start; }
 input, textarea, select {
   font-family: var(--mono); font-size: 12px; color: var(--text);
-  background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background-color: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius);
   padding: 6px 9px;
 }
 input::placeholder, textarea::placeholder { color: var(--text-faint); opacity: 1; }

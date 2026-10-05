@@ -4,7 +4,7 @@
 .campaign-panel { padding: 1rem; margin-bottom: 1rem; }
 .campaign-page fieldset { border: 0; padding: 0; display: grid; gap: .8rem; min-width: 0; }
 .campaign-page label { display: grid; gap: .3rem; }
-.campaign-page input, .campaign-page select, .campaign-page textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: .55rem; }
+.campaign-page input, .campaign-page select, .campaign-page textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background-color: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius); padding: .55rem; }
 .campaign-page button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: .45rem .65rem; max-width: 100%; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
 .campaign-page button:hover, .campaign-page button[aria-pressed="true"] { border-color: var(--accent); }
 .campaign-page button:disabled { opacity: .5; cursor: default; }
