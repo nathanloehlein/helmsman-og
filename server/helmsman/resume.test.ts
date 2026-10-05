@@ -8,7 +8,7 @@ import { openDb, type Db, type RunRow } from './db';
 import { inspectPrePrContinuation, resumeFailedPrePrRun } from './resume';
 import type { LaunchSpec, RunHost } from './run-host';
 import { createRunArtifactStore } from './artifacts';
-import { joinArgumentChunks } from './argv-chunks';
+import { chunkArgument, joinArgumentChunks } from './argv-chunks';
 
 const SCRIPT_ARG = '/helmsman/pre-pr-cli.ts';
 
@@ -65,6 +65,21 @@ function fixture() {
 }
 
 describe('same-voyage pre-PR continuation', () => {
+  it.each([
+    { script: SCRIPT_ARG, chunked: false },
+    { script: SCRIPT_ARG, chunked: true },
+    { script: 'C:\\helmsman\\pre-pr-cli.ts', chunked: false },
+    { script: 'C:\\helmsman\\pre-pr-cli.ts', chunked: true },
+  ])('restores worker input from $script with chunked=$chunked', async ({ script, chunked }) => {
+    const f = fixture();
+    const input = JSON.stringify({ task: f.task, settings: f.settings, writerId: 'codex', runsDir: f.deps.runsDir });
+    const args = ['--import', 'tsx', script, ...(chunked ? chunkArgument(input) : [input])];
+    writeFileSync(f.row.specPath!, JSON.stringify({ ...f.spec, args }));
+    const checkpoint = await inspectPrePrContinuation(f.row, f.deps.runsDir);
+    expect(checkpoint.task).toMatchObject(f.task);
+    expect(checkpoint.settings).toEqual(f.settings);
+  });
+
   it('validates a saved round and allows only the known summary-length defect', async () => {
     const f = fixture();
     const checkpoint = await inspectPrePrContinuation(f.row, f.deps.runsDir);

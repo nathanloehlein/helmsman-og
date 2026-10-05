@@ -38,6 +38,7 @@ describe('recent PR voyages local refresh', () => {
       if (url.pathname === '/api/dashboard') return json({ snapshot, degraded: [], repos: ['org/a'], selectedRepo: 'org/a', jiraBaseUrl: null });
       if (url.pathname === '/api/agents') return json({ runs, autoClaim: [], caps: { maxAttempts: 1, maxCostUsd: null } });
       if (url.pathname === '/api/config') return json({ config: {}, overridden: [] });
+      if (url.pathname === '/api/clarifications') return json({ clarifications: [] });
       if (url.pathname === '/api/slack') return json({ health: { enabled: false, status: 'disabled', channelName: '', intervalMs: 300_000, lastSuccessAt: null, error: null }, notifications: [] });
       if (url.pathname === '/api/pr/open' || url.pathname === '/api/pr/review-requests') return json({ prs: [], degraded: false, truncated: false });
       if (url.pathname === '/api/pr') return json({ number: 42, repo: 'org/a', state: 'open', draft: false, merged: false, headRefName: 'topic', reviewDecision: 'REVIEW_REQUIRED', comments: 0, checks: { passed: 0, failed: 0, pending: 0 }, url: 'https://github.com/org/a/pull/42' });
@@ -60,7 +61,7 @@ describe('recent PR voyages local refresh', () => {
     runs[0]!.reviewOutcome = 'APPROVE';
     runs.push({ ...runs[0]!, id: 'review-b', startedAt: '2026-09-17T20:30:00Z', reviewOutcome: 'COMMENT' });
     await vi.advanceTimersByTimeAsync(LOCAL_POLL_MS);
-    expect(requests.slice(initialCalls).sort()).toEqual(['/api/agents', '/api/context', '/api/slack', '/api/slack/review-requests']);
+    expect(requests.slice(initialCalls).filter(path => path !== '/api/clarifications').sort()).toEqual(['/api/agents', '/api/context', '/api/slack', '/api/slack/review-requests']);
     expect(requests.filter(path => path === '/api/agents')).toHaveLength(initialAgentsCalls + 1);
     expect(root.querySelectorAll('.pr-recent-runs .recent-run')).toHaveLength(2);
     expect(root.querySelector('.pr-recent-runs [data-runid="review-a"] .voyage-result')?.getAttribute('aria-label')).toBe('Inspection recommendation: Approve');

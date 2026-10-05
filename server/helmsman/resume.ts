@@ -65,7 +65,7 @@ export async function inspectPrePrContinuation(row: RunRow, runsDir: string) {
   if (row.logOffset !== logSize) throw new ResumeError('The original log must be fully processed before continuing.');
   const spec = record(await readPrePrReport(specPath));
   const args = spec?.args;
-  const scriptIndex = Array.isArray(args) ? args.findIndex(arg => typeof arg === 'string' && arg.endsWith('/pre-pr-cli.ts')) : -1;
+  const scriptIndex = Array.isArray(args) ? args.findIndex(arg => typeof arg === 'string' && /(?:^|[\\/])pre-pr-cli\.ts$/.test(arg)) : -1;
   const chunks = Array.isArray(args) && scriptIndex >= 0 ? args.slice(scriptIndex + 1) : null;
   const original = chunks?.length && chunks.every((chunk): chunk is string => typeof chunk === 'string')
     ? record(JSON.parse(joinArgumentChunks(chunks)))

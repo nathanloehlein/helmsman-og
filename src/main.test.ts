@@ -3,7 +3,7 @@ import { DashboardView } from './main';
 import { loadDashboard as loadMockSnapshot } from './data/mock';
 import type { DashboardResponse } from './data/live';
 import type { CmuxTabView } from './logic/cmuxPanel';
-import { DEFAULT_THEME_ID } from './data/themes';
+import { DEFAULT_THEME_ID, getTheme } from './data/themes';
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -1433,7 +1433,7 @@ describe('DashboardView drawer survives polling', () => {
     const view: DashboardView = new DashboardView(root);
 
     expect(document.documentElement.dataset.theme).toBe('dracula');
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#bd93f9');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(getTheme('dracula')?.vars['--accent']);
 
     await view.refresh();
     expect(root.querySelector('.theme-select')).toBeNull();
@@ -1452,7 +1452,7 @@ describe('DashboardView drawer survives polling', () => {
     void new DashboardView(root);
 
     expect(document.documentElement.dataset.theme).toBe(DEFAULT_THEME_ID);
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#dfb778');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(getTheme(DEFAULT_THEME_ID)?.vars['--accent']);
   });
 
   it('applies and persists a new theme on select change without a full data refetch', async () => {
@@ -1476,7 +1476,7 @@ describe('DashboardView drawer survives polling', () => {
     select.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(document.documentElement.dataset.theme).toBe('nord');
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#88c0d0');
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe(getTheme('nord')?.vars['--accent']);
     expect(localStorage.getItem('cmux.theme')).toBe('nord');
     expect(root.querySelector('.theme-preview')).toBe(preview);
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
