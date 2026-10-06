@@ -61,7 +61,11 @@ function fakeCodex(mode = 'success') {
     };
     readline.createInterface({ input: process.stdin }).on('line', line => {
       const message = JSON.parse(line);
-      if (message.method === 'initialize') send({ id: message.id, result: {} });
+      if ('${mode}' === 'stall-' + message.method) return;
+      if (message.method === 'initialize') {
+        if ('${mode}' === 'delayed-timeout') setTimeout(() => send({ id: message.id, result: {} }), 200);
+        else send({ id: message.id, result: {} });
+      }
       if (message.method === 'thread/start') {
         if (message.params.approvalPolicy !== 'never' || message.params.sandbox !== 'danger-full-access') process.exit(9);
         send({ id: message.id, result: { thread: { id: 'thread-1' } } });
@@ -70,7 +74,7 @@ function fakeCodex(mode = 'success') {
       if (message.method === 'turn/steer') {
         if (message.params.expectedTurnId !== 'turn-1' || message.params.threadId !== 'thread-1' || !message.params.clientUserMessageId) process.exit(8);
         if ('${mode}' === 'disconnect') return process.exit(1);
-        if ('${mode}' === 'timeout') return setTimeout(complete, 150);
+        if (['timeout', 'delayed-timeout'].includes('${mode}')) return setTimeout(complete, 150);
         if ('${mode}' === 'completion-race') complete();
         setTimeout(() => {
           send('${mode}' === 'rejected' ? { id: message.id, error: { message: 'This turn has already finished' } }
@@ -82,16 +86,44 @@ function fakeCodex(mode = 'success') {
   `] };
 }
 
-function run(task: AgentTask, provider: 'codex' | 'claude-code', command: { cmd: string; args: string[] }, timeout?: number) {
+function run(task: AgentTask, provider: 'codex' | 'claude-code', command: { cmd: string; args: string[] }, timeout?: number, startupTimeout?: number) {
   const abort = new AbortController(); agents.push(abort);
   const output: string[] = [];
-  const options = { command, output: (line: string) => output.push(line), diagnostic: () => {}, signal: abort.signal, requestTimeoutMs: timeout };
+  const diagnostics: string[] = [];
+  const options = { command, output: (line: string) => output.push(line), diagnostic: (line: string) => diagnostics.push(line), signal: abort.signal,
+    requestTimeoutMs: timeout, startupTimeoutMs: startupTimeout };
   const promise = runInteractiveAgent({ task, provider }, options);
   void promise.catch(() => {});
-  return { promise, output, abort, setRequestTimeout: (milliseconds: number) => { options.requestTimeoutMs = milliseconds; } };
+  return { promise, output, diagnostics, abort, setRequestTimeout: (milliseconds: number) => { options.requestTimeoutMs = milliseconds; } };
 }
 
 describe('interactive agent provider transport', () => {
+  it.each(['initialize', 'thread/start', 'turn/start'])('identifies a stalled %s and closes without exposing an instruction target', async method => {
+    const input = await task();
+    input.task = 'Private prompt content';
+    const agent = run(input, 'codex', fakeCodex(`stall-${method}`), undefined, 1000);
+    await expect(agent.promise).rejects.toThrow(`Codex ${method} timed out after 1000ms`);
+    const stages = ['initialize', 'thread/start', 'turn/start'];
+    const reached = stages.slice(0, stages.indexOf(method) + 1);
+    expect(agent.diagnostics).toEqual(reached.flatMap(stage => [
+      `Codex ${stage} starting\n`, ...(stage === method ? [] : [`Codex ${stage} ready\n`]),
+    ]));
+    expect((await readInstructions(input.instructionsDir!, true)).targets).toHaveLength(0);
+    expect(agent.diagnostics.join('')).not.toContain(input.task);
+  });
+
+  it('allows startup to exceed the instruction deadline while retaining uncertain steer delivery', async () => {
+    const input = await task();
+    const agent = run(input, 'codex', fakeCodex('delayed-timeout'), 80);
+    const endpoint = await target(input.instructionsDir!);
+    expect(agent.diagnostics).toEqual(['initialize', 'thread/start', 'turn/start'].flatMap(method => [
+      `Codex ${method} starting\n`, `Codex ${method} ready\n`,
+    ]));
+    expect((await sendInstruction(input.instructionsDir!, { id: randomUUID(), targetId: endpoint.id, text: 'Uncertain instruction' })).status).toBe('unknown');
+    await agent.promise;
+    expect((await readInstructions(input.instructionsDir!, true)).targets).toHaveLength(0);
+  });
+
   it('waits for Codex steer acknowledgment, preserves stage identity, and maps output/usage', async () => {
     const input = await task();
     input.prePr = { stage: 'fix', round: 2, baseSha: 'a', reportPath: '/tmp/report' };

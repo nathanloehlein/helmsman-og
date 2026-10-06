@@ -44,6 +44,7 @@ export async function runInteractiveAgent(config: InteractiveAgentConfig, option
   output?: (line: string) => void;
   diagnostic?: (line: string) => void;
   requestTimeoutMs?: number;
+  startupTimeoutMs?: number;
   signal?: AbortSignal;
 } = {}): Promise<void> {
   const { provider, task } = config;
@@ -85,16 +86,23 @@ export async function runInteractiveAgent(config: InteractiveAgentConfig, option
     if (child.stdin.destroyed || child.exitCode !== null || child.signalCode !== null) throw new Error('Agent connection is closed');
     child.stdin.write(`${JSON.stringify(value)}\n`);
   };
-  const request = (id: string, value: unknown, instruction = false): Promise<unknown> => new Promise((resolve, reject) => {
+  const request = (id: string, value: unknown, instruction = false, method?: string): Promise<unknown> => new Promise((resolve, reject) => {
+    const timeoutMs = instruction ? options.requestTimeoutMs ?? 20_000 : options.startupTimeoutMs ?? 60_000;
     const timer = provider === 'claude-code' && instruction ? undefined : setTimeout(() => {
       pending.delete(id);
-      reject(instruction ? new InstructionDeliveryUnknownError('Agent did not acknowledge the instruction in time') : new Error('Agent protocol request timed out'));
-    }, options.requestTimeoutMs ?? 20_000);
+      reject(instruction ? new InstructionDeliveryUnknownError('Agent did not acknowledge the instruction in time')
+        : new Error(`Codex ${method ?? 'startup request'} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     try { write(value); }
     catch (error) { clearTimeout(timer); pending.delete(id); reject(error); }
   });
-  const rpc = (method: string, params: unknown, instruction = false, id = randomUUID()) => request(id, { id, method, params }, instruction);
+  const rpc = async (method: string, params: unknown, instruction = false, id = randomUUID()) => {
+    if (!instruction) diagnostic(`Codex ${method} starting\n`);
+    const result = await request(id, { id, method, params }, instruction, method);
+    if (!instruction) diagnostic(`Codex ${method} ready\n`);
+    return result;
+  };
   const receiveAck = (id: string, result: unknown, error?: Error) => {
     const entry = pending.get(id);
     if (!entry) return;
