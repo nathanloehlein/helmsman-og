@@ -1,9 +1,16 @@
 # Coder and reviewer prompt parity
 
-Pre-rewrite and post-rewrite share the same instructions for coding, scoped repairs,
+Pre-rewrite and post-rewrite share calibration guidance for coding, scoped repairs,
 independent review, review corrections, existing-PR feedback and feedback audits.
 This includes acceptance evidence, report formats and limits, inline anchors,
 author replies, publication restrictions and the clarification protocol.
+
+Pre-rewrite also requires local review leads to prepare missing dependencies for
+relevant checks before handing work to read-only leaf reviewers. It permits ignored
+dependency, build, and cache outputs while preserving tracked files and Git state.
+This applies to standalone reviews, first and continued pre-PR reviews, and feedback
+audits. Summary-only corrections and restricted Docker reviews retain their narrower
+write scope. This dependency-setup guidance has not been ported to post-rewrite.
 
 Reviewers block on demonstrated material defects or missed material requirements.
 Suggestions stay within ticket scope; necessary expansion must explain the customer

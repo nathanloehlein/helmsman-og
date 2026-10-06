@@ -27,6 +27,22 @@ const PARSER_DETAIL = "- Parser containment: enforce a wall-clock deadline and m
 
 interface PromptTaskEvidence { title?: string; task?: string; jiraContext?: string }
 
+export function reviewVerificationGuidance(task: { dockerExecution?: unknown }): string[] {
+  const scope = '- Identify the smallest checks needed for the affected behavior. Inspect the owning package manifest, workspace membership, applicable lockfile, package-manager version and repository setup instructions. A nested package excluded from the workspace is not governed by the root lockfile merely because that file exists.';
+  if (task.dockerExecution) return [
+    scope,
+    '- This Docker review has a read-only checkout. Use only tooling already available in the runtime image and checks compatible with that mount and its network policy. Do not install dependencies on the host, write into the checkout, mount another checkout\'s node_modules, or bypass network restrictions. Inspect available tools and attempt the permitted relevant checks before reporting a specific unavailable-tool or read-only-runtime limitation; do not claim checks passed.',
+  ];
+  return [
+    scope,
+    '- Before delegating verification to read-only leaf reviewers, the review lead must resolve the relevant test tools. Missing node_modules or a missing test executable is a setup task, not yet a blocker: inspect and attempt the minimal required development-dependency setup using the repository package manager at the correct package/workspace root. Do not install an unrelated whole workspace merely for a checklist. Keep leaf reviewers read-only; give them the prepared tool paths and verified check results.',
+    '- Use frozen/immutable installation when a committed lockfile governs that package. When no governing lockfile exists, follow the documented package setup with lockfile creation disabled; do not invent pinned-version assurance or use an unrelated lockfile. Do not use unpinned npx downloads, substitute global test tools, or share another worktree\'s node_modules. Keep dependency installations isolated to this checkout.',
+    '- Setup and checks may write only git-ignored dependency/build/cache files in the checkout, in addition to the explicitly permitted review report files. Verify output paths are ignored before writing. Never change tracked files, source, manifests, lockfiles, index, refs, Git configuration, snapshots or prior reports; do not add ignore rules or run mutating hooks. Disable install hooks that would alter Git configuration.',
+    '- Record HEAD before setup. After setup and required checks, verify the same HEAD with git rev-parse HEAD and confirm git diff --exit-code, git diff --cached --exit-code and git status --porcelain --untracked-files=all show no source, tracked or unexpected untracked changes. Do not hide changes with reset, checkout or stash.',
+    '- Before claiming dependencies unavailable, attempt the permitted targeted setup and check command. If setup cannot proceed without changing protected files, or credentials, package-manager support or registry access are unavailable, report the exact attempted command and specific blocker without secrets. Missing verification is a limitation, never an invented code defect or automatic approval.',
+  ];
+}
+
 function parserGuidance(task: PromptTaskEvidence, feedback?: string): string[] {
   const evidence = [task.title, task.task, task.jiraContext, feedback].filter(value => typeof value === 'string').join('\n');
   return [PARSER_BASELINE, ...(/\b(?:pars(?:e|er|ers|ing)|saniti[sz]\w*|svg|xml|html|uploads?|imports?|untrusted|hostile|heap|resource.exhaustion)\b/i.test(evidence) ? [PARSER_DETAIL] : [])];

@@ -16,7 +16,7 @@ describe('buildFeedbackAuditPrompt', () => {
     expect(value).toContain(`${snapshot.baseSha}...${snapshot.headSha}`);
     expect(value).toContain('"/snapshots/pr.json"');
     expect(value).toContain('"/reports/audit.json"');
-    expect(value).toContain('Only write the audit report');
+    expect(value).toContain('Apart from the git-ignored dependency/build/cache outputs allowed above, only write the audit report');
     expect(value).toContain('do not commit, push');
     expect(value).toContain('resolve threads');
   });

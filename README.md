@@ -240,6 +240,15 @@ rounds (two remediation rounds); setting one round permits no fix-and-review cyc
 Every reviewer must approve with no findings; incomplete
 reviews, missing tools, changed revisions, and exhausted rounds block publication.
 
+Fresh review worktrees do not inherit installed dependencies. For local PR reviews,
+pre-PR reviews, and feedback audits, the review lead must prepare the tools needed
+for relevant checks before reporting missing dependencies. It follows the affected
+package's documented setup, workspace boundaries, package manager, and governing
+lockfile; a nested package may not belong to the root workspace. Setup and checks
+may write ignored dependency, build, and cache outputs, while tracked files,
+manifests, lockfiles, and Git state remain unchanged. Delegated reviewers stay
+read-only. Docker reviewers use tools already available in the restricted runtime.
+
 Helmsman publishes the reviewed commit itself, targeting the repository's default
 branch. It selects a remote whose fetch and push URLs match the voyage repository
 (prefer `origin`, otherwise require one matching remote), then verifies the pushed

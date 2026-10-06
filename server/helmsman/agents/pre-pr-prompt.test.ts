@@ -61,7 +61,7 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).toContain(`${baseSha}..${headSha}`);
     expect(prompt).toContain(`detached worktree at ${headSha}`);
     expect(prompt).toContain(JSON.stringify(reportPath));
-    expect(prompt).toContain('This is the only file you may write');
+    expect(prompt).toContain('Apart from the git-ignored dependency/build/cache outputs allowed above');
     expect(prompt).toContain(`"baseSha":"${baseSha}"`);
     expect(prompt).toContain(`"headSha":"${headSha}"`);
     expect(prompt).toContain('APPROVE only if the required review completed');
@@ -96,9 +96,9 @@ describe('pre-PR prompt workflow boundaries', () => {
       incompleteReview: { reportPath: '/tmp/prior.json', summary: 'Required checks could not run without dependencies.' } } }));
     expect(prompt).toContain('explicit continuation of a COMMENT review');
     expect(prompt).toContain('Required checks could not run without dependencies.');
-    expect(prompt).toContain('use the pinned lockfile and repository package manager to install them');
+    expect(prompt).toContain('Use frozen/immutable installation when a committed lockfile governs that package');
     expect(prompt).toContain('may write only git-ignored dependency/build/cache files');
-    expect(prompt).toContain('do not change tracked files, lockfiles, source, index, refs, or the prior report');
+    expect(prompt).toContain('Never change tracked files, source, manifests, lockfiles, index, refs, Git configuration, snapshots or prior reports');
     expect(prompt).toContain('retain COMMENT if essential checks or required review remain incomplete');
     expect(prompt).toContain('Apart from the git-ignored dependency/build/cache outputs allowed above');
   });
@@ -137,6 +137,9 @@ describe('pre-PR prompt workflow boundaries', () => {
     expect(prompt).not.toContain('Before the first implementation commit');
     expect(prompt).not.toContain('Batch the verified fixes');
     expect(prompt).not.toContain('Establish the observable acceptance property');
+    expect(prompt).not.toContain('## Verification setup');
+    expect(prompt).not.toContain('git-ignored dependency/build/cache');
+    expect(prompt).toContain('This is the only file you may write');
   });
 
   it.each([
