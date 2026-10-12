@@ -1,5 +1,9 @@
 # Helmsman
 
+> **Sunset notice:** This pre-rewrite version (`helmsman-og`) is retired and is no longer maintained.
+> Switch to [the maintained Helmsman repository](https://github.com/nloehlein-godaddy/helmsman)
+> and follow its README for installation and setup. The documentation below describes the legacy version.
+
 A control plane for coding and review agents working from Jira, local todos,
 free-form tasks, and automated intake. Launch a CLI agent, watch it work live
 (explore → implement → test → open a PR), and keep a human
@@ -12,7 +16,7 @@ fleet readouts, and a ship-wheel startup animation with compass bearings and cou
 
 ## Version 0.3.0
 
-This version is maintained at [nathanloehlein/helmsman-og](https://github.com/nathanloehlein/helmsman-og).
+This legacy version is preserved at [nathanloehlein/helmsman-og](https://github.com/nathanloehlein/helmsman-og).
 It includes manual Jira/free-form work, local todos, automatic PR reviews, phased
 campaigns, Agent Questions, Costs & Outcomes, and optional Docker execution.
 New coding work passes an exact-revision review gate before publication; existing-PR

@@ -329,6 +329,10 @@ export function renderHelmHead(opts: HelmHeadOpts): string {
 export function renderAppShell(opts: HelmHeadOpts, content: string): string {
   const running = opts.readout?.running ?? '—';
   return `<div class="helm${opts.active === 'dashboard' ? '' : ` ${opts.active}-view`}" data-page="${opts.active}">
+    <aside class="sunset-banner" aria-labelledby="sunset-title">
+      <div class="sunset-copy"><strong id="sunset-title">${term('sunsetTitle')}</strong><p>${term('sunsetMessage')}</p></div>
+      <a href="https://github.com/nloehlein-godaddy/helmsman" target="_blank" rel="noopener noreferrer">${term('sunsetAction')} &rarr;</a>
+    </aside>
     ${renderHelmHead(opts)}
     <main class="page-content" id="page-content" role="tabpanel" aria-labelledby="page-tab-${opts.active}" tabindex="0">${content}</main>
     <footer class="app-footer mono">

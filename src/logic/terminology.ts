@@ -1,4 +1,7 @@
 export const TERMINOLOGY = {
+  sunsetTitle: { plain: 'This version of Helmsman is retired.', pirate: 'This version of Helmsman is retired.' },
+  sunsetMessage: { plain: 'The pre-rewrite version is no longer maintained. Switch to the maintained Helmsman for installation and setup.', pirate: 'The pre-rewrite version is no longer maintained. Switch to the maintained Helmsman for installation and setup.' },
+  sunsetAction: { plain: 'Switch to Helmsman', pirate: 'Switch to Helmsman' },
   runReviewDetails: { plain: 'Review details', pirate: 'Inspection details' },
   lastIndependentReview: { plain: 'Last independent review', pirate: 'Last independent inspection' },
   reviewRound: { plain: 'Round', pirate: 'Round' },
